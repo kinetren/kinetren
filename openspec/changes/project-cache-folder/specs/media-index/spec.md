@@ -7,6 +7,14 @@ the project with one place per cache.
 index is kept by content, one file per entry" below carry every rule and every TEST line (t16, t872, t34,
 t401, t402, t401b, t639); an old sidecar is imported once and deleted.
 
+### Requirement: Simultaneous openings of one sidecar all succeed
+**Reason**: there is no database to open: several lanes share one open folder.
+**Migration**: t1171 stands under "The media index is kept by content, one file per entry".
+
+### Requirement: No lock of the sidecar is held across an fsync
+**Reason**: no entry is read or written under a lock, and nothing syncs.
+**Migration**: t1460 stands under "The media index is kept by content, one file per entry".
+
 ## ADDED Requirements
 
 ### Requirement: The project's caches live in a folder beside it, one place per cache
@@ -108,6 +116,9 @@ removed. The rest SHALL be untouched. Further rules:
 - the reel previews SHALL be kept under `reels/` by (reel, revision, file fingerprint).
 
 A cache error SHALL fall back silently to the ordinary opening. The UI thread SHALL NOT touch the index.
+Every one of several threads of one process opening the folder at the same moment SHALL succeed, and no
+read or write of an entry SHALL wait for a lock of the folder: its one lock is for the cycle's drops and the
+map's compaction, and it is only tried.
 
 Why: the sidecar's rules (defect j; a schema bump wiped every media's index; f64 drifted in the last
 digit; a uniform delete missed the second side of a pair) hold over files. A kind's version replaces the
@@ -124,6 +135,16 @@ did not (project-cache-folder D1, D2).
 - **THEN** the first is a miss that leaves the writer's file alone and is reused once renamed; the garbage file is removed with no other entry touched (the SIGBUS of the former SQLite file, seen in t640 under load, has no counterpart)
 - **TEST** t872 (`src/libs/kt-media/tests/index_db.rs`)
 
+#### Scenario: A dozen threads open one folder at once
+- **WHEN** twelve threads released by one barrier open the same new folder and each write an entry, twenty times; then the same twelve open it again
+- **THEN** every opening succeeds and every entry is there
+- **TEST** t1171 (`src/libs/kt-media/tests/index_db.rs`); its UI consequence — the second opening renders the reel zero times — t640 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: A held lock of the folder stands in nobody's way
+- **WHEN** another process holds the folder's lock and does not let go (its disk does not answer), and two threads each open the folder, note a new content, write a loudness and read it back, a hundred times
+- **THEN** both finish with no error, the map is compacted by no one, and compacts at the next note once the lock is free (before: one connection's fsync under SQLite's locks made the others outwait the busy timeout)
+- **TEST** t1460 (`src/libs/kt-media/tests/sidecar_stall.rs`)
+
 #### Scenario: The batch index survives opening
 - **WHEN** the file is opened a second time with the same cache folder; the file has changed
 - **THEN** the second opening does not scan, the index is byte-for-byte equal to a fresh one and functionally equivalent (keyframe_before, sample-accurate audio); the changed file is rescanned
@@ -136,7 +157,7 @@ did not (project-cache-folder D1, D2).
 
 #### Scenario: The reel preview is keyed by content (container: capability `compositions`)
 - **WHEN** a reel without a file puts frames and peaks into the cache folder
-- **THEN** the key is (reel, revision, file fingerprint); any divergence → None, one version per reel; removing a media's entries does not touch the reels
+- **THEN** the key is (reel, revision, file fingerprint); any divergence → None, one version per reel of a project; removing a media's entries does not touch the reels; two projects of the folder with a reel of the same id keep their own, and neither's edit or prune takes what the other shows
 - **TEST** t639 (`src/libs/kt-media/tests/index_db.rs`)
 
 #### Scenario: A renamed project folder still hits

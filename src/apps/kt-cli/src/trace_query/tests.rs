@@ -872,6 +872,46 @@ fn t2987_trace_cache_reads_the_tiers_work() {
     assert!(out.lines().any(|l| l.contains("lap 0") && l.contains("3 restored")), "{out}");
 }
 
+/// Test t3841 (project-cache-folder D8): `trace cache` names the cache folder's place, each cache's bytes
+/// with its hits and misses as last counted, the drops with their reasons and the skipped writes; a real
+/// folder's records read back so, and its sizes are what it counts itself.
+#[test]
+fn t3841_trace_cache_names_each_cache_of_the_folder() {
+    use kt_media::cache_folder::{Folder, Tenant};
+    let dir = std::env::temp_dir().join(format!("kt-cli-t3841-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let root = dir.join("kinetren-cache");
+    let mut sizes = Default::default();
+    let items = kt_time::trace::testing::capture(|| {
+        let f = Folder::open(&root).unwrap();
+        f.set_free_for_tests(Some(1 << 40));
+        f.set_protect_for_tests(Some(std::time::Duration::ZERO));
+        f.set_cap(4000);
+        for i in 0..6u32 {
+            let rel = format!("results/v3/dev/frames/s{i}.mkv");
+            assert!(f.ask_room(1000));
+            std::fs::create_dir_all(root.join("results/v3/dev/frames")).unwrap();
+            std::fs::write(root.join(&rel), vec![0u8; 1000]).unwrap();
+            f.wrote(&rel, 1000, 10);
+            f.used(&rel);
+        }
+        let _ = f.read("media/none/peaks", b"PEAK", 1);
+        assert!(!f.ask_room(10_000), "more than the folder may hold");
+        sizes = f.sizes();
+        f.trace_sizes();
+    });
+    let run = run_of(kt_time::trace::testing::recs(&items).into_iter().collect());
+    let out = cache(&run);
+    println!("{out}");
+    assert!(out.contains("(beside the project), the cap 20.0 GB"), "{out}");
+    assert!(out.contains("frames  4000 bytes, 6 hits, 0 misses"), "{out}");
+    assert!(out.contains("media   0 bytes, 0 hits, 1 misses"), "{out}");
+    assert!(out.contains("dropped 2 of frames (2000 bytes): the cap"), "{out}");
+    assert!(out.contains("1 writes skipped"), "{out}");
+    assert_eq!(sizes[&Tenant::Frames], (4000, 4), "the trace's last count is the folder's own");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// t3316 (export-host-copy D1, found-defects 741): the export view states every move of a frame after
 /// the composite — copy out, convert, the device encoder's surface upload and the encode without it — per
 /// frame, and the surface upload as a stage line of its own.

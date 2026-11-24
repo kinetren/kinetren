@@ -1,0 +1,28 @@
+# What makes a composite's pixels outside the plugins' kernels, from src/libs. `build.rs` hashes the
+# lines that are not comments into COMPOSITE_PATH_VERSION; t3808 holds the list whole.
+# A file that can change a pixel of a composite belongs here.
+kt-engine/src/transitions.rs
+kt-engine/src/video_plan.rs
+kt-engine/src/video_stream.rs
+kt-engine/src/yuv.rs
+kt-fx/src/conform.rs
+kt-fx/src/geom.rs
+kt-fx/src/mask.rs
+kt-fx/src/plan.rs
+kt-fx/src/video.rs
+kt-gpu/src/compiled.rs
+kt-gpu/src/engine.rs
+kt-gpu/src/held.rs
+kt-gpu/src/runs.rs
+kt-gpu/src/seeds.rs
+kt-gpu/src/shaders
+kt-media/src/generator.rs
+kt-plugin-api/src/barrier.rs
+kt-plugin-api/src/curves.rs
+kt-plugin-api/src/generator.rs
+kt-plugin-api/src/geo.rs
+kt-plugin-api/src/math.rs
+kt-plugin-api/src/pixfont.rs
+kt-plugin-api/src/stream.rs
+kt-plugin-api/src/trans.rs
+kt-text/src

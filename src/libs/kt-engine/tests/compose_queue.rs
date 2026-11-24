@@ -21,7 +21,7 @@ struct HeldExec {
 impl HeldExec {
     fn new() -> Arc<HeldExec> {
         Arc::new(HeldExec {
-            info: GpuBackendInfo { name: "held".into(), backend: "Test".into(), software: true },
+            info: GpuBackendInfo { name: "held".into(), backend: "Test".into(), software: true, driver: String::new() },
             open: Mutex::new(false),
             cv: Condvar::new(),
             started: AtomicU32::new(0),
@@ -191,7 +191,7 @@ impl VideoGpuExec for KeptExec {
 #[test]
 fn t1843_the_bars_never_wait_for_the_executor() {
     let exec = Arc::new(KeptExec {
-        info: GpuBackendInfo { name: "kept".into(), backend: "Test".into(), software: true },
+        info: GpuBackendInfo { name: "kept".into(), backend: "Test".into(), software: true, driver: String::new() },
         keys_open: Mutex::new(true),
         cv: Condvar::new(),
         asked: AtomicU32::new(0),

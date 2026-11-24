@@ -19,7 +19,7 @@ struct StuckGpu {
 impl StuckGpu {
     fn new() -> Arc<StuckGpu> {
         Arc::new(StuckGpu {
-            info: kt_engine::GpuBackendInfo { name: "stuck".into(), backend: "Test".into(), software: true },
+            info: kt_engine::GpuBackendInfo { name: "stuck".into(), backend: "Test".into(), software: true, driver: String::new() },
             open: std::sync::Mutex::new(false),
             cv: std::sync::Condvar::new(),
         })

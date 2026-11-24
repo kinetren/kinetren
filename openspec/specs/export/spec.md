@@ -338,7 +338,7 @@ atomic writer as the GUI; an existing file MUST NOT be overwritten without `--fo
 `demo` by default SHALL refer to synthetic sources (`synth:`), so that
 `demo && render` works without a single media file. Relative media paths SHALL be resolved
 exactly once (when the project is loaded), and `.ktproj` in `render/export` — a refusal with a hint to
-`convert`. Export opens the files with the project's sidecar index.
+`convert`. Export opens the files with the project's media index.
 Why: kt-cli has neither an asterisk nor a dialog — there was nothing to prevent silent overwriting;
 `demo` referred to eight files that nobody had; a double join of the path base silently
 rendered empty layers with exit 0.
@@ -361,7 +361,7 @@ rendered empty layers with exit 0.
 #### Scenario: A relative path to the project
 - **WHEN** `kt-cli export sub/p.otio …` with the media `clip.mp4` next to the project
 - **THEN** without "decode failed", `missing layers 0`
-- **TEST** t307 (`src/apps/kt-cli/tests/cli.rs`), t34 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`) — opening with the sidecar index does not rescan the file again
+- **TEST** t307 (`src/apps/kt-cli/tests/cli.rs`), t34 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`) — opening with the media index does not rescan the file again
 
 ### Requirement: `kt-cli probe` — "what sounds at this point"
 `probe <project> <from_s> <to_s>` SHALL print cleanly from the model, without decode and without audio

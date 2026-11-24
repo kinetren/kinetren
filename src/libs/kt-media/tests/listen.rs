@@ -1,6 +1,6 @@
 //! gen-audio-reactive: the audio-reactive series of a file.
 
-use kt_media::index::MediaIndexDb;
+use kt_media::index::MediaStore;
 use kt_media::listen::{self, SeriesStore};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
 use kt_media::MediaSource;
@@ -12,7 +12,7 @@ fn sine(secs: i64) -> Box<dyn MediaSource> {
 }
 
 /// Test 3714 (gen-audio-reactive): a file's series is a pure function of its sound — one record per
-/// burst, the same bytes computed twice; a 0.5 sine reads its level and a held level; the sidecar keeps
+/// burst, the same bytes computed twice; a 0.5 sine reads its level and a held level; the cache folder keeps
 /// it by the file and a changed file loses it; a stop asked keeps nothing.
 #[test]
 fn t3714_the_series_is_pure_and_kept_by_the_file() {
@@ -34,7 +34,7 @@ fn t3714_the_series_is_pure_and_kept_by_the_file() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("music.wav");
     std::fs::write(&file, b"first content").unwrap();
-    let mut db = MediaIndexDb::open(&dir.path().join("index.db")).unwrap();
+    let mut db = MediaStore::open(&dir.path().join("kinetren-cache")).unwrap();
     assert!(db.get(&file).is_none(), "nothing stored yet");
     let mut opened = 0;
     let s = listen::series_for(&file, Some(&mut db), || { opened += 1; Some(sine(2)) }, &never).unwrap();

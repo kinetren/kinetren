@@ -191,12 +191,14 @@ fn tick_text(t: kt_time::Tick) -> String {
 }
 
 /// A size the way a person reads it: KB under a megabyte ("0.0 MB" said nothing about a small file,
-/// live scenario `render`), MB with one decimal above.
+/// live scenario `render`), MB with one decimal above, GB from ten of them.
 pub fn size_text(bytes: u64) -> String {
     if bytes < 1024 * 1024 {
         crate::tf!(k::render::SIZE_KB, bytes.div_ceil(1024))
-    } else {
+    } else if bytes < 10 << 30 {
         crate::tf!(k::render::SIZE_MB, format!("{:.1}", bytes as f64 / (1024.0 * 1024.0)))
+    } else {
+        crate::tf!(k::render::SIZE_GB, format!("{:.1}", bytes as f64 / (1u64 << 30) as f64))
     }
 }
 
@@ -835,7 +837,7 @@ impl KtApp {
         }
         let mut opts_thread = opts.clone();
         let out_path_thread = out_path.clone();
-        let db_path = self.index_db_path();
+        let db_path = self.cache_folder();
         let job = crate::bg::BgJob::spawn("render", move |ctl, send| {
             // an export pauses the background classes while it runs (one-scheduler): its vote is
             // down when the body returns, whatever the window does after
@@ -857,7 +859,7 @@ impl KtApp {
             };
             // what the audio-reactive generators hear, before their sources are raised
             // (gen-audio-reactive): the file never depends on whether the background job finished
-            let mut db = db_path.as_ref().and_then(|p| kt_media::index::MediaIndexDb::open(p).ok());
+            let mut db = db_path.as_ref().and_then(|p| kt_media::index::MediaStore::open(p).ok());
             kt_engine::listen::ensure(
                 &project,
                 &|path| resolve_media_path(base.as_deref(), path),

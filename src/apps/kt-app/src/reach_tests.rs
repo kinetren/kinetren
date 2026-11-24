@@ -4658,9 +4658,9 @@ fn t819_the_import_door_takes_legacy_old_and_foreign_and_yields_a_project() {
     use egui_kittest::kittest::Queryable;
     let dir = r70_dir("t819");
 
-    // three entrances; the legacy fixture is COPIED: an import opens the sidecar
-    // `<source>.ktindex.db` next to the source, and in place it rewrote the committed
-    // fixtures/demo.ktindex.db* (tests do not write into the tree)
+    // three entrances; the legacy fixture is COPIED: an import opens the cache
+    // folder next to the source, and in place it would write into the committed fixtures
+    // (tests do not write into the tree)
     let legacy = dir.join("demo.ktproj");
     std::fs::write(&legacy, include_str!("../../../fixtures/demo.ktproj")).unwrap();
     let old = dir.join("old_v5.otio");
@@ -5268,7 +5268,7 @@ fn press_esc(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>) {
 }
 
 /// A click at a screen point (press and release in one frame batch).
-fn click_at(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>, pos: egui::Pos2) {
+pub(crate) fn click_at(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>, pos: egui::Pos2) {
     h.event(egui::Event::PointerMoved(pos));
     h.event(egui::Event::PointerButton {
         pos,

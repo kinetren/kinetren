@@ -7,9 +7,10 @@ by what determines the frame across processes — the identity of its source (a 
 time as it was opened, a generator's values; capability `media-index`, change `durable-moment-key`), a stream stage's
 own key, which mixes the identities of the sources it reads; a moment with a source whose identity does not outlive the process is neither written nor read — salted by the
 store's format and the device class (the folder `results/v<FORMAT>/<device class>/`), and keyed further by
-the decoder's major, the versions of the kernels that ran (each plugin's version and its WGSL text's hash)
-and `COMPOSITE_PATH_VERSION` (bumped by any change of the composite code outside the kernels), not by the
-whole build. So the same plan gives the same key in
+the decoder's major, the version of the decode's own conversion, the versions of the kernels that ran (each plugin's version — the hash of its
+crate's source, made at build time — and its WGSL text's hash) and `COMPOSITE_PATH_VERSION` (the hash of the
+composite code outside the kernels, the files of `kt-engine/composite-path.txt` without comments), not by the
+whole build. A procedural source SHALL bring the generators' versions, a stream stage the stream kernels'. So the same plan gives the same key in
 another process and in a release that did not change those kernels, while an edit, a replaced file, a
 changed kernel or another device class gives another. The key SHALL NOT depend on the
 codec, the encoder or the container: it names the picture, and a later reader (the cached final render,
@@ -105,10 +106,10 @@ so one heavy project no longer evicts another's loop (project-cache-folder D3).
 
 #### Scenario: The store lives in the project's folder
 - **WHEN** two projects in two folders prerender a loop each, the second folder's cap smaller than its loop, and the first start of the build finds a former `<data>/render-cache`
-- **THEN** each project's segments lie in its own `kinetren-cache/`, the second folder's oldest segments are replaced as its loop is written while the first folder is untouched, and the former folder is gone
+- **THEN** each project's segments lie in its own `kinetren-cache/`, the second folder's oldest segments are replaced as its loop is written (a segment holds at most an eighth of the room; one that finds none is taken again in shorter ones) while the first folder is untouched and the bars draw no dropped moment, and the former folder is gone
 - **TEST** t3833, t3834 (`src/libs/kt-engine/tests/render_cache.rs`)
 
 #### Scenario: The composite path's version follows its code
-- **WHEN** the guard reads `COMPOSITE_PATH_VERSION` and the hash of the composite code outside the kernels (the fusion, `plan_chain`, the core passes and shaders, the conversions) recorded beside it
-- **THEN** the recorded hash equals the files' hash; a change of those files without a new constant and a new recorded hash fails the guard, naming the files
+- **WHEN** the guard hashes the composite code outside the kernels (the fusion, `plan_chain`, the core passes and shaders, the conversions, the titles and the core's generators) as `composite-path.txt` names it
+- **THEN** the hash equals `COMPOSITE_PATH_VERSION`, every named file is there, every shader of the core crates is among them, and the executor, the planner and the conversions are
 - **TEST** t3808 (`src/libs/kt-engine/tests/render_cache.rs`)

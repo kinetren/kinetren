@@ -230,6 +230,8 @@ pub enum Ev {
     /// (stream-picture-stays D3, the device-memory risk on a card). `a` device bytes, `b` all the
     /// memo's bytes, `c` its bound.
     StreamHeld = 124,
+    /// A project's cache folder (project-cache-folder D8): `aux` the [`cache_folder`] kind.
+    CacheFolder = 125,
 }
 
 /// Where a stream picture crossed ([`Ev::StreamCross`] `aux`).
@@ -241,7 +243,7 @@ pub mod cross {
 }
 
 impl Ev {
-    pub const ALL: [Ev; 59] = [
+    pub const ALL: [Ev; 60] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -301,6 +303,7 @@ impl Ev {
         Ev::Click,
         Ev::StreamCross,
         Ev::StreamHeld,
+        Ev::CacheFolder,
     ];
 
     pub fn from_u16(v: u16) -> Option<Ev> {
@@ -368,6 +371,7 @@ impl Ev {
             Ev::Click => "click",
             Ev::StreamCross => "stream_cross",
             Ev::StreamHeld => "stream_held",
+            Ev::CacheFolder => "cache_folder",
         }
     }
 }
@@ -644,6 +648,52 @@ pub mod export_stage {
     /// The stage's name (`?` — a stage this build does not know).
     pub fn name(aux: u32) -> &'static str {
         aux.checked_sub(1).and_then(|i| NAMES.get(i as usize)).copied().unwrap_or("?")
+    }
+}
+
+/// `CacheFolder.aux` (project-cache-folder D8).
+pub mod cache_folder {
+    /// The folder was opened: `id` its path, with why it lies elsewhere (a [`name`]), `b` its cap.
+    pub const PLACE_PROJECT: u32 = 1;
+    /// The same, under the user's data folder: the project is untitled.
+    pub const PLACE_UNTITLED: u32 = 2;
+    /// The same, under the user's data folder: the project's folder takes no files.
+    pub const PLACE_NO_FILES: u32 = 3;
+    /// A tenant's state, at the first count and at the close: `a` the tenant, `b` its bytes, `c` its
+    /// hits, `id` its misses so far.
+    pub const SIZE: u32 = 4;
+    /// An entry dropped: `a` the tenant, `b` its bytes, `c` why (a [`why`] code).
+    pub const DROP: u32 = 5;
+    /// A write skipped, no room could be made: `b` its bytes.
+    pub const SKIPPED: u32 = 6;
+
+    /// Why an entry was dropped.
+    pub mod why {
+        pub const CAP: u64 = 1;
+        pub const DISK: u64 = 2;
+        pub const QUOTA: u64 = 3;
+        pub const ASKED: u64 = 4;
+        pub fn name(c: u64) -> &'static str {
+            match c {
+                CAP => "the cap",
+                DISK => "the disk",
+                QUOTA => "a quota",
+                ASKED => "asked",
+                _ => "?",
+            }
+        }
+    }
+
+    /// A tenant's name by its number.
+    pub fn tenant_name(t: u64) -> &'static str {
+        match t {
+            0 => "frames",
+            1 => "mix",
+            2 => "copies",
+            3 => "reels",
+            4 => "media",
+            _ => "?",
+        }
     }
 }
 

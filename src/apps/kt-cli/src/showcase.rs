@@ -36,7 +36,7 @@ pub fn scan(dir: &str) -> Result<Vec<Source>, String> {
         .map_err(|e| format!("{dir}: {e}"))?
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.is_file())
-        // sidecar index files live next to media; they are never footage
+        // the sidecar of a former build may lie next to media; it is never footage
         .filter(|p| !p.to_string_lossy().contains(".ktindex.db"))
         // text next to the footage (credits, checksums, projects): FFmpeg's
         // text demuxer would happily open a .txt as a "video"

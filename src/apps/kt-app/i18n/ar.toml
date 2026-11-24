@@ -830,6 +830,7 @@ row_length = "مدة الإخراج"
 row_size = "الحجم"
 size_kb = "{0} ك.ب"
 size_mb = "{0} م.ب"
+size_gb = "{0} غ.ب"
 size_value = "{0}، ونحو {1} في النهاية"
 row_bitrate = "معدل البت"
 bitrate_value = "{0} Mbit/s"
@@ -963,6 +964,8 @@ clip_at = "{0} @ {1} ثانية"
 # One-off messages note()/warn(). There is NO agreement with the number:
 # we write “noun: N” (rule R.19, see README).
 [msg]
+cache_folder_full = "ذاكرة «{0}» ممتلئة ({1}): تُستبدل أقدم النتائج"
+cache_folder_elsewhere = "المجلد «{0}» لا يقبل الملفات: ذاكرته في مجلد المستخدم ({1})"
 plugin_missing = "الإضافة غير موجودة في هذا الإصدار: {0} — محفوظة في الملف ويتم تجاوزها (الأحداث: {1})"
 area_needs_band = "حدّد أولًا نطاقًا على الخط الزمني (أو منطقة)"
 area_stem = "منطقة"
@@ -2059,6 +2062,20 @@ ffmpeg_missing = "غير موجود — تُعرض الوسائط كعناصر �
 ffmpeg_open = "FFmpeg…"
 hint_ffmpeg = "أين عُثر على FFmpeg وكيف تحصل عليه"
 close = "إغلاق"
+section_cache = "ذاكرة التخزين الدائمة"
+cache_about = "يحفظ كل مجلد مشروع ما يمكن حسابه من جديد في «kinetren-cache». حذفه يكلف وقتًا لا عملًا."
+cache_total = "المشغول الآن: {0}"
+cache_none = "لا توجد مجلدات ذاكرة بعد"
+cache_no_project = "لا يوجد مشروع هنا"
+cache_untitled = "مشروع بلا اسم"
+cache_elsewhere = "مجلد المشروع لا يقبل الملفات: {0}"
+cache_synced = "في مجلد مُزامَن: تُرفع"
+cache_full = "{0}، ممتلئة"
+cache_cap = "الحد بالغيغابايت"
+cache_delete = "حذف"
+hint_cache_delete = "حذف مجلد الذاكرة هذا: يُحسب كل ما فيه من جديد عند الحاجة"
+hint_cache_cap = "عند الحد تُستبدل أقدم النتائج"
+cache_open = "ذاكرة التخزين الدائمة…"
 
 # The deck face of the VHS tape simulation (vhs-tape-simulation, D11).
 [deck]

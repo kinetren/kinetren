@@ -27,7 +27,7 @@ OWN_PROCESS = True
 
 def cache_files(out):
     """The moments the render cache holds: the keys of its segments' manifests."""
-    root = os.path.join(out, "xdg", "kinetren", "render-cache")
+    root = os.path.join(out, "kinetren-cache", "results")
     n = 0
     for top, _, files in os.walk(root):
         for f in files:

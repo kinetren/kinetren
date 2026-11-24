@@ -3250,7 +3250,7 @@ fn t185_gpu_loss_notice_once() {
     }
     let mut h = harness();
     h.state_mut().player.set_video_gpu(Some(std::sync::Arc::new(DeadGpu(
-        kt_engine::GpuBackendInfo { name: "test".into(), backend: "Test".into(), software: true },
+        kt_engine::GpuBackendInfo { name: "test".into(), backend: "Test".into(), software: true, driver: String::new() },
     ))));
     // force a recomposition (the preview key has already settled on the previous
     // frames): key reset → compose calls the executor → DeviceLost →
@@ -3305,6 +3305,7 @@ fn t3819_a_lost_shared_device_poisons_both_and_the_work_is_saved() {
             name: "shared".into(),
             backend: "Test".into(),
             software: true,
+            driver: String::new(),
         }))));
         // the same loss on the compute side: a job failed, the host is marked unusable
         kt_plugin_api::compute::fail("the device was lost".into());
@@ -4215,6 +4216,8 @@ fn t2541_a_returned_file_gets_its_waveform() {
     crate::icons::install_fonts(&h.ctx);
     h.step();
     assert!(h.state().index.wait_idle());
+    h.step();
+    h.step();
     assert!(!h.state().peaks.lock().unwrap().contains_key(&MediaId(1)), "scene guard: the absent file has a waveform");
     // the file comes back where it was
     std::fs::copy(crate::util::tests::fixture("sine48k_stereo.flac"), &file).unwrap();
@@ -4226,6 +4229,8 @@ fn t2541_a_returned_file_gets_its_waveform() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(h.state().index.wait_idle());
+    h.step();
+    h.step();
     assert!(
         h.state().peaks.lock().unwrap().contains_key(&MediaId(1)),
         "the returned file's waveform was never built"
@@ -6920,25 +6925,23 @@ fn t503_gesture_frame_touches_no_media_paths() {
     assert_eq!(h.state().player.worker_spawns(), spawns, "the level gesture raised the sources");
 }
 
-/// Test 504 (R.53, item 413): a pseudo-path does NOT open the sidecar DB. A generator
-/// has no file, yet opening sqlite (connection + WAL pragma + schema version) hung on
-/// every parameter edit
-/// and on every clip placement.
+/// Test 504 (R.53, item 413): a pseudo-path does NOT open the cache folder. A generator
+/// has no file, yet opening the index hung on every parameter edit and on every clip placement.
 #[test]
-fn t504_pseudo_path_never_opens_sqlite() {
+fn t504_pseudo_path_never_opens_the_cache_folder() {
     crate::plugins::install();
     let dir = std::env::temp_dir().join(format!("kt-t504-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let db = dir.join("x.ktindex.db");
+    let db = dir.join("kinetren-cache");
     assert!(!db.exists());
 
     let src = crate::util::open_source_indexed("gen:solid:c=ff8800", Some(&db));
     assert!(src.is_ok(), "the generator must open");
-    assert!(!db.exists(), "the pseudo-path opened the sidecar DB");
+    assert!(!db.exists(), "the pseudo-path opened the cache folder");
 
     let src = crate::util::open_source_indexed("synth:ramp", Some(&db));
     assert!(src.is_ok());
-    assert!(!db.exists(), "the test schema opened the sidecar DB");
+    assert!(!db.exists(), "the test schema opened the cache folder");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -11518,8 +11521,7 @@ fn t601_scrolling_does_not_order_reel_work() {
 /// The owner’s complaint: “the compositions’ preview on the timeline, it seems, is not
 /// cached, and every project opening builds it anew”. What is asserted is the
 /// consequence: a second `KtApp::open` of the same file gets the reel’s frames and
-/// envelope with ZERO real renders — from the sidecar
-/// `<project>.ktindex.db`. But a substitution of the source (mtime) is a miss and a
+/// envelope with ZERO real renders — from the project's cache folder. But a substitution of the source (mtime) is a miss and a
 /// re-render: the reel’s revision does not see the file substitution; the media fingerprint
 /// in the key catches it.
 #[test]
@@ -22248,4 +22250,176 @@ fn t3937_a_window_started_maximized_drags_at_a_normal_size() {
     assert!(sizes(&cmds).is_empty(), "the window manager's own size: {cmds:?}");
     assert!(cmds.iter().any(|c| matches!(c, V::Maximized(false))));
     assert_eq!(crate::window_frame::restored_size(Some(monitor), monitor), monitor * 0.8, "a whole-screen size is none");
+}
+
+/// Test t3830 (project-cache-folder D4): an untitled project's media are cached in the user's folder:
+/// the waveform and the thumbnail of a clip are read back from there by services started anew (the bin
+/// closed and opened, the next File → New), and no entry is computed or written again.
+/// - **PATH** File → New → drag two clips into the bin: their waveforms and filmstrips draw → close the
+///   bin and open it again: they draw at once, with no Loading
+#[test]
+fn t3830_an_untitled_project_caches_its_media() {
+    use kt_media::cache_folder::{Folder, Tenant};
+    use kt_model::*;
+    let mut h = harness();
+    let root = h.state().cache_folder().expect("an untitled project has a place");
+    assert!(root.starts_with(crate::journal::data_dir()), "{root:?}");
+    let clips = [(MediaId(1), "testsrc_12s.mp4"), (MediaId(2), "muxed_av.mp4")].map(|(id, f)| (id, crate::util::tests::fixture(f)));
+    for (id, path) in &clips {
+        h.state_mut().apply(Command::AddMedia { id: *id, path: path.clone() });
+        let path = path.clone();
+        h.state_mut().thumbs.add_media(*id, path.clone());
+        let cache = h.state().cache_folder();
+        h.state().index.enqueue(cache, vec![(*id, path)]);
+    }
+    let key = |id: MediaId| crate::thumbs::ThumbKey { media: id, t: 0 };
+    // what a service serves: the first pass computes, the second only reads
+    let serve = |thumbs: &crate::thumbs::ThumbService, peaks: &std::sync::Mutex<std::collections::HashMap<MediaId, crate::util::Peaks>>| {
+        let deadline = kt_time::test_deadline();
+        for (id, _) in &clips {
+            thumbs.request(key(*id));
+        }
+        loop {
+            let drawn = clips.iter().all(|(id, _)| matches!(thumbs.state(&key(*id)), crate::thumbs::ThumbState::Ready(_)));
+            if drawn && clips.iter().all(|(id, _)| peaks.lock().unwrap().contains_key(id)) {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "a waveform or a thumbnail never came");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    };
+    serve(&h.state().thumbs, &h.state().peaks);
+    assert!(h.state().index.wait_idle() && h.state().thumbs.wait_idle());
+    let folder = Folder::open(&root).unwrap();
+    let hits = folder.counts(Tenant::Media).0;
+    assert_eq!(folder.sizes()[&Tenant::Media].1, 2, "an entry a media");
+    // every file of the two entries, as it was written
+    let files = || -> Vec<(std::path::PathBuf, u64, std::time::SystemTime)> {
+        let mut v = Vec::new();
+        for e in std::fs::read_dir(root.join("media")).unwrap().flatten().filter(|e| e.path().is_dir()) {
+            for f in std::fs::read_dir(e.path()).unwrap().flatten() {
+                let md = f.metadata().unwrap();
+                v.push((f.path(), md.len(), md.modified().unwrap()));
+            }
+        }
+        v.sort();
+        v
+    };
+    let written = files();
+    assert!(written.iter().any(|f| f.0.ends_with("peaks")) && written.iter().any(|f| f.0.ends_with("thumbs")), "{written:?}");
+
+    let peaks: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<MediaId, crate::util::Peaks>>> = Default::default();
+    let svc = crate::util::IndexService::start(peaks.clone(), Default::default());
+    let thumbs = crate::thumbs::ThumbService::start(h.state().model.project(), None);
+    svc.enqueue(Some(root.clone()), clips.to_vec());
+    serve(&thumbs, &peaks);
+    assert!(svc.wait_idle() && thumbs.wait_idle());
+    assert!(folder.counts(Tenant::Media).0 > hits, "nothing was read from the folder");
+    assert_eq!(files(), written, "an entry was computed and written again");
+}
+
+/// Test t3842 (project-cache-folder D3, ui-reach): Preferences list every cache folder with its projects
+/// and size; a folder whose project is gone is marked, its Delete takes it from the disk and the list; a
+/// cap set below a folder's size marks it full and is kept, and its next write drops its oldest entries;
+/// the list is read when it comes on screen and after a change, never per frame. A notice of a full folder
+/// carries a button to the section.
+/// - **PATH** Edit → Preferences → section “Persistent cache”: two folders listed with sizes, one marked
+///   “no project here” → Delete on that row: the row goes and the total drops → the cap of the other row
+///   set to 2 GB: its size shows against it, marked full
+#[test]
+fn t3842_preferences_list_the_cache_folders() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    use kt_media::cache_folder::{Folder, registry};
+    // tall: the section is the window's last, and a click below the fold hits nothing
+    let mut h = harness_sized(1440.0, 1600.0);
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+    assert!(h.state().index.wait_idle());
+    h.step();
+    h.step();
+    let dir = std::env::temp_dir().join(format!("kt-t3842-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let make = |n: &str, project: bool| {
+        let d = dir.join(n);
+        std::fs::create_dir_all(&d).unwrap();
+        let kt = d.join("film.kt");
+        if project {
+            std::fs::write(&kt, b"x").unwrap();
+        }
+        let root = kt_media::cache_folder::beside(&kt);
+        let f = Folder::open(&root).unwrap();
+        f.set_free_for_tests(Some(1 << 50));
+        f.set_protect_for_tests(Some(std::time::Duration::ZERO));
+        for i in 0..3u64 {
+            f.write(&format!("media/m{i}/peaks"), b"PEAK", 1, &vec![1u8; 1 << 20]).unwrap();
+            f.age_for_tests(&format!("media/m{i}"), 1000 + i, 1, 0);
+        }
+        registry::note(&root, Some(&kt));
+        f.flush();
+        root
+    };
+    let (live, orphan) = (make("live", true), make("gone", false));
+    // the orphan was made by another run of the program: it is not open here
+    Folder::forget(&orphan);
+    // this test's rows only: another test of the process may have listed its own
+    let ours = |p: &std::path::Path| p.starts_with(&dir);
+    for r in registry::list() {
+        if !ours(&r.folder) {
+            registry::remove(&r.folder);
+        }
+    }
+    let wait = |h: &mut Harness<'static, KtApp>, what: &str, until: &dyn Fn(&Harness<'static, KtApp>) -> bool| {
+        let deadline = kt_time::test_deadline();
+        while !until(h) {
+            assert!(std::time::Instant::now() < deadline, "{what}");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            h.step();
+        }
+    };
+    crate::reach_tests::open_preferences(&mut h);
+    let texts = |h: &Harness<'static, KtApp>| crate::reach_tests::painted_texts(h).into_iter().map(|t| t.drawn).collect::<Vec<_>>();
+    let has = |h: &Harness<'static, KtApp>, t: &str| h.query_all_by_label_contains(t).count();
+    wait(&mut h, "the folders are not listed", &|h| has(h, "live") > 0 && has(h, "gone") > 0);
+    assert_eq!(has(&h, tr(k::prefs::CACHE_NO_PROJECT)), 1, "the orphan is marked once: {:?}", texts(&h));
+    assert!(has(&h, "3.0 MB") >= 2 && has(&h, "6.0 MB") == 1, "the sizes and their total: {:?}", texts(&h));
+    let reads = h.state().start.caches.reads;
+    for _ in 0..20 {
+        h.step();
+    }
+    assert_eq!(h.state().start.caches.reads, reads, "the open window reads the folders again");
+
+    let rows = h.state().start.caches.rows_for_tests();
+    let at = rows.iter().position(|r| r.folder == orphan).unwrap();
+    let r = crate::widgets::field_probe::rect_of(&format!("prefs.cache.{at}.delete")).unwrap();
+    crate::reach_tests::click_at(&mut h, r.center());
+    wait(&mut h, "the orphan's row stays", &|h| has(h, "gone") == 0);
+    assert!(!orphan.exists(), "the folder stays on the disk");
+    assert!(!registry::list().iter().any(|r| r.folder == orphan));
+    assert!(live.join("media/m0/peaks").exists(), "the other folder was touched");
+    assert_eq!(has(&h, "6.0 MB"), 0, "the total did not drop");
+
+    // the cap below the size: typed as a person does, here through the row's own job
+    let f = Folder::open(&live).unwrap();
+    h.state_mut().set_cache_cap(live.clone(), 2 << 20);
+    wait(&mut h, "the folder is not marked full", &|h| has(h, &crate::tf!(k::prefs::CACHE_FULL, "3.0 MB")) == 1);
+    assert_eq!(registry::cap(&live), Some(2 << 20), "the cap is not kept");
+    f.write("media/new/peaks", b"PEAK", 1, &[1u8; 1000]).unwrap();
+    assert!(!live.join("media/m0/peaks").exists(), "the oldest entry stays past the cap");
+    assert!(live.join("media/m2/peaks").exists());
+
+    // the notice, its button and where it leads
+    h.state_mut().start.prefs_open = false;
+    h.step();
+    wait(&mut h, "no notice of the full folder", &|h| h.state().notices.iter().any(|n| n.action.is_some()));
+    let n = h.state().notices.iter().filter(|n| n.action.is_some()).count();
+    assert_eq!(n, 1, "the folder says it once");
+    h.state_mut().notices_open = true;
+    h.step();
+    h.step();
+    h.get_by_label(tr(k::prefs::CACHE_OPEN)).click();
+    for _ in 0..3 {
+        h.step();
+    }
+    assert!(h.state().start.prefs_open, "the button does not open Preferences");
+    let _ = std::fs::remove_dir_all(&dir);
 }

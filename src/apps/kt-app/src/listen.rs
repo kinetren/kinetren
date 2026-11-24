@@ -37,7 +37,7 @@ impl ListenService {
         let queue: Arc<Mutex<Vec<Task>>> = Arc::new(Mutex::new(Vec::new()));
         let fresh = Arc::new(AtomicBool::new(false));
         let (q, f) = (queue.clone(), fresh.clone());
-        let db: Mutex<Option<(PathBuf, kt_media::index::MediaIndexDb)>> = Mutex::new(None);
+        let db: Mutex<Option<(PathBuf, kt_media::index::MediaStore)>> = Mutex::new(None);
         let lane = kt_time::sched::Lane::service("listen", kt_time::sched::Class::Background, move |ctx| {
             use kt_time::sched::Pump;
             let Some(task) = ({
@@ -50,7 +50,7 @@ impl ListenService {
             if db.as_ref().map(|(p, _)| p) != task.db_path.as_ref() {
                 *db = task.db_path.as_ref().and_then(|p| {
                     let _w = kt_time::block::wait(kt_time::block::kind::SIDECAR);
-                    kt_media::index::MediaIndexDb::open(p).ok().map(|d| (p.clone(), d))
+                    kt_media::index::MediaStore::open(p).ok().map(|d| (p.clone(), d))
                 });
             }
             for (key, file) in task.files {

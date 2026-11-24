@@ -21,3 +21,6 @@ Capability: `durability` (requirement "Per-user data lives in `kinetren`").
   a welcome card showed (t986 on windows-latest). `plain_path` drops the verbatim prefix only
   where the plain spelling names the same file (drive/UNC, shorter than `MAX_PATH`); pure over
   `Os`, held by t1062 on Linux. `locks::key` keeps its own strip: it also folds case.
+- `disk_space` and `mark_unsynced` (project-cache-folder) are the system calls the cache folder needs; the
+  places `project_caches_root`/`cache_folders_registry` are functions of the data folder a caller names,
+  never of `data_dir()` itself, so a test passes its own.

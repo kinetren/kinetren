@@ -1068,7 +1068,7 @@ mod tests {
             let total = video_frames_in(30, r0, r1);
             let mut emitted = 0u64;
             let mut max_progress = 0u64;
-            let info = GpuBackendInfo { name: String::new(), backend: String::new(), software: true };
+            let info = GpuBackendInfo { name: String::new(), backend: String::new(), software: true, driver: String::new() };
             let backends = ExportBackends { video_gpu: Some(Arc::new(Blank(info))), ..Default::default() };
             let stats = render_raw_video_range_with(
                 &p,

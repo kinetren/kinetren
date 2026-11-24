@@ -28,33 +28,44 @@ pub const BUILTIN_IDS: &[&str] =
     "waveform", "spectrum", "levelrings",
 ];
 
+// the source hash of each family crate (build.rs): `SOURCES`, by the crate's name
+include!(concat!(env!("OUT_DIR"), "/sources.rs"));
+
+fn source_of(family: &str) -> u64 {
+    SOURCES.iter().find(|(n, _)| *n == family).map(|(_, h)| *h).expect("a family crate build.rs does not know")
+}
+
 /// The registry of the built-in set; panics on a refusal or when the families do not give exactly
 /// `BUILTIN_IDS` in that order (a built-in is never silently missing).
 pub fn builtin() -> Registry {
     let mut reg = Registry::new();
     let families = [
-        fx_video_color::plugins(),
-        fx_audio_tone::plugins(),
-        fx_audio_dynamics::plugins(),
-        fx_audio_modulation::plugins(),
-        fx_video_distort::plugins(),
-        fx_video_stylize::plugins(),
-        fx_video_blur::plugins(),
-        fx_video_codec::plugins(),
-        fx_video_camera::plugins(),
-        fx_video_tape::plugins(),
-        transitions_basic::plugins(),
-        transitions_styled::plugins(),
-        transitions_volume::plugins(),
-        generators_basic::plugins(),
-        generators_test::plugins(),
-        generators_audio::plugins(),
-        generators_reactive::plugins(),
+        ("fx-video-color", fx_video_color::plugins()),
+        ("fx-audio-tone", fx_audio_tone::plugins()),
+        ("fx-audio-dynamics", fx_audio_dynamics::plugins()),
+        ("fx-audio-modulation", fx_audio_modulation::plugins()),
+        ("fx-video-distort", fx_video_distort::plugins()),
+        ("fx-video-stylize", fx_video_stylize::plugins()),
+        ("fx-video-blur", fx_video_blur::plugins()),
+        ("fx-video-codec", fx_video_codec::plugins()),
+        ("fx-video-camera", fx_video_camera::plugins()),
+        ("fx-video-tape", fx_video_tape::plugins()),
+        ("transitions-basic", transitions_basic::plugins()),
+        ("transitions-styled", transitions_styled::plugins()),
+        ("transitions-volume", transitions_volume::plugins()),
+        ("generators-basic", generators_basic::plugins()),
+        ("generators-test", generators_test::plugins()),
+        ("generators-audio", generators_audio::plugins()),
+        ("generators-reactive", generators_reactive::plugins()),
     ];
-    for p in families.into_iter().flatten() {
-        let id = p.manifest().id.to_string();
-        if let Err(e) = reg.register(p) {
-            panic!("built-in plugin {id}: {e}");
+    for (crate_name, plugins) in families {
+        let source = source_of(crate_name);
+        for p in plugins {
+            let (id, family) = (p.manifest().id.to_string(), p.manifest().media.family());
+            if let Err(e) = reg.register(p) {
+                panic!("built-in plugin {id}: {e}");
+            }
+            reg.set_source(family, &id, source);
         }
     }
     let ids: Vec<String> = reg.ids().iter().map(|s| s.to_string()).collect();

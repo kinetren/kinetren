@@ -413,7 +413,7 @@ impl KtApp {
             place: crate::fx_thumbs::Place::Clip(anchor.id),
             t: pv_t,
             base: self.project_path.as_ref().and_then(|p| p.parent()).map(|p| p.to_path_buf()),
-            index_db: self.index_db_path(),
+            index_db: self.cache_folder(),
         };
         let mut pv = crate::fx_thumbs::PickerCtx::for_scene(&self.fx_thumbs, scene, decode_ok);
         // There is one scroll — of the BODY (`window_body`): the outer `vscroll` of the window

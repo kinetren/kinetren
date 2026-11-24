@@ -2,7 +2,8 @@
 //! from it. t2981, t2982, t2984, t2985 (t2980 and t2983 are unit tests of `render_cache.rs`). The
 //! player tests skip without a wgpu adapter.
 
-use kt_engine::render_cache::{Config, FileIds, disk_key};
+use kt_engine::render_cache::{Config, DiskKey, DiskStore, FileIds, Made, disk_key};
+use kt_media::cache_folder::{self, Folder};
 use kt_engine::{Player, PresentOptions, VideoRenderer};
 use kt_media::{MediaSource, Quality};
 use kt_model::demo::{DemoSources, demo_project};
@@ -87,16 +88,27 @@ fn renderer(p: &Project) -> VideoRenderer {
     VideoRenderer::new_with_facts(p, &facts)
 }
 
-fn key(p: &Project, cache: &kt_cache::BurstCache, t: Tick, q: Quality) -> u64 {
+/// What this build makes with one decoder.
+fn made() -> Made {
+    Made::of(60)
+}
+
+fn key(p: &Project, cache: &kt_cache::BurstCache, t: Tick, q: Quality) -> DiskKey {
+    key_made(p, cache, t, q, &made())
+}
+
+fn key_made(p: &Project, cache: &kt_cache::BurstCache, t: Tick, q: Quality, made: &Made) -> DiskKey {
     let video = renderer(p);
     let files = FileIds::read(&p.media, None);
     let (plan, leaves) = video.probe_durable(cache, t, q);
-    disk_key(&plan, &leaves, &files)
+    disk_key(&plan, &leaves, &files, made)
 }
 
 /// Test t2981 (render-cache-disk D1): the durable key is the same from two renderers over two frames
 /// caches with their own serials, decoded or not; an effect parameter, the file's modification time, a
-/// generator's value and the quality each give another key; another build is another folder.
+/// generator's value, the quality, the decoder's major, the composite code's version, a kernel's version
+/// or WGSL text each give another key, and the device class another folder; a build that changes none of
+/// them keeps the key.
 #[test]
 fn t2981_the_durable_key_survives_a_process_and_follows_the_picture() {
     kt_plugins_builtin::install();
@@ -136,14 +148,186 @@ fn t2981_the_durable_key_survives_a_process_and_follows_the_picture() {
     f.set_modified(std::time::SystemTime::now() - Duration::from_secs(3600)).unwrap();
     drop(f);
     assert_ne!(key(&p, &c1, t, Q), k, "the file's modification time");
-    // another build is another folder
+    // what makes it: the plan's key stays, the salt moves, and the frame is a miss
+    let k = key(&p, &c1, t, Q);
+    for (what, m) in [
+        ("the decoder's major", Made { decoder: 61, ..made() }),
+        ("the composite code", Made { composite: made().composite ^ 1, ..made() }),
+        ("the decode's conversion", Made { pixels: made().pixels + 1, ..made() }),
+    ] {
+        let other = key_made(&p, &c1, t, Q, &m);
+        assert!(other.key == k.key && other.salt != k.salt, "{what}");
+    }
+    // a kernel that runs in the plan: another source (a release that changed it), another WGSL text; a
+    // kernel that does not run changes nothing. Asked over the registry the key reads
+    let with = |id: &str| {
+        let mut q = p.clone();
+        q.clips[1].fx.push(FxInstance::plugin(id).unwrap());
+        key(&q, &c1, t, Q).salt
+    };
+    let reg = kt_plugin_api::installed().unwrap();
+    use kt_plugin_api::Family;
+    assert_ne!(reg.source(Family::Fx, "vhs"), 0, "the assembler names every plugin's source");
+    assert_ne!(reg.source(Family::Fx, "vhs"), reg.source(Family::Fx, "blur"), "of its own crate");
+    assert_ne!(with("vhs"), k.salt, "a kernel that runs is in the salt");
+    assert_ne!(with("vhs"), with("blur"));
+    assert_ne!(with("vhs"), with("halftone"), "two kernels of one crate are two texts");
+    // another device class is another folder of the same cache, and neither touches the other
     let root = tempfile::tempdir().unwrap();
     let raw = || std::sync::Arc::new(kt_engine::render_cache::RawSegments) as std::sync::Arc<dyn kt_engine::render_cache::SegmentCodec>;
-    let a = kt_engine::render_cache::DiskStore::open(root.path(), "build 1", "dev", 1 << 20, raw()).unwrap();
-    let a_dir = a.dir().to_path_buf();
-    let b = kt_engine::render_cache::DiskStore::open(root.path(), "build 2", "dev", 1 << 20, raw()).unwrap();
-    assert_ne!(a_dir, b.dir(), "another build's folder");
-    assert!(!a_dir.exists(), "the older build's folder is removed when the new one opens");
+    let folder = Folder::open(&root.path().join("kinetren-cache")).unwrap();
+    let a = DiskStore::open(folder.clone(), "card|Vulkan|mesa 24", None, raw()).unwrap();
+    let mut seg = a.begin(4, 4, 30).unwrap();
+    seg.push(k, &[9; 64]).unwrap();
+    a.commit(seg, true).unwrap();
+    let b = DiskStore::open(folder, "card|Vulkan|mesa 25", None, raw()).unwrap();
+    assert!(a.dir() != b.dir() && a.contains(k) && !b.contains(k), "another driver's frames are never read");
+}
+
+/// Test t3808 (project-cache-folder D1b): `COMPOSITE_PATH_VERSION` follows the code that makes a
+/// composite's pixels outside the kernels: it is the hash of the files `composite-path.txt` names as they
+/// are now, every shader of kt-gpu and every file of the list is there, and a file that executes a plan is
+/// not missing from it.
+#[test]
+fn t3808_the_composite_paths_version_follows_its_code() {
+    let libs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let list = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("composite-path.txt")).unwrap();
+    let named: Vec<&str> = list.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    fn all(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let mut v: Vec<_> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()).collect();
+        v.sort();
+        for p in v {
+            if p.is_dir() {
+                all(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs" || x == "wgsl") {
+                out.push(p);
+            }
+        }
+    }
+    for n in &named {
+        let p = libs.join(n);
+        assert!(p.exists(), "composite-path.txt names {n}, which is not there");
+        if p.is_dir() { all(&p, &mut files) } else { files.push(p) }
+    }
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for f in &files {
+        for line in std::fs::read_to_string(f).unwrap().lines() {
+            let l = line.trim();
+            if !l.is_empty() && !l.starts_with("//") {
+                for b in l.bytes().chain(*b"\n") {
+                    h = (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3);
+                }
+            }
+        }
+    }
+    assert_eq!(h, kt_engine::render_cache::COMPOSITE_PATH_VERSION, "the version is not the hash of the files: {named:?}");
+    // a file of the executor, the planner or the conversions that reads or writes pixels
+    let has = |f: &str| named.iter().any(|n| f == *n || f.starts_with(&format!("{n}/")));
+    for f in [
+        "kt-gpu/src/engine.rs",
+        "kt-gpu/src/compiled.rs",
+        "kt-gpu/src/shaders/composite.wgsl",
+        "kt-gpu/src/shaders/geom_fused.wgsl",
+        "kt-fx/src/plan.rs",
+        "kt-fx/src/geom.rs",
+        "kt-engine/src/yuv.rs",
+        "kt-engine/src/transitions.rs",
+    ] {
+        assert!(has(f), "{f} makes pixels and is not in composite-path.txt");
+    }
+    let mut shaders = Vec::new();
+    for c in ["kt-gpu", "kt-engine", "kt-fx", "kt-media", "kt-text", "kt-plugin-api"] {
+        all(&libs.join(c).join("src"), &mut shaders);
+    }
+    for s in shaders.iter().filter(|p| p.extension().is_some_and(|x| x == "wgsl")) {
+        assert!(files.contains(s), "{} is a shader outside composite-path.txt", s.display());
+    }
+}
+
+/// Test t3833 (project-cache-folder D1, D3): each project's frames lie in its own cache folder; a folder
+/// whose cap is smaller than its loop replaces its oldest segments as the loop is written, the other
+/// folder is untouched, and the bars draw only what is still there.
+#[test]
+fn t3833_each_projects_frames_lie_in_its_own_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = |n: &str| cache_folder::beside(&dir.path().join(n).join("film.kt"));
+    std::fs::create_dir_all(dir.path().join("a")).unwrap();
+    std::fs::create_dir_all(dir.path().join("b")).unwrap();
+    let Some((a, moments)) = player(&folder("a"), 0.57) else { return };
+    prerender(&a, &moments);
+    // its open segment is committed by then
+    drop(a);
+    let files = |root: &std::path::Path| -> Vec<String> {
+        let mut v = Vec::new();
+        for f in walk(root) {
+            if f.extension().is_some_and(|x| x == "idx") {
+                v.push(f.file_name().unwrap().to_string_lossy().into_owned());
+            }
+        }
+        v.sort();
+        v
+    };
+    let held = files(&folder("a"));
+    assert!(!held.is_empty() && folder("a").join("results/v3").is_dir(), "the frames are the folder's: {held:?}");
+
+    // the second project: room for a few frames of its loop only
+    let small = Folder::open(&folder("b")).unwrap();
+    small.set_protect_for_tests(Some(Duration::ZERO));
+    let frame = 160 * 90 * 4;
+    let Some((b, _)) = player(&folder("b"), 0.58) else { return };
+    // a segment of three frames and a bit fits; the prerender writes run after run
+    small.set_cap(8 * frame);
+    for t in &moments {
+        b.note_preview_cost(*t, 1_000_000_000, (160, 90));
+    }
+    b.render_cache().kick();
+    let deadline = kt_time::test_deadline();
+    while small.counts(cache_folder::Tenant::Frames).2 == 0 {
+        assert!(Instant::now() < deadline, "nothing was replaced: {:?}", small.known_sizes());
+        b.render_cache().kick();
+        for k in 0..40 {
+            b.note_preview_cost(Tick(moments[0].0 + k * b.video_grid().frame_step()), 1_000_000_000, (160, 90));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // the frame being written now is on the disk before the count
+    let used: u64 = small.sizes().values().map(|v| v.0).sum();
+    assert!(used <= 9 * frame + 1024, "the folder grew past its cap: {used}");
+    assert_eq!(files(&folder("a")), held, "the other project's frames were touched");
+    // what the bars draw is there
+    let (runs, _) = b.final_video_runs();
+    for t in runs.iter().flat_map(|r| (r.start..r.end).step_by(b.video_grid().frame_step() as usize)) {
+        if b.kept_picture_reader(Tick(t))().is_none() {
+            // dropped since the bars were asked: they must not draw it now
+            let (now, _) = b.final_video_runs();
+            assert!(!now.iter().any(|r| r.contains(&t)), "the bars draw a dropped moment {t}");
+        }
+    }
+}
+
+fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        if e.path().is_dir() { out.extend(walk(&e.path())) } else { out.push(e.path()) }
+    }
+    out
+}
+
+/// Test t3834 (project-cache-folder D5): the folder the former builds kept every project's frames in is
+/// deleted; nothing else of the user's data is.
+#[test]
+fn t3834_the_former_store_is_deleted() {
+    let data = tempfile::tempdir().unwrap();
+    let old = data.path().join("render-cache/v2-0123456789abcdef/ff");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::write(old.join("x.idx"), b"old").unwrap();
+    std::fs::create_dir_all(data.path().join("recovery")).unwrap();
+    for _ in 0..2 {
+        kt_engine::render_cache::remove_former(data.path());
+    }
+    assert!(!data.path().join("render-cache").exists());
+    assert!(data.path().join("recovery").exists());
 }
 
 const MOMENTS: i64 = 6;
@@ -165,9 +349,9 @@ fn player(root: &std::path::Path, opacity: f32) -> Option<(Player, Vec<Tick>)> {
     player.set_render_cache(Some(Config {
         codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
         root: root.to_path_buf(),
-        build: "test build".into(),
+        made: kt_engine::render_cache::Made::of(60),
         base: None,
-        cap: 1 << 30,
+        cap: None,
     }));
     let grid = player.video_grid();
     let step = grid.frame_step();
@@ -324,9 +508,9 @@ fn t2989_no_encoder_composes_nothing() {
     p.set_render_cache(Some(Config {
         codec: std::sync::Arc::new(NoEncoder),
         root: root.path().to_path_buf(),
-        build: "test build".into(),
+        made: kt_engine::render_cache::Made::of(60),
         base: None,
-        cap: 1 << 30,
+        cap: None,
     }));
     let rc = p.render_cache();
     let items = kt_time::trace::testing::capture(|| {
@@ -395,9 +579,9 @@ fn t3201_a_heavy_run_is_one_segment_from_its_start() {
     p.set_render_cache(Some(Config {
         codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
         root: root.path().to_path_buf(),
-        build: "test build".into(),
+        made: kt_engine::render_cache::Made::of(60),
         base: None,
-        cap: 1 << 30,
+        cap: None,
     }));
     let items = kt_time::trace::testing::capture(|| prerender(&p, &moments));
     let stores: Vec<(u64, u64)> = kt_time::trace::testing::recs(&items)
@@ -517,9 +701,9 @@ fn t3317_a_segment_is_written_from_planes() {
     p.set_render_cache(Some(Config {
         codec: std::sync::Arc::new(Nv12Segments { planes: planes.clone(), rgba: rgba.clone() }),
         root: root.path().join("nv12"),
-        build: "test build".into(),
+        made: kt_engine::render_cache::Made::of(60),
         base: None,
-        cap: 1 << 30,
+        cap: None,
     }));
     prerender(&p, &moments);
     assert_eq!(rgba.load(std::sync::atomic::Ordering::Relaxed), 0, "no RGBA frame reached the encoder");
@@ -561,9 +745,9 @@ fn t3600_a_run_known_by_one_moment_is_one_segment() {
     p.set_render_cache(Some(Config {
         codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
         root: root.path().to_path_buf(),
-        build: "test build".into(),
+        made: kt_engine::render_cache::Made::of(60),
         base: None,
-        cap: 1 << 30,
+        cap: None,
     }));
     let items = kt_time::trace::testing::capture(|| {
         p.render_cache().kick();

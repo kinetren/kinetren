@@ -524,7 +524,7 @@ interface, space does not lead to pause until I close the effect window".
 
 ### Requirement: Thumbnails, sidecar and the event preview compute the same map as render
 Scrolling/zooming the timeline MUST NOT generate decode requests (invariant 8):
-waveforms come from the peak pyramid, thumbnails from the sidecar DB; while there is no index, placeholders.
+waveforms come from the peak pyramid, thumbnails from the media index; while there is no index, placeholders.
 Everything that may fail in the worker SHALL publish a FAILURE (a negative
 cache); the thumbnail sources are LRU. Thumbnail keys are quantized FROM ZERO OF THE FILE (a shared
 cache bin ↔ timeline). The translation "event tick → source frame" SHALL be one
@@ -550,7 +550,7 @@ reversed clip drew something other than what played.
 - **TEST** t549 (`src/apps/kt-app/src/thumbs.rs`), t249 (`src/apps/kt-app/src/layout_tests.rs`)
 
 #### Scenario: Generator thumbnail without a file
-- **WHEN** a `gen:` source without a file, with a sidecar DB and without one
+- **WHEN** a `gen:` source without a file, with a cache folder and without one
 - **THEN** the service returns the look (video without audio), zero duration and a real thumbnail of the given colour
 - **TEST** t476 (`src/apps/kt-app/src/thumbs.rs`)
 

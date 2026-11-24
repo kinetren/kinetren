@@ -161,6 +161,7 @@ pub trait MediaSource: Send {
 /// Frames in a level-0 block of the peak pyramid (docs/media-index.md).
 pub const PEAK_BLOCK_FRAMES: usize = 256;
 
+pub mod cache_folder;
 pub mod factory;
 pub mod frame_alloc;
 pub mod ffmpeg;
@@ -171,6 +172,7 @@ pub mod listen;
 pub mod muxer;
 // The 3×5 font moved into the plugin API with the generators (plugin-api-stage1, D13).
 pub(crate) use kt_plugin_api::pixfont;
+pub mod old_sidecar;
 pub mod placeholder;
 pub mod segment;
 #[cfg(feature = "ffmpeg")]

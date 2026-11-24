@@ -830,6 +830,7 @@ row_length = "Длина вывода"
 row_size = "Размер"
 size_kb = "{0} КБ"
 size_mb = "{0} МБ"
+size_gb = "{0} ГБ"
 size_value = "{0}, к концу около {1}"
 row_bitrate = "Битрейт"
 bitrate_value = "{0} Мбит/с"
@@ -963,6 +964,8 @@ clip_at = "{0} @ {1}с"
 # One-off messages note()/warn(). There is NO agreement with the number:
 # we write “noun: N” (rule R.19, see README).
 [msg]
+cache_folder_full = "Кэш «{0}» полон ({1}): самые старые результаты заменяются"
+cache_folder_elsewhere = "Папка «{0}» не принимает файлы: её кэш в папке пользователя ({1})"
 plugin_missing = "Плагина нет в этой сборке: {0} — сохранён в файле и пропускается (события: {1})"
 area_needs_band = "Сначала выделите рамкой участок таймлайна (или регион)"
 area_stem = "область"
@@ -2059,6 +2062,20 @@ ffmpeg_missing = "Не найден — медиа показаны заглуш
 ffmpeg_open = "FFmpeg…"
 hint_ffmpeg = "Где найден FFmpeg и как его получить"
 close = "Закрыть"
+section_cache = "Постоянный кэш"
+cache_about = "Папка каждого проекта хранит пересчитываемое в своей «kinetren-cache». Удаление стоит времени, но не работы."
+cache_total = "Занято сейчас: {0}"
+cache_none = "Папок кэша пока нет"
+cache_no_project = "проекта здесь нет"
+cache_untitled = "безымянный проект"
+cache_elsewhere = "Папка проекта не принимает файлы: {0}"
+cache_synced = "В синхронизируемой папке: выгружается"
+cache_full = "{0}, полон"
+cache_cap = "Предел, ГБ"
+cache_delete = "Удалить"
+hint_cache_delete = "Удалить эту папку кэша: всё в ней будет посчитано снова, когда понадобится"
+hint_cache_cap = "На пределе самые старые результаты заменяются"
+cache_open = "Постоянный кэш…"
 
 # The deck face of the VHS tape simulation (vhs-tape-simulation, D11).
 [deck]

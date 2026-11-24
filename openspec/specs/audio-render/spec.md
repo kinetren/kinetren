@@ -323,7 +323,7 @@ Why: accumulating squares in f32 over ten minutes drifts by 0.37 LU against a to
 
 #### Scenario: The source's loudness on the pyramid pass
 - **WHEN** the index service builds the peak pyramid of a file; the bin's card shows a hint
-- **THEN** the LUFS/dBTP of the source are computed on the same pass and lie in the sidecar (the second run — without decoding); the display does not place a request, "not measured" is said in words, not shown as zero
+- **THEN** the LUFS/dBTP of the source are computed on the same pass and lie in the media index (the second run — without decoding); the display does not place a request, "not measured" is said in words, not shown as zero
 - **TEST** t411 (`src/apps/kt-app/src/util.rs`), t412 (`src/apps/kt-app/src/layout_tests.rs`)
 
 #### Scenario: Offline analysis does not take the disk away from playback

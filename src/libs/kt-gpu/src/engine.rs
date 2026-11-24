@@ -1495,6 +1495,7 @@ impl GpuFxEngine {
         let info = GpuBackendInfo {
             name: ai.name.clone(),
             backend: format!("{:?}", ai.backend),
+            driver: format!("{} {}", ai.driver, ai.driver_info),
             software: ai.device_type == wgpu::DeviceType::Cpu
                 || name_l.contains("llvmpipe")
                 || name_l.contains("softpipe")
