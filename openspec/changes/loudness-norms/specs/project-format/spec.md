@@ -1,8 +1,8 @@
 ## ADDED Requirements
 
 ### Requirement: The loudness target and the program stage are written by content
-The project's loudness target, the role offsets and the program stage SHALL raise the `.kt` version by content only when
-they differ from their defaults; a project with the defaults SHALL be written byte for byte as before; an older build
+The project's loudness target and the program stage SHALL raise the `.kt` version by content only when
+they differ from their defaults (the stage's default is none); a project with the defaults SHALL be written byte for byte as before; an older build
 SHALL refuse a file with them naming the version.
 Why: an older build would drop the program stage on save and change the mix.
 

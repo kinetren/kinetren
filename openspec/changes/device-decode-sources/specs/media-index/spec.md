@@ -66,17 +66,24 @@ per source and up to four decoders per file; a single picture does not repay a d
 - **TEST** t3309 (`src/libs/kt-media/tests/segment.rs`), t3310 (`src/apps/kt-app/src/thumbs.rs`)
 
 ### Requirement: Device decoders live within the memory ledger
-A device decoder's surface pool SHALL be a holding of the ledger's tenant `Surfaces` (base 0, granted
-after the stream history and before the decoded frames). A decoder SHALL open on the device only when the
-ledger grants its pool, otherwise on the processor; the kind SHALL be kept across a backward reopen; a
-grant taken back SHALL move the decoder to the processor at its next reopen or drop; an offline job's hold
-SHALL cover its sources' surfaces. No refusal SHALL change a byte of a frame.
-Why: device-decode-sources D4 — a 4K H.264 decoder holds 17+ surfaces of 12 MB; Vegas's NVDEC is reported
-to take all video memory, Resolve uses the device only while memory is left (F-MED-010).
+A device decoder's surface pool SHALL be counted in the ledger's fixed tenant `Surfaces` and SHALL fit, with the
+pools already held, in a bound of at most 1 GiB and at most a quarter of the memory available when the decoder opens.
+A decoder whose pool does not fit SHALL open on the processor, say so, and ask again at its next backward reopen; a
+decoder on the device SHALL stay on it across a reopen. An export's claim SHALL not change the bound. A decoder opened
+later for the same source SHALL take the settings the source was opened with. None of it SHALL change a byte of a frame.
+Why: device-decode-sources D4, D6; found-defects 1064 — a 4K H.264 decoder holds 17+ surfaces of 12 MB; Vegas's NVDEC is
+reported to take all video memory, Resolve uses the device only while memory is left (F-MED-010). A growing tenant is
+granted nothing while an export lives, so the export would never decode on the device; and a render's second decoder of
+a file took the preview's settings, being opened outside the render's scope.
 
-#### Scenario: A refused pool decodes on the processor with the same frames
-- **WHEN** the ledger grants the pools of two device decoders of a file and refuses a third, a backward seek reopens each, the grant is taken back, and the source is dropped
-- **THEN** two decoders report the device and the third the processor; the kinds survive the reopen; after the take-back the next reopen is on the processor; every frame equals the processor's decode; after the drop the tenant holds zero bytes
+#### Scenario: A pool that does not fit decodes on the processor with the same frames
+- **WHEN** the bound takes the pools of two device decoders of a file and not a third; a backward seek reopens each; a claim is taken; another source's decoder is dropped and the third reopens
+- **THEN** two decoders report the device and the third the processor with the room it lacked; the kinds survive the reopen and the claim; after the drop the third's reopen is on the device; every frame equals the processor's decode; after the source's drop the tenant holds zero bytes
+- **TEST** t3305 (`src/libs/kt-media/tests/segment.rs`)
+
+#### Scenario: A source's later decoder keeps the source's settings
+- **WHEN** a source is opened under a render's settings (3 threads, the device off) and a span read on another thread, outside the scope, opens its second decoder
+- **THEN** the second decoder has 3 threads and decodes on the processor
 - **TEST** t3305 (`src/libs/kt-media/tests/segment.rs`)
 
 ### Requirement: Every source of a preview or an export opens through one factory call
@@ -88,6 +95,6 @@ kt-cli's `open_render_sources` and `open_sources`); a rule decided at one of the
 others (device-decode-sources D6).
 
 #### Scenario: The four openers ask the factory
-- **WHEN** the preview, the render window's source list, kt-cli `export` and kt-cli `probe` open the same fake-driver file
-- **THEN** each source names the same decoder kind and reason, and the render window's source reads the packet index instead of scanning the file
+- **WHEN** the preview, the render window's source list, kt-cli `export` and kt-cli `probe --time` open the same fake-driver file, and a facts query and the audio-reactive series open it too
+- **THEN** each source names the same decoder kind and reason, the render window's source reads the packet index instead of scanning the file, and the last two open no device decoder
 - **TEST** t4102 (`src/libs/kt-media/tests/segment.rs`)

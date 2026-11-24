@@ -45,7 +45,7 @@ pointer copies, D4).
 Which fields: `Project.{clips, transitions, morphers, cameras, foreign}`, the same in `Sequence`, and
 `ResolvedReel.clips`. Media, tracks, markers and areas stay plain (small, rarely the bulk; listed in D6).
 
-## D1a. The container `Events<T>` (implementation-ready, 2026-11-20)
+## D1a. The container `Events<T>` (implementation-ready, 2026-11-20; `&mut` revised 2026-11-24)
 
 A bare `Vec<Shared<T>>` would touch every reader: `clips.iter()` has 443 call sites, `clips[i]` 417,
 `clips.len()` 111 and `clips.push` 634 (most in tests). So the fields become
@@ -57,7 +57,8 @@ is cheap and honest:
 | `iter()`, `&events` in `for` | yields `&T` (through the cell) | none |
 | `events[i]` (read) | `Index<usize, Output = T>` | none |
 | `events[i].x = v` | `IndexMut` → `Shared::edit` (copy-on-write of that one cell) | one copy if shared |
-| `iter_mut()` | yields `&mut T` through `edit()` on EVERY cell | copies every shared cell: correct but costly; the guard t3375 counts the copies of every command family on a large project, so a command left on `iter_mut` is red |
+| `iter_mut()`, `for c in &mut events` | **not there** | the compiler lists every writer (121 `&mut …clips`-shaped borrows, 73 of them `for … in &mut …` loops, on 2026-11-24); each becomes `edit_if`, `edit_where` or `edit(i)`. A container that yielded `&mut T` through `edit()` would compile them as they are and copy the whole project per `MoveClip` (a loop over every event that writes two) |
+| the same, where every event IS written (loading: `normalize`, `migrate_gen_to_events`, importers, test builders) | `edit_all()` | copies every shared cell, and its name says so; a freshly loaded project's cells are not shared, so it copies none |
 | `push(T)`, `insert(i, T)`, `extend(iter of T)` | take `T` and wrap it | none |
 | `len`, `is_empty`, `first`, `last`, `get`, `remove`, `retain`, `sort_by_key`, `truncate`, `drain(..)` | same names; `remove`/`drain` give `T` by `Arc::unwrap_or_clone` | none |
 | `vec![…]` literals | `vec![…].into()` (`From<Vec<T>>`), `collect()` (`FromIterator<T>`) | none |
@@ -68,8 +69,25 @@ is cheap and honest:
 | `PartialEq` | pointer-equal cells skipped, then values | O(edited) |
 
 Fine-grained writers use `events.edit(i)`, `events.edit_where(|c| c.id == id)`, or
-`events.edit_if(i, |v| changed)` (no copy when nothing changes). `ResolvedReel`'s `Cow<'a, [T]>` fields
+`events.edit_if(|v| would_change, |v| write)` over the whole vector (the test reads, the write copies). The row
+shifts of `insert_track`, `merge_reel` and `unmerge_reel` (`project.rs:815–828`, `:925–936`, `:6726–6797`, `:6910–6920`)
+are `edit_if`: an unchanged lane copies nothing. `ResolvedReel`'s `Cow<'a, [T]>` fields
 become `Cow<'a, Events<T>>`: the borrowed path stays free (t673/t676), and an owned one is pointer copies.
+
+Where the types move (checked against orch `286c406c`, 2026-11-24):
+- **`trait Reel`** (`project.rs:400`): its five accessors return `&Events<…>`. Three of them have default bodies `&[]`,
+  which borrow a promoted constant; an `Events` is not promoted (it drops a `Vec`). Each default returns a `static EMPTY:
+  Events<…> = Events::new()` of its own (`new` is a `const fn`; `Shared<T>` is `Sync` since `OnceLock<u64>` is).
+- **`apply_overrides` and `apply_one`** (`published.rs:252`, `:290`) take `&mut Events<…>` and write one event by
+  `edit_where`: an instance's override copies the events it names, not the reel. Their `clips.to_vec()` snapshot is a
+  pointer copy.
+- **`links::resolve_derived`** returns `Cow<'_, Events<ClipEvent>>`; a project with one link copied every event of the
+  reel (`into_owned` in `morph_pass`, `project.rs:7006`): only the followers are edited now.
+- **`listen::feed_for`** (gen-audio-reactive, `kt-engine/src/listen.rs:80`) and its `Vec<&[ClipEvent]>` take `&Events`.
+- **Unchanged:** `ClipBlock` (the clipboard, `ops.rs:15`) and `Command` hold plain values; `fx_in`, the wiring of
+  `fx-graph-dag`, is a field of the event: it is in the Debug text, so in the fingerprint, with nothing to add.
+- **The wiring's writers** (`mirror_halves`, `model.rs:91–348`; `SetFxIn`, `:2616–2643`) take several `&mut` fields of one
+  event: one `let c = clips.edit(i);` and then the field borrows, as today.
 
 ## D2. The model's copies become pointer copies
 
@@ -83,18 +101,24 @@ become `Cow<'a, Events<T>>`: the borrowed path stays free (t673/t676), and an ow
 | Viewer cut (`kt-app`) | deep | pointers + one `edit()` |
 | autosave (from `doc_arc`) | serialization only | unchanged |
 
-The rule that keeps it honest: **a command writes an event only through `edit()`**. `iter_mut()` on a
-`Vec<Shared<T>>` yields `&mut Shared<T>`, which does not deref mutably, so the compiler finds every
-writer; each becomes `c.edit().field = …`. A writer that edits EVERY event (a lane renumbering,
+The rule that keeps it honest: **a command writes an event only through `edit()`**. `Events` has no `iter_mut` and no
+`IntoIterator` by `&mut` (D1a), so the compiler finds every writer. A writer that edits EVERY event (a lane renumbering,
 `set_lane_order`) copies only the events whose value changes: it compares before calling `edit()`
 (`Shared::edit_if(|v| …)`), or a renumbering of 3 rows would copy the project.
 
 ## D3. The builders key by the cell's fingerprint
 
 `incremental.rs`: the audio and video per-event keys take `c.fp()` instead of `hash_debug(c)` — the same
-number, computed once per version of the event instead of once per build. `resolve`'s per-build memo
-keeps its key; the whole-project questions that hashed every event (`scene_base` parts, generator sources)
-read the cells' fingerprints where they hashed the events' text. `Cost::EventHash` counts each `fp`
+number, computed once per version of the event instead of once per build. (`audio.rs:924`, `video.rs:1404`; the other callers of `hash_debug`, `incremental.rs:157` the overrides and
+`video.rs:1359` the cameras, hash no event.) `resolve`'s per-build memo keeps its key. The video key's text goes on holding
+`heard` (gen-audio-reactive) and the `raster` beside the fingerprint.
+
+**A reel's revision keeps its number** (`hash_reel`, `video.rs:549`, revised 2026-11-24). It hashes the Debug text of the
+reel's vectors, and the number names reel strips on disk (`reels/` of the cache folder) and the nested keys: mixing the
+cells' fingerprints instead would change it. So the reel's OWN part (everything before its nested reels) is memoized on
+the builder's thread beside `BuildMemo`: the last `Events` vectors of that reel (pointer copies), its tracks, published
+set, raster and fps, and the number. Pointer-equal vectors and an equal rest give the number with no text. An edit in the
+root hashes no reel; an edit in a reel hashes that reel and the digests above it. `Cost::EventHash` counts each `fp`
 computed: an edit of one event computes one (t3371).
 
 ## D4. The resolve passes cells through
@@ -125,7 +149,10 @@ lookups (~5 ms); a drag's CPU falls in the same proportion. The guards do not ti
 | `apply_coalesced` (drag) | step | as `apply_batch` | D2 |
 | builders' event keys | build | hash every event | D3 |
 | root resolve | build | new vector of every event | D4 |
-| `scene_base` / generator salt | build | hashes model text | D3 (fingerprints) |
+| a reel's revision (`hash_reel`), per reel | build | hashes the reel's text | D3 (its own part memoized by pointer) |
+| stream fronts, masks, cameras (`video_stream.rs:276`, `:479`, `:515`; `video.rs:1359`, `:1460`) | build of a touched layer | hashes that layer's text | unchanged: inside `incremental::video_clip`'s miss |
+| `links::resolve_derived` | build, with any link | clones the reel | D1a (the followers only) |
+| an instance's overrides (`resolve_reel`) | build, per instance with overrides | clones the reel | D1a (the named events only) |
 | autosave | quiet | serializes | unchanged (must write text) |
 | telemetry `Signal::Command` | edit | the command, not the project | unchanged |
 | `validate` after a batch | edit | linear by requirement (t-linear) | unchanged; its per-event checks could skip pointer-equal events — a follow-up if measured |
@@ -153,3 +180,6 @@ Spare: t3375–t3378.
   command and checks `fp()` equals `hash_debug` of the value.
 - Refcount traffic on the engine threads: a build holding `Arc<Project>` already shares it; cells add one
   atomic per event per clone, which is the cost the change trades the deep copy for.
+- **A long branch.** Section 3 touches some 120 writers and every reader that names `&[ClipEvent]`. It starts when
+  `fx-graph-dag` v2d and `durable-moment-key` have merged, is one commit that changes no logic, and nothing else runs in
+  kt-model or kt-engine until it is in orch (`docs/build-queue.md`).

@@ -1,18 +1,17 @@
 # Build queue of the open changes
 
-The order in which the open OpenSpec changes (`openspec/changes/*`, 40 on 2026-11-20, orch `941b25cd`) go
-to executors, three at a time (`docs/orchestrator.md`: "три исполнителя"; the owner: every free slot used).
-Written by the spec session; the orchestrator owns it and moves rows as work lands. Revised 2026-11-22 for
-the owner's second round (kkt-26.11.20b B1–B4) and the three changes added since (B10–B12).
+The order in which the open OpenSpec changes (`openspec/changes/*`) go to executors, three at a time
+(`docs/orchestrator.md`: "три исполнителя"; the owner: every free slot used). Written by the spec session; the
+orchestrator owns it and moves rows as work lands. Rewritten 2026-11-24 (spec-engine) against orch `286c406c`
+(stage 24), with spec-features' `442433da`.
 
-**How a wave is made.** Each change is given the AREAS it writes (below). Two changes in one wave share
-no area, so two executors never edit the same structures. A wave may start only when the changes it
-needs first have merged. A change whose owner question is open does not start. Its slot goes to the
-next ready row of a later wave whose areas are free.
+**How a slot is filled.** Each change is given the AREAS it writes (below). Two changes run together only when they
+share no area, or when the sharing is named here and is of different files. A change starts when what it needs first
+has merged into orch. A change whose owner question is open does not start.
 
-**One shared thing is allowed in parallel: the `.kt` version number.** A change that "raises the file by
-content" takes the next free `PROJECT_FILE_VERSION_*` when it merges. If two land in one stage, the
-second renumbers at its merge (a one-line conflict in `project_file.rs`). These changes are marked **v+**.
+**One shared thing is allowed in parallel: the `.kt` version number.** A change that "raises the file by content"
+takes the next free `PROJECT_FILE_VERSION_*` when it merges. If two land in one stage, the second renumbers at its
+merge. These changes are marked **v+**.
 
 ## Areas (what "touches" means)
 
@@ -25,7 +24,7 @@ second renumbers at its merge (a one-line conflict in `project_file.rs`). These 
 | GEOM | `kt-fx/src/geom.rs` ↔ `kt-gpu/src/shaders/geom_fused.wgsl` (a pair, one commit), `plugins/fx-video-distort` |
 | DECODE | `kt-ffmpeg/src/source_impl.rs`, `colour.rs`, `kt-media/src/ffmpeg.rs`, `factory.rs`, `kt-engine/src/worker.rs` |
 | EXPORT | `kt-engine/src/export.rs`, `export_pipeline.rs`, `kt-ffmpeg/src/muxer_impl.rs`, `format.rs`, `encoders.rs`, `ExportReport` |
-| CACHE | `kt-engine/src/render_cache.rs`, `kt-media/src/index.rs` (the sidecar), the disk tiers |
+| CACHE | `kt-cache`, `kt-engine/src/render_cache.rs`, `kt-media/src/cache_folder.rs`, `index.rs` |
 | AUDIO | `kt-engine/src/audio.rs`, `mix.rs`, `fxstore.rs` |
 | PLAYER | `kt-engine/src/player.rs` (prefetch, present, at-rest jobs) |
 | FX-UI | `kt-app` `node_editor.rs`, `fx_editor.rs`, `widgets` chain parts |
@@ -35,187 +34,131 @@ second renumbers at its merge (a one-line conflict in `project_file.rs`). These 
 | DIALOG | `kt-app` `render_dialog.rs` |
 | COLOR-FX | `plugins/fx-video-color` |
 | LIBRARY | `kt-app` `ffmpeg_setup.rs` → `library/`, `kt-ffmpeg/src/search.rs`, `kt-dirs` |
+| TESTS | `kt-time` test helpers, `.config/nextest.toml`, `scripts/live/kt_live.py`, `apps/kt-cli/tests/dist_guard.rs` |
 
-## Not executor work, or already in flight
+## Running now (2026-11-24)
 
-| Change | State | What it needs |
+| Change | Executor | Areas | What is left |
+|---|---|---|---|
+| `fx-graph-dag` v2d (and the rest of v2b: 2.3c, 2.5–2.7, t3228) | fx-graph | FX-UI; MODEL in small (`model.rs`/`ops.rs`: the editor's slot commands keep the wiring); `kt-cli` `probe` | 12 tasks. **Not beside durable-moment-key:** "the stream memo's want for a read's stage" and t3228 (STREAM) and 2.6's prewarm ids and held-frame count (GPU) wait until it merges |
+| `durable-moment-key` | mosh-sharp | CACHE, PLAYER, STREAM (`ident`), GPU (`plan_key`), `kt-media` sources (the identity), `worker.rs` | all of it |
+| own-data-dir (row 829) | features-slow | `kt-dirs`, `kt-cli` `main.rs`, `trace_query.rs`, `tests/cli.rs`, the live stand | — |
+
+## Built: to archive, not to build
+
+| Change | State |
+|---|---|
+| `project-cache-folder` | built; its archive is the first commit of branch `durable-moment-key` (`e19e9c5d`) |
+| `disk-bytes-once` | 4 of 4: archive |
+| `stream-picture-stays` | built; 2.4 (the compute generator's twin) is "not this change's shape" by its own text: it moves to found-defects; 4.2 is row 663's closing and the archive |
+| `fx-graph` | v1a–v1d merged. 3.5–3.6 (live `vhs_sound`, `stream_sound`, `camera_mic`, `morph_pair`; idle with both windows open) go into v2d's live work; 3.1–3.2 are built as 3.10 and v1d; 5.0 is the archived `track-device-sound`; 6.1 is `fx-graph-dag`. The executor marks them and archives |
+| `loop-play-latency-hold` | 13 of 16; a wine probe and the owner's repeat: an owner check, not a slot |
+| `window-chrome`, `track-device-sound` and the rest of stages 22–24 | archived |
+
+## Next ready row per free area
+
+A row here needs nothing unmerged except what the last column names. ★ = the owner said "build now" (kkt-26.11.20).
+
+| Area | Next row | With the three above |
 |---|---|---|
-| `fx-graph` | in flight (24/31 tasks; v1d merged) | its executor finishes section 3 (FX window with partners, morpher window, live scenarios, idle) |
-| `disk-bytes-once` | done (4/4) | archive only (`/opsx:archive`) |
-| `loop-play-latency-hold` | 13/16; the rest is a wine probe and the owner's repeat | an owner check, not a slot; archive after his answer |
-| `export-host-copy` | stages 1–3 merged; Q1 answered "Сделать сейчас" (A13) | the dma-buf handoff, a wave-2 slot below |
-| `fx-lens-and-camera` | blocked | `plugin-api-stage1` task 4.1 (a positioned tap, geometry primitives in the API, a barrier on the GPU); its presets (task 1.x) may go with any wave |
-| `flatpak-flathub` | 11/22, owner's Open Questions 1–6 not asked | the questions first; needs `hw-encode-context`'s VAAPI encode |
+| DECODE | ★ `device-decode-sources` | **section 1 and 2.1 may start now** (kt-ffmpeg, `fixtures/fake_va`, `kt-time/mem.rs`: no file of the three). 2.2 on waits for durable-moment-key (`kt-media/ffmpeg.rs`, `worker.rs`) and section 3 for own-data-dir (`trace_query.rs`, kt-cli) |
+| TESTS | `rest-is-said` (the reds under load: rows 958, 960, 961, 966) | sections 1 and 3 (`kt-time`, nextest, finish.sh, the bench's end) now; section 2's actors in `player.rs` and `render_cache.rs`, and row 960, after durable-moment-key |
+| EXPORT, DIALOG | `render-result-check` (S), then `loudness-norms` (its base is the unmerged branch `render-loudness-norms`) | now |
+| MODEL (files v2d does not write) | `timecode-is-text` (`genmedia.rs`, `project_file.rs`, `legacy_import.rs`, `gen_ui.rs`) | now; format 8 is merged |
+| MODEL (all of it) | ★ `shared-events` | **after v2d and durable-moment-key merge**, and alone in kt-model/kt-engine until its section 3 is merged |
+| AUDIO | ★ `track-stage-preroll`, then ★ `durable-history-and-mix` (the mix tier) | after durable-moment-key (both write `player.rs`) |
+| COLOR-FX | `chroma-key-upgrade` **v+** | now (its Viewer menu item waits for v2d) |
+| MASKS | `magic-wand-mask` **v+** | now; its model field is one enum variant, a text merge with v2d |
+| PREVIEW-UI | `preview-canvas-and-gizmos` | now: it stood after `frame-format-variants` by area order only, its design asks nothing of it |
+| SHELL | `memory-breakdown` | now (it and device-decode 2.1 both append a `Tenant`: the second to merge takes the next number) |
+| LIBRARY | `download-library` | after own-data-dir (`kt-dirs`) |
+| GPU | `scopes` | after durable-moment-key and v2d's 2.6; its own need, `stream-picture-stays`, is built |
+| new crates | `wasm-plugin-host`; `openfx-host` after it | now |
+| release build | `arm-build` (Linux aarch64) | now; it shares no file with anybody |
+| the plan | `simulated-elements` | after durable-moment-key and `motion-driven-params` (itself after `shared-events`) |
 
-## Waves (owner-answered work)
+**Recommended next three**, as the slots free:
+1. ★ `device-decode-sources` at the first free slot: section 1 first, the rest by the time durable-moment-key merges.
+2. ★ `shared-events` as soon as v2d and durable-moment-key are in. Every later MODEL row waits for it.
+3. `rest-is-said` beside either: the reds it ends are paid for in every `finish.sh`.
 
-★ = the owner said "build now" (kkt-26.11.20).
+## Order after that
 
-### Wave 1
-
-| Change | Size | Needs first | Areas | Owner question | Tests |
-|---|---|---|---|---|---|
-| ★ `shared-events` | L | — | MODEL (the event vectors everywhere, mechanical), AUDIO and video builder keys (`incremental.rs`) | answered A19 (Q31 b); implementation-ready tasks | t3367–t3375 |
-| ★ `stream-picture-stays` | L | — | STREAM (`render_held`), GPU (held layer input, planes→RGBA pass), SHELL (`run` opens the device), `kt-gpu` `context.rs`/`compute.rs`/`lib.rs` `export_engines` | answered A7 (Q51 b: build now, no measurement first) | t3812–t3822 |
-| ★ `device-decode-sources` | L | — | DECODE, `kt-time/src/mem.rs` (tenant `Surfaces`), `fixtures/fake_va` | answered A12 (on by default + a checkbox in Settings) | t3300–t3311 |
-
-`shared-events` touches every reader of `project.clips` across the workspace. That is mechanical, but
-nothing that adds a field to `Project`/`Sequence`/`ClipEvent` runs beside it, so every MODEL change waits
-for it.
-
-### Wave 2
-
-| Change | Size | Needs first | Areas | Owner question | Tests |
-|---|---|---|---|---|---|
-| ★ `export-host-copy` (dma-buf) | M | — (stages 1–3 merged) | EXPORT (`muxer_impl.rs` VAAPI frames), GPU export pass | answered A13 | the change's remaining t3312–t3321 |
-| `fx-graph-dag` | XL | `fx-graph` merged; `shared-events` (MODEL) | MODEL (`FxInput`, Merge kind), `kt-fx` `plan_chain`, GPU (held set, Merge pass), FX-UI | answered A5, A6 | t3200–t3229 |
-| `durable-moment-key` | M | — | CACHE (`render_cache.rs` key, `kt-cache` source identity), STREAM (`video_stream.rs` `ident` only), GPU (`plan_key` only), PLAYER (the prefetch's held set) | none (owner's D2, D7; found-defects 965) | t4108–t4116 |
-| `project-cache-folder` | L | — | CACHE (`index.rs` → `cache_folder.rs`, `render_cache.rs` root, the persistent cache's `results/` store and its key layout), `kt-dirs`, the Settings page | answered B2 (one folder per project folder; cyclic writing with a notice); it hosts the persistent cache (B1) | t3824–t3843 |
-
-`durable-moment-key` goes to the executor of `project-cache-folder` (mosh-sharp) before its section 3, or right after it:
-both write `durable_hash`, and the shared key makes 3.2 smaller (no `Leaves`, no `FileIds`). It must not run beside it.
-
-`project-cache-folder` is now the gate of three owner priorities: the durable history (★), the persistent
-cache of heavy effects (B1) and the cached render. Start it in this wave.
-
-### Wave 3
+### The engine
 
 | Change | Size | Needs first | Areas | Owner question | Tests |
 |---|---|---|---|---|---|
-| ★ `durable-history-and-mix` (the mix tier only since D6) | M | `project-cache-folder` sections 1 and 3 | CACHE (the `mix/` tenant), AUDIO (`mix.rs` restore handoff), PLAYER (writes at rest, the ring into the render thread) | answered A14 (build now) for the mix; D6 (kkt-26.11.22: "Только финальные кадры") withdrew the history on disk | t3336, t3337, t3346–t3352 |
-| `hdr-sources-to-sdr`, 8-bit stages 1–4 | M | `device-decode-sources` (DECODE) | DECODE (`colour.rs`, the HDR branch); the export default is built already (row 1054, t3603) | answered (Q50; A25 keeps the 8-bit path as the default) | t3800–t3811 |
-| `track-stage-preroll` | S | — | AUDIO (`render_stages`, the seek path) | answered A15 (always the full tail) | t3361–t3366 |
+| ★ `shared-events` | L | v2d, `durable-moment-key` | MODEL (every event vector, mechanical), the builders' keys (`incremental.rs`, `audio.rs`, `video.rs`) | answered A19 | t3367–t3375 |
+| ★ `device-decode-sources` | L | section 2.2 on: `durable-moment-key` | DECODE, `kt-time` `mem.rs`, `trace.rs`; SHELL (a Preferences checkbox, a Diagnostics line) | answered A12 | t3300–t3311, t4100–t4102 |
+| `durable-moment-key` | M | — | CACHE, STREAM (`ident`), GPU (`plan_key`), PLAYER | none (D2, D7) | t4108–t4116 |
+| `rest-is-said` | M | section 2 on: `durable-moment-key` | TESTS, PLAYER (the prefetch's near part), `audio_out.rs`, `render_cache.rs` | none | t4117–t4124 |
+| ★ `track-stage-preroll` | S | `durable-moment-key` (`player.rs`) | AUDIO | answered A15 | t3361–t3366, t4103–t4104 |
+| ★ `durable-history-and-mix` (the mix tier only: D6 withdrew the history on disk) | M | `track-stage-preroll` (`mix.rs`) | CACHE (`mix/`), AUDIO, PLAYER | answered A14, D6 | t3336, t3337, t3346–t3352 |
+| `track-stream-stage` | L | `fx-graph-dag` (a read's stage) | STREAM (`TrackStream`), `video.rs`, EXPORT (`stream_preroll`), AUDIO | answered A23 | t3379–t3394 |
+| `persistent-cache` | L | `durable-history-and-mix` (one value order), `device-decode-sources` | CACHE, PLAYER, DECODE (`CopySource`), EXPORT (`MuxConfig`) | answered B1, D1 | t3440–t3453, t4106 |
+| `cached-final-render` | L | `render-result-check` (EXPORT) | EXPORT (a copy path, SEI), CACHE, DIALOG | answered A16 | t3322–t3335, t3870–t3876 |
+| `hdr-sources-to-sdr`, 8-bit stages 1–4 | M | `device-decode-sources` | DECODE (`colour.rs`) | answered | t3800–t3811 |
+| `hdr-sources-to-sdr`, 16-bit stage 5 **v+** | XL | every GPU, STREAM and COLOR-FX row | all core; runs with UI-only work beside it | answered B4 | t3877–t3899 |
+| `simulated-elements` | XL | `durable-moment-key`, `motion-driven-params` | the plan (`video.rs`), GPU (a sprite pass), MODEL (`SetSets`), SHELL | answered (D3) | t3968–t3973, t3983–t3992, t4107 |
+| ★ `export-host-copy`, the dma-buf half (A13) | — | **a design**: the change's D6 is a paragraph, no task, no test | EXPORT, GPU | answered A13 | t3320–t3321 free |
 
-### Wave 4
-
-| Change | Size | Needs first | Areas | Owner question | Tests |
-|---|---|---|---|---|---|
-| `track-stream-stage` | L | `stream-picture-stays` (the durable history salt it waited for is gone with D6) | STREAM (`TrackStream`), `kt-engine/src/video.rs` track layer, EXPORT (`stream_preroll`), AUDIO (the sound half's track layout) | answered A23 | t3379–t3398 |
-| `fx-preset-change` | M | `fx-graph-dag` (FX-UI selection in `node_editor.rs`) | FX-UI, `kt-model/src/ops.rs` (`insert_chain_block_at`) | answered A4 | t3595–t3596, t3932–t3934 |
-| `persistent-cache` (was `disk-copies`; "Постоянный кэш") | L | `project-cache-folder` (the store's places, salt and cycle); `durable-history-and-mix` (shares the folder's value order); `device-decode-sources` (DECODE, for source copies) | CACHE (the final frames' value order, the source copies; `layers/` withdrawn by the owner's D1, kkt-26.11.22), PLAYER (the job at rest), DECODE (`CopySource`), EXPORT (`MuxConfig` times) | answered B1 (the name; heavy files AND the results of heavy effects); designed by spec-features (branch claude/spec-features-224d3d, 1e31056c) | t3440–t3459 |
-
-### Wave 5
-
-| Change | Size | Needs first | Areas | Owner question | Tests |
-|---|---|---|---|---|---|
-| `cached-final-render` | L | `export-host-copy`; `project-cache-folder` (`renders.tsv`) | EXPORT (a copy path in the writer, SEI), CACHE (durable key layout), DIALOG | answered A16 | t3322–t3335, t3870–t3876 |
-| `download-library` | L | — | LIBRARY, `kt-text` (font packs), the release build (it packs the signed list) | answered B3 (the signed list for everything; plugins with the wasm host; a placeholder with Download) | t3850–t3869 |
-| `frame-format-variants` **v+** | L | `shared-events` | MODEL (`Project.formats`, `ClipEvent.formats`), `kt-engine` `RenderTarget`, CACHE key (raster), PREVIEW-UI (format switch, gizmos per format) | answered A17 | t3485–t3504 |
-
-### Wave 6
+### The model and the interface
 
 | Change | Size | Needs first | Areas | Owner question | Tests |
 |---|---|---|---|---|---|
-| `subtitles-and-text-editing` **v+** | XL | `download-library` stage 1 (the resolver, the window) | MODEL (`Transcript`, `LaneKind::Subtitle`), `kt-media` transcribe, `kt-text` per-word highlight, SHELL (the Text panel) | answered A11 | t3460–t3484 |
-| `temporal-barrier-3dnr` **v+** | L | `track-stream-stage` (STREAM) | STREAM (`Temporal` host), GPU (state textures), `plugins/fx-video-camera` | answered A21 | t3545–t3557 |
-| `preview-canvas-and-gizmos` | M | `frame-format-variants` (PREVIEW-UI) | PREVIEW-UI (the viewer transform), `kt-plugin-api` `ParamSpec.handle` | answered A26 | t3597–t3599 |
+| `timecode-is-text` | M | — | MODEL (`genmedia.rs`, `project_file.rs`, kt-otio import), `plugins/generators-test` | none | t3993–t3997 |
+| `fx-preset-change` | M | `fx-graph-dag` | FX-UI, `kt-model/src/ops.rs` | answered A4 | t3595–t3596, t3932–t3934 |
+| `preview-canvas-and-gizmos` | M | — | PREVIEW-UI, `ParamSpec.handle` | answered A26 | t3597–t3599 |
+| `frame-format-variants` **v+** | L | `shared-events`; `preview-canvas-and-gizmos` (PREVIEW-UI) | MODEL, `kt-engine` `RenderTarget`, CACHE key (raster), PREVIEW-UI | answered A17 | t3485–t3492 |
+| `multicam` **v+** | L | `shared-events` | MODEL, TIMELINE-UI, the preview area | answered A18 | t3505–t3514 |
+| `motion-driven-params` **v+** | M | `shared-events` | MODEL (link addresses), PLAYER, automation | answered B7 | t3947–t3951, t3967 (t3947: see below) |
+| `real-3d-groups` **v+** | L | `shared-events`; `fx-graph-dag` (GPU) | MODEL, the plan, GPU (a mesh pipeline) | answered B10 | t3952–t3956 |
+| `auto-ducking-by-role` **v+** | M | `shared-events` | MODEL (`AudioRole`), AUDIO, `track_window.rs` | **open: Q1**, not in owner-checks | t3911–t3918 |
+| `project-scale` **v+** | M | `shared-events` | MODEL (`project_file.rs`) | **open: Q1, Q2** | t3924–t3931 |
+| `magic-wand-mask` **v+** | M | — | MASKS, PREVIEW-UI | answered A20 | t3535–t3540 |
+| `title-word-effects` **v+** | M | `magic-wand-mask` | MASKS, `kt-text` | answered B8 | t3942–t3947 |
+| `point-tracker` **v+** | L | `magic-wand-mask`, `shared-events` | MASKS, MODEL, automation links, PREVIEW-UI | answered A20 | t3520–t3531 |
+| `geometry-fx-flex` **v+** | M | `preview-canvas-and-gizmos` | GEOM, PREVIEW-UI | answered A24 | t3570–t3576 |
+| `ripple-and-trim-modes` | L | `multicam` (TIMELINE-UI) | MODEL (`ops::ripple_plan`), TIMELINE-UI | answered A9 (owner check C9) | t3415–t3432 |
+| `subtitles-and-text-editing` **v+** | XL | `download-library` stage 1, `ripple-and-trim-modes` | MODEL, `kt-media` transcribe, `kt-text`, SHELL | answered A11 | t3460–t3474 |
+| `presets-everywhere` | M | `fx-preset-change` | MODEL `ops.rs`, FX-UI, the user store | **open: Q1, Q2** | t3904–t3907 |
+| `detached-windows` | M | — | SHELL | **open: Q1, Q2** | t3901–t3903 |
+| `scopes` | M | v2d's 2.6 | GPU (a tap pass), PLAYER, SHELL | answered A8 | t3400–t3412 |
+| `memory-breakdown` | M | — | `kt-time` `mem.rs`, every holder, SHELL | answered B12 | t3962–t3965 |
 
-### Wave 7
-
-| Change | Size | Needs first | Areas | Owner question | Tests |
-|---|---|---|---|---|---|
-| `geometry-fx-flex` **v+** | M | `preview-canvas-and-gizmos` (the centre crosshair) | GEOM, PREVIEW-UI (centre for Mirror and Tile) | answered A24 | t3570–t3584 |
-| `chroma-key-upgrade` **v+** | M | — | COLOR-FX (the difference kernel), SHELL (the Viewer's view menu) | answered A22 | t3558–t3569 |
-| `multicam` **v+** | L | `shared-events` | MODEL (`Sequence.multicam`, `ClipEvent.angle`), TIMELINE-UI, the preview area (the angle grid) | answered A18 | t3505–t3519 |
-
-### Wave 8
-
-| Change | Size | Needs first | Areas | Owner question | Tests |
-|---|---|---|---|---|---|
-| `pro-keyer` | L | `chroma-key-upgrade` (COLOR-FX) | COLOR-FX, GPU (a ~12-pass graph), `kt-plugin-api` `BarrierKernel::held`, `clip_frame_keys` | answered A22 | t3585–t3599 (t3597–t3599 are preview-canvas's: renumber at apply) |
-| `magic-wand-mask` **v+** | M | — | MASKS (`MaskShape::Wand`, `kt-fx` coverage), PREVIEW-UI (gestures) | answered A20 | t3535–t3544 |
-| `ripple-and-trim-modes` | L | `multicam` (TIMELINE-UI) | MODEL (`ops::ripple_plan`, two commands), TIMELINE-UI | answered A9 (Q8 a; owner check C9 when it ships) | t3415–t3439 |
-
-### Wave 9
-
-| Change | Size | Needs first | Areas | Owner question | Tests |
-|---|---|---|---|---|---|
-| `point-tracker` **v+** | L | `magic-wand-mask` (MASKS) | MASKS (the perspective mask transform), MODEL (`ClipEvent.trackers`), automation links, PREVIEW-UI | answered A20 (point and planar) | t3520–t3534 |
-| `scopes` | M | `stream-picture-stays` (GPU) | GPU (a tap pass, new file), PLAYER (`measure_paused`), SHELL (a View window) | answered A8 (moved here from wave 4, whose slot the persistent cache took: the owner's "СУТЬ … В КЭШИРОВАНИИ") | t3400–t3414 |
-| `hdr-sources-to-sdr`, 16-bit stage 5 **v+** | XL | waves 1–8's GPU, STREAM and COLOR-FX work merged (it rewrites the pool's format and the core shaders) | MODEL, DECODE, GPU, CACHE, EXPORT, FX manifests, SHELL (the display) — all core | answered B4 (1.0 = SDR white 203 cd/m²; 8-bit effects run marked; HDR on an HDR monitor at once; SDR + HDR10 + HLG export) | t3877–t3899 |
-
-The 16-bit stage touches every core area. It runs with only non-core work beside it: the UI-only rows
-of the next section.
-
-## Added after 2026-11-20 (spec-features designs, owner answers B10–B12)
+### Effects, render checks, the rest
 
 | Change | Size | Needs first | Areas | Owner question | Tests |
 |---|---|---|---|---|---|
-| `memory-breakdown` | M | — | `kt-time/src/mem.rs` (report-only tenants), every holder reports (kt-model estimate, kt-engine, kt-media, kt-text, kt-gpu pools), SHELL (the status counter, Diagnostics) | answered B12 (resident memory + VRAM in GB, the hover expands; the project's disk only) | t3962–t3967 |
-| `real-3d-groups` **v+** | L | `shared-events` (MODEL); `stream-picture-stays` and `fx-graph-dag` (GPU) | MODEL (`Track.three_d`, `Mask.extrude`), the plan (`Layer::Group3d`), GPU (a mesh pipeline with depth) | answered B10 (intersecting planes and extruded shapes now; a track switch) | t3952–t3959 |
-| `wasm-plugin-host` | L | — (new crates `kt-plugin-wasm`, `kt-plugin-sdk`) | a new host crate; GPU (plugin WGSL through naga and the pipeline cache); the plugin registry door; `download-library`'s plugin rows follow it | answered B11 (wasmtime + WGSL; layered scenes later) | t3957–t3963 |
-
-These three take free slots by their areas: `wasm-plugin-host` touches no hot file and can fill any wave;
-`memory-breakdown` touches SHELL only at its end; `real-3d-groups` waits for the GPU work of waves 1–2.
-
-## Answered in the second round, revised by spec-features (kkt-26.11.20b B5–B9)
-
-`auto-ducking-by-role` (B5: several key tracks, hand edits), `loudness-norms` (B6: project-level
-normalization), `motion-driven-params` (B7: the edit's speed), `title-word-effects` (B8: many ranges
-from the start), `window-chrome` (B9: the preview drag dropped) are being revised by spec-features. Their
-rows below keep their areas; the "open questions" column no longer holds for them once the revision lands.
-
-## Ready except for a question not yet put to the owner
-
-These designs came from the `v26.10` registry rows (spec-features, 2026-11-20). Their questions are not in
-`docs/owner-checks.md` yet. Once answered, each takes the first free slot whose areas are free.
-
-| Change | Size | Needs first | Areas | Open questions | Tests |
-|---|---|---|---|---|---|
-| `title-word-effects` **v+** | M | `magic-wand-mask` (MASKS) | MASKS (`TextRange`, `Isolate`), `kt-text` coverage | Q1 how the word is chosen | t3942–t3947 |
-| `auto-ducking-by-role` **v+** | M | `shared-events` | MODEL (`AudioRole`), AUDIO (role mixes as keys), `track_window.rs` | Q1 live or written curve, Q2 the R.65 key | t3911–t3918 |
-| `motion-driven-params` **v+** | M | `shared-events` | MODEL (link addresses), PLAYER (`preview_speed`), automation | Q1 rewinding and the render | t3947–t3952 (t3947 shared with title-word-effects: renumber at apply) |
-| `presets-everywhere` | M | `fx-preset-change` (the head menu) | MODEL `ops.rs` (clipboard blocks), FX-UI head menu, user store | Q1 copy or live link, Q2 built-in presets | t3904–t3907 |
-| `loudness-norms` | S | — | EXPORT (`ExportReport.sound`), `kt-fx` loudness, DIALOG | Q1 default norm, Q2 a normalize button | t3919–t3923 |
-| `picture-check` | M | `loudness-norms` (the shared findings list in DIALOG) | EXPORT (per-frame statistics), MODEL `lint`, DIALOG | Q1 findings as markers, Q2 the flashing check | t3908–t3910 |
-| `project-scale` **v+** | M | `shared-events` (it measures before and after) | MODEL (`project_file.rs` single-pass read, chain table) | Q1 "does not hang" at a million, Q2 chains or events | t3924–t3931 |
-| `detached-windows` | M | — | SHELL (`window_shell.rs`, viewports) | Q1 which windows, Q2 Wayland placement | t3901–t3903 |
-| `window-chrome` | M | `detached-windows` (SHELL), `fx-graph` (FX-UI icon buttons) | SHELL, FX-UI | Q1 dragging a window by the preview | t3935–t3942 (t3942 shared with title-word-effects: renumber at apply) |
+| `render-result-check` | S | — | EXPORT (`ExportStats`), DIALOG, live `renderregion` | none | t3998 |
+| `loudness-norms` | M | `render-result-check` (DIALOG); takes the unmerged `render-loudness-norms` in | EXPORT, AUDIO (the program stage), DIALOG | answered B6 | t3919–t3923, t3966, t4200–t4203 |
+| `picture-check` | M | `loudness-norms` (the findings list) | EXPORT, MODEL `lint`, DIALOG | **open: Q1, Q2** | t3908–t3910 |
+| `chroma-key-upgrade` **v+** | M | — | COLOR-FX, SHELL (the Viewer's menu) | answered A22 | t3558–t3564 |
+| `pro-keyer` | L | `chroma-key-upgrade` | COLOR-FX, GPU, `BarrierKernel::held` | answered A22 | t3585–t3590 |
+| `temporal-barrier-3dnr` **v+** | L | `track-stream-stage` (STREAM) | STREAM, GPU, `plugins/fx-video-camera` | answered A21 | t3545–t3551 |
+| `download-library` | L | own-data-dir | LIBRARY, `kt-text`, the release build | answered B3 | t3850–t3869 |
+| `wasm-plugin-host` | L | — | new crates, GPU (plugin WGSL) | answered B11 | t3957–t3961 |
+| `openfx-host` | L | `wasm-plugin-host` | a host process, GPU interop | answered D4 | t3974–t3979 |
+| `arm-build` | M | — | the Dockerfile, release scripts, CI | answered D5 | t3980–t3982 |
+| `fx-lens-and-camera` | M | `plugin-api-stage1` 4.1 (a positioned tap, geometry primitives in the API, a GPU barrier); its presets (1.x) may go with anything | COLOR-FX, GEOM | — | t1010–t1015 |
+| `flatpak-flathub` | M | his Open Questions 1–6 | packaging | **open** | — |
 
 ## Findings while ordering (for the orchestrator)
 
-- **Test numbers reserved twice:** pro-keyer t3585–t3599 overlaps preview-canvas t3597–t3599, and
-  title-word-effects t3942–t3947 overlaps window-chrome (t3942) and motion-driven-params (t3947). The
-  executor that applies the second change renumbers. Better: the spec session renumbers before either
-  starts.
-- **`.kt` version by content:** eleven changes raise it (**v+**). Every such design says "the next free
-  number at merge" (`hdr-sources-to-sdr` corrected in this commit); a merge that finds the number taken
-  renumbers.
-- **`project-cache-folder` is answered** (B2), so `durable-history-and-mix` (★) follows it in wave 3 as
-  planned.
-- **More test numbers reserved twice** by the changes added since: real-3d-groups t3952–t3959 overlaps
-  motion-driven-params (t3952) and wasm-plugin-host t3957–t3963 (t3957–t3959); wasm-plugin-host overlaps
-  memory-breakdown t3962–t3967 (t3962–t3963).
-- **The persistent cache (B1) and project-cache-folder share one store, agreed with spec-features
-  (2026-11-22):** `results/v<FORMAT>/<device class>/frames/` (`layers/` withdrawn by the owner's D1 and `history/` by his D6, kkt-26.11.22: the final preview frames only), `mix/`, source copies under
-  `media/<content id>/`. `durable_hash` keys, plus the decoder major, the kernels' versions and
-  `COMPOSITE_PATH_VERSION`, not the build: an update keeps what it did not change, and a stale entry is
-  dropped on a miss. One order by value per byte across frames, mix and copies, under the folder's cyclic rule.
+- **A13's dma-buf half is not buildable yet.** `export-host-copy`'s tasks end at the prerender; what he ordered
+  ("Сделать сейчас") is its D6, headed "Deferred", with no task, spec line or test. The former queue showed it in wave 2
+  as ready. It needs a design before a slot.
+- **Five changes hold questions nobody has put to him** (`owner-checks.md` says none are open): `detached-windows`,
+  `presets-everywhere`, `project-scale`, `picture-check`, and `auto-ducking-by-role`'s Q1 (what counts as a title section).
+- **Stale heads.** The `tasks.md` of `frame-format-variants`, `multicam`, `ripple-and-trim-modes`, `geometry-fx-flex`,
+  `magic-wand-mask`, `preview-canvas-and-gizmos`, `subtitles-and-text-editing`, `pro-keyer`, `temporal-barrier-3dnr`
+  and `scopes` still say "until the owner answers"; he did (A8, A9, A11, A17, A18, A20–A22, A24, A26). Their owner is
+  spec-features.
+- **One test number is reserved twice:** t3947, by `title-word-effects` and `motion-driven-params`. The second to be
+  applied renumbers. The other collisions this file named are gone.
 
-## Implementation-ready check (2026-11-22, spec-engine, against orch `873934f7`)
+## Tests of spec-engine
 
-Each of these changes' `tasks.md` now names its files, and those files were checked against the areas above:
-- `device-decode-sources`:
-  - DECODE, plus `kt-time` `mem.rs` (a new tenant) and `trace.rs`;
-  - SHELL through Preferences (`prefs_window.rs`, `user_store.rs`);
-  - `render_dialog.rs` and kt-cli's `main.rs` (the four source openers go through one factory call).
-  - Do not run it beside another change writing `source_impl.rs`, `mem.rs` or `trace.rs`.
-- `project-cache-folder`:
-  - CACHE (about 35 call sites of `MediaIndexDb` across six lanes);
-  - `app.rs`, which is hot (`index_db_path` and five inline copies, the render cache root, `Notice.action`);
-  - Preferences, kt-cli's `main.rs` and `render_cache.rs`.
-  - It goes alone among the changes touching `app.rs`.
-- `durable-history-and-mix` (revised 2026-11-24 for D6: the mix tier only):
-  - CACHE (`mix/`), AUDIO (`mix.rs`) and PLAYER (`player.rs`: the ring into the render thread); no STREAM file.
-  - It starts after `project-cache-folder` sections 1 and 3; it no longer waits for `stream-picture-stays`.
-- `track-stage-preroll`: AUDIO (`audio.rs`, `fxstore.rs`, `mix.rs`), plus the start hold in `player.rs`. It
-  shares `mix.rs` with `durable-history-and-mix`, so it does not run beside it.
-- `persistent-cache`:
-  - CACHE (the final frames, the copies), PLAYER, DECODE (the copy source) and EXPORT (`format.rs`); since the
-    owner's D1 (kkt-26.11.22) it keeps no stage result, so `frame_plan`'s layer input is no longer touched
-    (spec-features revises the change).
-  - It starts after `project-cache-folder` section 3. Its Q1 (Q55) is answered by D1: no layer results, so no layer codec.
-
-New tests t4100–t4105 are taken from spec-engine's third block (t4100–t4199): device-decode-sources
-t4100–t4102, track-stage-preroll t4103–t4104, durable-history-and-mix t4105 (freed by D6 with t3338–t3345).
-Since: persistent-cache t4106, simulated-elements t4107, durable-moment-key t4108–t4116; the next free is t4117.
+Third block t4100–t4199: device-decode-sources t4100–t4102, track-stage-preroll t4103–t4104, (t4105 freed by D6),
+persistent-cache t4106, simulated-elements t4107, durable-moment-key t4108–t4116, rest-is-said t4117–t4124. The next
+free is t4125.
