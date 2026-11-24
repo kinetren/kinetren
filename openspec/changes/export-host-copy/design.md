@@ -86,6 +86,9 @@ devices converts on each device by the same integers.
 
 ## D6. Deferred: the composite as the encoder's surface
 
+> Superseded 2026-11-24 by change `export-into-surface` (the owner's A13). Its premise below is out of date: wgpu 30
+> imports a dma-buf (`wgpu-hal` `texture_from_dmabuf_fd`).
+
 A VAAPI encoder could take the composite with no host copy: the pass writes NV12 into a VkImage created
 exportable (`VK_KHR_external_memory_fd`, `VK_EXT_external_memory_dma_buf`, a linear or modifier layout
 libva accepts), exported as a dma-buf and wrapped by `vaCreateSurfaces` with

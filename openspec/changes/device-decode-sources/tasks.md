@@ -6,9 +6,9 @@
 > `design.md` D1–D4, D6, D11; `src/libs/kt-ffmpeg/CLAUDE.md`, `src/libs/kt-media/CLAUDE.md`;
 > `openspec show media-index --type spec`. Commit per section; `scripts/target-prune.py` after each.
 > Build-queue areas: DECODE, `kt-time` mem/trace, SHELL (Preferences). Do not run beside another change
-> writing `source_impl.rs`, `mem.rs` or `trace.rs`. **Sections 1 and 2.1 may start beside `durable-moment-key` and
-> `fx-graph-dag` v2d; 2.2 on after `durable-moment-key` merges** (`ffmpeg.rs`, `worker.rs`, the identity); 3 after
-> own-data-dir (`trace_query.rs`, kt-cli `main.rs`).
+> writing `source_impl.rs`, `mem.rs` or `trace.rs`. **Section 1 and 2.1 may start beside anything; 2.2 on not
+> beside `persistent-cache`** (`ffmpeg.rs`, `worker.rs`, `copy.rs`; `durable-moment-key` is in); 3 after own-data-dir
+> (`trace_query.rs`, kt-cli `main.rs`). Not beside `export-into-surface` section 2 (`ktfake_drv_video.c`, `mem.rs`).
 
 ## 0. Notes first
 
@@ -55,7 +55,8 @@ What exists (keep it): `Source::open_hw` (`lib.rs:1080` → `source_impl.rs:726`
       them (found-defects 1064); released on drop; t3305
 - [ ] 2.3 D6: `factory::open_source(path, store, Purpose)` in `kt-media/src/factory.rs` (beside `open_indexed`, `:103`); route
       the openers through it: `kt-app/src/util.rs:36`, `render_dialog.rs` `open_all` (`:616`, today
-      `FfmpegSource::open` with no index), kt-cli export (`main.rs:2056`), `open_sources` (`:1344`), `preview` (`:1130`), `pause-scan` (`:1007`); thumbnails, filmstrip and stills stay software; t4102, t3309, t3310
+      `FfmpegSource::open` with no index), kt-cli export (`main.rs:2056`), `open_sources` (`:1344`), `preview` (`:1130`), `pause-scan` (`:1007`);
+      `copy.rs`'s `copy` and `make` (persistent-cache, once merged); thumbnails, filmstrip and stills stay software; t4102, t3309, t3310
 - [ ] 2.4 t3129 (`kt-media/tests/segment.rs:105`): "within swscale's rounding" becomes "equal"; edit its
       scenario in `openspec/specs/video-plan/spec.md`; t3300
 - [ ] 2.5 the export's stage profile: pictures per kind and the transfer time in `ExportStage`

@@ -8,16 +8,15 @@
   writer that stands 2 s in one file call leaves t2140 reading a file without its records, and it asserts 300 of them. Proof
   for the executor, no load needed: `testing::pause_writer` held 3 s around the flush makes the present t2140 red every run
   (not proved here that it WAS this: the message is lost).
-- **966, t2044.** 600 display moments in 10 s were all handed out (the display thread had its time) and none was complete: the
-  history of ~110 positions did not walk in the 10 s the bench gave (`loop_for`). The same test was red before at 57
-  frames instead of ~200 (row 762), so the margin is under 10 s alone and gone at a load of 75. It is either M2 or a walk
-  that never ends; a bench bounded by seconds cannot tell them apart. With D3 it can: it comes, or the guard ends the
-  test with the walk's own state.
+- **966, t2044, fixed** in `durable-moment-key`: `BenchOptions.first_shown_by` plays on past `loop_for` until a frame was shown, up to the
+  guard. It was M2: 600 display moments were handed out in the 10 s and none was complete.
 - **293, 424, t2044's second assertion** ("every decoded frame is read before the cache drops it"): not explained by any shape.
   It stays open, with D5's evidence to read.
 - **967, 950, 828 (b), 958 (`idle`), 961 (t2142)**: `closes` is counted inside the closing pass, the pump is idle by its processor
-  share, a counter moves when a segment is committed, a job moves its counter when it ENDS. All M1. `durable-moment-key`'s
-  branch already folds `settled` into `audio_out.rs`'s `parked` for 967: kept, and replaced by D1's answer.
+  share, a counter moves when a segment is committed, a job moves its counter when it ENDS. All M1. 967 is fixed in `durable-moment-key`: `audio_out.rs`'s `parked` settles first, so every test there has it. `settled` itself is
+  "no pass over 100 ms", a threshold of the same race with a wider margin; D1's answer replaces it, and the tests do not change.
+- **969 (t3842), fixed there too, is M1 in the PRODUCT**: the window took its height from the frame it opened in, and the list came a frame
+  later. A person sees the same thing; the cure was the grace every opening gives its media. Nothing here replaces it.
 - **958, `node_graph` and `datamosh`**: "not analysed" and the runs' dumps are gone. Their steps are gestures (Viewer, the FX window), so
   M3 is a guess. Nothing is designed for them; D1 and D5 make the next red readable.
 - **825, 827**: cured by taking both durations in one window. The rule is in `distribution` already. 374 and 375 (device time
@@ -57,15 +56,18 @@ their own line). `trace::testing::flush()` waits to `test_deadline()` and panics
 unwritten; the seven test callers use it. `Lane::wait_idle` and `rest::reached` are `#[must_use]`. `preview_bench`'s "a start that never
 sounds" exit sets `BenchReport.gave_up = Some(why)`; a test asserts it is `None`.
 
-## D3. A bench ends by what it showed
+## D3. A bench that gives up says so
 
-`BenchOptions.end: End::{ Once, Wall(Duration), Shown(u64) }` replaces `loop_for`. `Shown(n)`: complete new frames; the guard is
-`test_deadline()`, and at the guard the report says `gave_up` with the walk's positions, the decoder's queue and `rest::busy()`.
-`kt-cli preview --loop N` stays `Wall`: it is a measurement.
-- t2044: `Shown(24)` (three laps of eight). Its claim "the loop shows frames" becomes "it comes to show them"; the bound on
-  decoded pictures is a count and stays; the unread assertion stays.
-- `player_dynamic.rs:667` (6 s) and `mix_player.rs:126` (8 s) are read by the executor: `Shown` where the claim is a state,
-  `Wall` with a reason in t1671's list where the seconds are the claim.
+What was designed here (`End::Shown(n)`) is built in its smaller form, and the smaller form is enough: t2044 asks whether the loop comes to show,
+`first_shown_by` waits for that, and the bounds on what the decoder did are counts. `loop_for` stays the length of a measurement. Left:
+- `play_range` has an end that is neither: "a start that never sounds does not hold the bench forever" (60 s past the window). It sets
+  `BenchReport.gave_up = Some(why)` with `rest::busy()`; every test that reads a report asserts `None` first. Without it a starved run reads as a played one.
+- The other two users of `loop_for`, read: `player_dynamic.rs:667` (6 s) waits for the kept mix to replay BEFORE it swaps the
+  source, then judges the last half second of the six: at a load where the swap comes late, the tail is not the new source's. Its
+  wait becomes the condition of the bench's end: `stop_when: Option<Arc<AtomicBool>>`, raised by the swapping thread a second of PLAYED
+  sound after the swap (the output clock's frames, not the wall). `mix_player.rs:120` (8 s) paces its edits by four sleeps of 400 ms
+  and judges counts that "no lap after the second renders": a claim that holds for any length; what is asked of the
+  length is one covered lap after the edits, the same `stop_when`.
 
 ## D4. The stretch: M1 found at once
 
@@ -104,7 +106,10 @@ passes until the requests are out, then none. While playing nothing changes (a p
 | Place | Shape | Here |
 |---|---|---|
 | `trace::flush` in tests (7) | M2 | D2 |
-| `preview_bench` ends (3 tests) | M2 | D3 |
+| `preview_bench` ends (3 tests) | M2 | t2044 built; D3 for the other two and for the report |
+| t3842's list and any window sized by an answer that comes a frame late (969) | M1 in the product | fixed where found (`media_grace`); the class walk of it is that fix's |
+| live starts: an unmapped window that drew ten frames and rested (830, 954) | not this class: the program is at rest, its window is not on the screen | features-slow has it |
+| live `close_busy`: 15 s with no processor work (831) | the program waits for something unnamed | D1 names it: `rest::busy()` in the close's trace would have said which actor; mosh-sharp has the row |
 | `audio_out` tests (`parked`, 5 users) | M1 | D1 |
 | kt-time `sched/tests.rs` t2230 (rows 373, 650) | M1: the order of two threads' pushes is asserted; kicks race the pump | D1's stretch shows it; the cure is the scheduler's own start order (`SchedStart` records), no rest |
 | kt-engine `render_cache.rs` tests (14 sleeps), `render_ahead.rs` (9), `player_dynamic.rs` (18) | M1, M3 candidates | D4 says which |
@@ -118,8 +123,13 @@ passes until the requests are out, then none. While playing nothing changes (a p
 
 ## D8. The order
 
-1. D2 and D5 (small, they change what the next red says). 2. D3. 3. D1's registry with the actors one by one. 4. D4's run and
-its list. 5. D6 after `durable-moment-key` (the prefetch loop).
+1. D2 and D5 (small, they change what the next red says). 2. D1's registry with the actors one by one. 3. D4's run and its list.
+4. D3's remainder. 5. D6 (`durable-moment-key` is in).
+
+**t1671's rule is kept**: no wait here is bounded by a limit of the test's own. A quiet window (`Rest` + a sleep + `still()`) is a claim about
+the PROGRAM ("nothing in 300 ms"), it opens from a state and can only be red if something ran; the stretch is a delay put into the
+program, not a bound. A test that must see a wait give up does not wait for the guard: it hands the wait a deadline that has
+passed (`testing::flush_until(now)`) or stops it from outside (`stop_when`).
 
 ## Risks
 
