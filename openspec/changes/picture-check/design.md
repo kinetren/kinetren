@@ -2,6 +2,9 @@
 
 > DESIGN ONLY, revision 1 (2026-11-20), base `ccae9d10`. Q1–Q2 in `proposal.md`; defaults recommended.
 
+> Re-read 2026-11-25 against `fc60a5d9`: `kt_fx::audio::findings::{Finder, SoundSpan}`, `ExportStats.spans` and `render_dialog::sound_findings` (a row moves the playhead) exist. D3 uses that list: one `Finding` row type for both, the
+> picture's spans beside the sound's. D2's statistics live in kt-engine's writer thread where `Finder` is fed.
+
 ## Context
 
 - Loudness: measured in the export pass, reported by the render window (export spec, "Loudness is measured in

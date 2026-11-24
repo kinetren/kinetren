@@ -38,8 +38,8 @@ knows where the titles are.
     the pauses (Fade, ms). The content's sound is the key: **several tracks** ticked in a list, and/or every event
     of a role (Dialogue, Music, Effects, Ambience, Title sound) wherever it lies.
   - **During titles**: one choice — **Raise the background** by N dB (default +6 dB), or **Mute the background** (the
-    title's own sound plays; a title sound muted outside titles is unmuted there), or **Leave it**. A title section is
-    where a title event is on screen (a Text generator event, or any event tagged "Title"), with fades of its own.
+    title's own sound plays; a title sound muted outside titles is unmuted there), or **Leave it**. A title section is where a title is on
+    screen and no content sounds under it (Q74 a; a tag "Title"/"Not a title" corrects), with fades of its own.
 - **Sections come from the edit, not from loudness**: titles are known from the timeline (title events), content is
   heard from the keyed tracks; moving a title moves its section; nothing is "generated" and left stale.
 - **Hand edits stay useful**: the automatic gain is drawn as a band on the background events; the person's own level
@@ -73,11 +73,17 @@ knows where the titles are.
 
 ## Questions to the owner
 
-Decided (2026-10-30, question 10): by the clip type. Decided (2026-11-22, B5): several tracks, hand edits useful.
+Decided (2026-10-30, question 10): by the clip type. Decided (2026-11-22, B5, `kkt-26.11.20b.txt` line 16, whole above): several tracks, hand edits useful.
 
-**Q1. What counts as a "title" section?** Your item: "вступление-заголовок1-контент-заголовок2-контент2-заголовок3 и т.д.,
-… во время заголовка может быть либо автоматом усиление заднего звука или мут заднего звука и размут заголовочного
-звука". Today the program knows Text generator events (titles) on video tracks, and nothing else marks a section.
-- (a) **A section is where a title event is on screen: every Text generator event, plus any event (picture or sound)
-  you tag "Title"** (*recommended*: your titles are found by themselves; a title made otherwise is tagged once).
-- (b) Sections are named areas on the timeline that you mark "Title" by hand.
+(Q74 of `docs/owner-checks.md`; re-read against `fc60a5d9`, 2026-11-25.)
+
+**Your item whole** (`docs/ktprompts/v26.10.txt` lines 84–88) stands under "Why".
+
+**Now**: the program has Text events (titles) on video tracks; nothing says which of them opens a SECTION ("заголовок1") and which is a caption or a lower third over the content. The compressor with a key lowers the background under one track's sound.
+
+**Q74 (Q1). What is a title section?** Example: an interview of 20 minutes with 3 chapter titles of 4 s (no speech under them), 6 lower thirds with names of 5 s over the speech, and music on the background.
+- (a) **A title on screen with no content sound under it** (*recommended*): the 3 chapter titles are sections (the music rises or falls silent for 12 s in all); the 6 lower thirds are not, for speech sounds under them. A tag "Title" or
+  "Not a title" on an event or a track corrects an exception (a title card that has speech, a silent lower third).
+- (b) Every Text event (and what you tag): also the 6 lower thirds: 30 s of music raised by 6 dB under somebody speaking, until each is tagged "Not a title".
+- (c) Only what you tag "Title" (a whole track with one click): nothing by itself; 3 tags, or one if the titles have a track of their own. A new title without a tag is missed silently.
+- (d) Named areas on the timeline that you draw: the same by hand, and they do not move with the titles when you edit before them.
