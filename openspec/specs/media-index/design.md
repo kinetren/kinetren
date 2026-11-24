@@ -622,3 +622,9 @@ previews named per project because reel ids of two projects collide, room asked 
 **Found on the way:** a test binary that opens a folder wrote the registry into the user's data folder. The
 library writes no row now; the program that shows the list does. A prerender whose segment is larger than the
 folder's room lost its moments silently (the old 2 GiB store too): they are taken again in shorter segments.
+
+## Copies of heavy sources (persistent-cache, archived 2026-11-25)
+
+Why a copy holds the picture only, lies in QuickTime and is swapped by `adopt_picture`: the change's design, "Found while
+building", with the class walk of found-defects 974 and the measurement (a dense edit of the heavy showcase 0.4–1.3 →
+9–10 V-fps, resident 4.3–4.6 → 3.8 GB peak, on a software rasterizer and decoder).

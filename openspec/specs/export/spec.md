@@ -1352,3 +1352,13 @@ Why: the owner, v26.10 line 55 — "в окне рендера может быт
 - **THEN** the written frames and samples equal the announced ones each time; a result whose written numbers are lowered by hand reads both numbers of the pair in the final block
 - **PATH** draw a region by hand → File → Render… → Render… → wait for "Done" → the final block reads one number of frames and no line about a difference
 - **TEST** t3998 (`src/libs/kt-engine/tests/export_totals.rs`), t3998b (`src/apps/kt-app/src/layout_tests.rs`: the final block), live scenario `renderregion` (`src/scripts/live/renderregion.py`: the journal's two pairs are equal; the file's packets and sound length are the journal's)
+
+### Requirement: An export never reads the persistent cache
+Every export body, the render window and the command-line export SHALL open sources by the media's path and never
+by the persistent cache — no frame or source copy — whatever the preview's switch says.
+Why: invariant 11 — the export's bytes depend on the project only; Premiere's "exported my proxies".
+
+#### Scenario: Export bytes are the same with the persistent cache full
+- **WHEN** a project is exported while the preview plays from cached frames and copies, and again in a fresh process with an empty cache folder
+- **THEN** the two files' decoded frames and samples are byte-equal
+- **TEST** t3445 (`src/libs/kt-engine/tests/persistent_cache.rs`)
