@@ -7,8 +7,8 @@ files.
 ## ADDED Requirements
 
 ### Requirement: A subtitle track holds captions in timeline time
-A subtitle track SHALL hold caption items with a start, a duration and multi-line text that do not
-overlap on one track; captions SHALL move with ripple like other time-anchored objects; "Create captions
+A subtitle track SHALL be a video track that holds, in place of events, caption items with a start, a duration and
+multi-line text that do not overlap; its switches, order, opacity, effects and masks SHALL act as any video track's; captions SHALL move with ripple like other time-anchored objects; "Create captions
 from text" SHALL split the visible words of a range by paragraph, pause, maximum line length and maximum
 duration, keeping each word's timeline time for the highlight.
 Why: F-TXT-004 — a list of lines with identity, not titles and not markers.
@@ -17,6 +17,11 @@ Why: F-TXT-004 — a list of lines with identity, not titles and not markers.
 - **WHEN** captions are created from a 2-minute transcript with 42 characters per line, 2 lines, 6 s maximum
 - **THEN** no caption exceeds the limits, none overlap, every word appears in exactly one caption in order, a pause of 0.7 s starts a new caption
 - **TEST** t3467 (`src/libs/kt-model/tests/subtitles.rs`)
+
+#### Scenario: A subtitle track is a track
+- **WHEN** a subtitle track is muted, locked, reordered under a video track, given opacity ½, a glow and a mask, and an event is dropped on it; its captions are moved, trimmed, copied and deleted
+- **THEN** each acts as on any video track and the drop is refused in words; every caption verb is one undo step and a lock refuses it
+- **TEST** t4250 (`src/libs/kt-model/tests/subtitles.rs`)
 
 ### Requirement: SRT and WebVTT round-trip
 Import SHALL read SRT and WebVTT into a new subtitle track (overlapping cues into additional tracks, never
@@ -40,6 +45,11 @@ Why: invariant 7; UI rule 17 — one way to put text on the screen.
 - **WHEN** a caption with a highlighted word is composed for the preview and by an export at the same tick, and a stored frame is compared
 - **THEN** the bytes are equal on the device and within tolerance of the stored frame; at a tick between captions the plan has no subtitle layer
 - **TEST** t3469 (`src/libs/kt-engine/tests/subtitle_layer.rs`)
+
+#### Scenario: A letter typed moves its caption only
+- **WHEN** one of 500 captions is retyped while the preview stands on another, then on it, and the disk tier holds both moments
+- **THEN** the first moment's key is unchanged, the second's is new, no other source is touched and one source exists for the track
+- **TEST** t4251 (`src/libs/kt-engine/tests/subtitle_layer.rs`)
 
 ### Requirement: The render writes sidecar subtitles on request
 The render window SHALL offer per subtitle track burn-in and a sidecar `.srt` or `.vtt` beside the output;

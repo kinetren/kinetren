@@ -30,7 +30,7 @@ Why: the owner (2026-11-01): local, downloaded on a click, nothing to a cloud.
 
 #### Scenario: Missing component, cancel and pause
 - **WHEN** recognition is asked without the component, then with it and cancelled, then running when Play is pressed
-- **THEN** the download card opens instead of a job; the cancelled job leaves the transcript unchanged; the running job makes no progress while playing
+- **THEN** the line naming the Library item and its size stands instead of a job; the cancelled job leaves the transcript unchanged; the running job makes no progress while playing
 - **TEST** t3462 (`src/apps/kt-app/src/reach_tests.rs`)
 
 ### Requirement: The Text panel walks, searches and cuts the edit
