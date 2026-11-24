@@ -67,7 +67,7 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
 | MODEL (files v2d does not write) | `timecode-is-text` (`genmedia.rs`, `project_file.rs`, `legacy_import.rs`, `gen_ui.rs`) | now; format 8 is merged |
 | MODEL (all of it) | ★ `shared-events` | **after v2d and durable-moment-key merge**, and alone in kt-model/kt-engine until its section 3 is merged |
 | AUDIO | ★ `track-stage-preroll`, then ★ `durable-history-and-mix` (the mix tier) | after durable-moment-key (both write `player.rs`) |
-| COLOR-FX | `chroma-key-upgrade` **v+** | now (its Viewer menu item waits for v2d) |
+| COLOR-FX | `chroma-key-upgrade` **v+** | now (the views stand in the Viewer's badge; only `Viewer::cut` is a text merge with v2d) |
 | MASKS | `magic-wand-mask` **v+** | now; its model field is one enum variant, a text merge with v2d |
 | PREVIEW-UI | `preview-canvas-and-gizmos` | now: it stood after `frame-format-variants` by area order only, its design asks nothing of it |
 | SHELL | `memory-breakdown` | now (it and device-decode 2.1 both append a `Tenant`: the second to merge takes the next number) |
@@ -108,14 +108,14 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
 |---|---|---|---|---|---|
 | `timecode-is-text` | M | — | MODEL (`genmedia.rs`, `project_file.rs`, kt-otio import), `plugins/generators-test` | none | t3993–t3997 |
 | `fx-preset-change` | M | `fx-graph-dag` | FX-UI, `kt-model/src/ops.rs` | answered A4 | t3595–t3596, t3932–t3934 |
-| `preview-canvas-and-gizmos` | M | — | PREVIEW-UI, `ParamSpec.handle` | answered A26 | t3597–t3599 |
+| `preview-canvas-and-gizmos` | M | — | PREVIEW-UI, `controls.rs` (a command), kt-plugin-api `UiDecl.handles` | answered A26; implementation-ready 2026-11-24 | t3597–t3599, t4229–t4231 |
 | `frame-format-variants` **v+** | L | `shared-events`; `preview-canvas-and-gizmos` (PREVIEW-UI) | MODEL, `kt-engine` `RenderTarget`, CACHE key (raster), PREVIEW-UI | answered A17 | t3485–t3492 |
 | `multicam` **v+** | L | `shared-events` | MODEL, TIMELINE-UI, the preview area | answered A18 | t3505–t3514 |
 | `motion-driven-params` **v+** | M | `shared-events` | MODEL (link addresses), PLAYER, automation | answered B7 | t3947–t3951, t3967 (t3947: see below) |
 | `real-3d-groups` **v+** | L | `shared-events`; `fx-graph-dag` (GPU) | MODEL, the plan, GPU (a mesh pipeline) | answered B10 | t3952–t3956 |
 | `auto-ducking-by-role` **v+** | M | `shared-events` | MODEL (`AudioRole`), AUDIO, `track_window.rs` | **open: Q1**, not in owner-checks | t3911–t3918 |
 | `project-scale` **v+** | M | `shared-events` | MODEL (`project_file.rs`) | **open: Q1, Q2** | t3924–t3931 |
-| `magic-wand-mask` **v+** | M | — | MASKS, PREVIEW-UI | answered A20 | t3535–t3540 |
+| `magic-wand-mask` **v+** | M | — | MASKS, PREVIEW-UI (`maskctl.rs`: not beside `preview-canvas-and-gizmos`) | answered A20; implementation-ready 2026-11-24 | t3535–t3543 |
 | `title-word-effects` **v+** | M | `magic-wand-mask` | MASKS, `kt-text` | answered B8 | t3942–t3947 |
 | `point-tracker` **v+** | L | `magic-wand-mask`, `shared-events` | MASKS, MODEL, automation links, PREVIEW-UI | answered A20 | t3520–t3531 |
 | `geometry-fx-flex` **v+** | M | `preview-canvas-and-gizmos` | GEOM, PREVIEW-UI | answered A24 | t3570–t3576 |
@@ -124,7 +124,7 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
 | `presets-everywhere` | M | `fx-preset-change` | MODEL `ops.rs`, FX-UI, the user store | **open: Q1, Q2** | t3904–t3907 |
 | `detached-windows` | M | — | SHELL | **open: Q1, Q2** | t3901–t3903 |
 | `scopes` | M | v2d's 2.6 | GPU (a tap pass), PLAYER, SHELL | answered A8 | t3400–t3412 |
-| `memory-breakdown` | M | — | `kt-time` `mem.rs`, every holder, SHELL | answered B12 | t3962–t3965 |
+| `memory-breakdown` | M | — | `kt-time` `mem.rs`, kt-gpu `memory.rs`, wgpu's `counters`, SHELL | answered B12; implementation-ready 2026-11-24 | t3962–t3965, t4232–t4234 |
 
 ### Effects, render checks, the rest
 
@@ -135,7 +135,7 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
 | `pause-detection` | M | — (Delete waits for `ripple-and-trim-modes`) | kt-media (`pauses.rs`, the pyramid's tail), a window | none | t3466, t4204–t4209 |
 | `edit-analysis` **v+** | L | A3 `ripple-and-trim-modes`; `speech` `pause-detection`; stage B `download-library` | kt-plugin-api (`measure.rs`), kt-media, TIMELINE overlay and snap, links, a bin tab | none | t4211–t4228 |
 | `picture-check` | M | `loudness-norms` (the findings list) | EXPORT, MODEL `lint`, DIALOG | **open: Q1, Q2** | t3908–t3910 |
-| `chroma-key-upgrade` **v+** | M | — | COLOR-FX, SHELL (the Viewer's menu) | answered A22 | t3558–t3564 |
+| `chroma-key-upgrade` **v+** | M | — | COLOR-FX, kt-plugin-api + `kt-fx/geom.rs` (one hook), SHELL (the Viewer's badge) | answered A22; implementation-ready 2026-11-24 | t3558–t3567 |
 | `pro-keyer` | L | `chroma-key-upgrade` | COLOR-FX, GPU, `BarrierKernel::held` | answered A22 | t3585–t3590 |
 | `temporal-barrier-3dnr` **v+** | L | `track-stream-stage` (STREAM) | STREAM, GPU, `plugins/fx-video-camera` | answered A21 | t3545–t3551 |
 | `download-library` | L | own-data-dir | LIBRARY, `kt-text`, the release build | answered B3 | t3850–t3869 |
