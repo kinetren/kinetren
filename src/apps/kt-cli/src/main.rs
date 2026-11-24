@@ -612,6 +612,9 @@ fn probe_range(
     }
 
     probe_prefetch(project, &facts, t0, t1);
+    if let Some(g) = &project.program {
+        println!("\nprogram stage: {:+.1} dB at {:.1} dBTP, after the mix above (not in it)", g.gain_db, project.loudness.ceiling_dbtp);
+    }
 
     // --time: DOES THE ENGINE KEEP UP rendering this place (R.43, item 301).
     // After item 294 the starvation of the ring (“right underrun”) no longer stalls

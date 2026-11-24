@@ -6705,9 +6705,13 @@ impl KtApp {
                         ui.close();
                     }
                 }
-                if is_audio && ui.button(tr(k::tl::menu::RESET_GAIN)).clicked() {
-                    self.apply(Command::SetGain { id, gain_db: 0.0 });
-                    ui.close();
+                if is_audio {
+                    let r = ui.button(tr(k::tl::menu::RESET_GAIN));
+                    crate::widgets::field_probe::note("clip.menu.reset_gain", r.rect);
+                    if r.clicked() {
+                        self.apply(Command::SetGain { id, gain_db: 0.0 });
+                        ui.close();
+                    }
                 }
                 // transitions (R.24): crossfade with the butted neighbour / remove
                 {

@@ -449,8 +449,11 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                 });
             // v14 (shape-masks): masks on an event, a slot or a track
             let has_v14 = p.has_masks();
+            // v19 (loudness-norms): the document's loudness target or program stage
+            if p.has_program_loudness() {
+                crate::meta::KT_META_V19
             // v18 (fx-graph-dag D7): a chain branches or holds a Merge
-            if p.has_fx_graph() {
+            } else if p.has_fx_graph() {
                 crate::meta::KT_META_V18
             // v17 (track-device-sound): a video track names its sound track
             } else if p.has_track_sound() {
@@ -491,6 +494,8 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                 crate::meta::KT_META_V1
             }
         },
+        loudness: p.loudness,
+        program: p.program,
         settings: Some(KtSettings {
             fps: p.settings.fps,
             width: p.settings.width,
@@ -1752,6 +1757,11 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
         for c in &mut p.cameras {
             kt_model::migrate_legacy_camera(c);
         }
+        // out of range (a hand-written file): the defaults, not a document that fails to open
+        if kt.loudness.valid() {
+            p.loudness = kt.loudness;
+        }
+        p.program = kt.program.filter(|g| g.valid());
         if let Some(end) = kt.end {
             p.timeline_end = Some(Tick(end));
         }

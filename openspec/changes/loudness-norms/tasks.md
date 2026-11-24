@@ -1,6 +1,6 @@
 # Tasks: loudness-norms
 
-> DESIGN ONLY until the orchestrator's go; no open question. Revision 3. Tests: t3919–t3923, t3966, t4200–t4203; from
+> Revision 3. Tests: t3919–t3923, t3966, t4200–t4203; from
 > the branch t3106, t3107.
 
 ## 0. Notes
@@ -38,16 +38,16 @@
 
 - [x] 3.1 the kernel `kt_fx::audio::program`; t4201
 - [x] 3.2 the stage at the player's output and in `render_raw_audio_range` (every caller of design D3's table); t3919, t4200, t4202, t407
-- [ ] 3.3 the jobs: program (two passes), events with short ones grouped; `AnalysisKind` and t774's lock by name; t3920, t4203
-- [ ] 3.4 the report against the project's target, the spans; t3921, t406
+- [x] 3.3 the jobs: program (two passes), events with short ones grouped; `AnalysisKind` and t774's lock by name; t3920, t4203
+- [x] 3.4 the report against the project's target, the spans; t3921, t406
 
 ## 4. Interface
 
-- [ ] 4.1 Project settings → Sound, "Match loudness…", the stage in the meters column, the report; kt-cli export's lines; i18n ×5; t3922, t3923; live `render_norms`
-- [ ] 4.2 the limiter effect's hint (sample peaks)
+- [x] 4.1 Project settings → Sound, "Match loudness…", the stage in the meters column, the report; kt-cli export's lines; i18n ×5; t3922, t3923; live `render_norms`
+- [x] 4.2 the limiter effect's hint (sample peaks)
 - [ ] 4.3 the load check: playing the heavy showcase with the stage on, paused with it on (nothing)
 
 ## 5. Close
 
-- [ ] 5.1 What's new; F-AUD-005's verdict; registry T14 and B6 moved; OTIO row "planned" → the change's date
+- [x] 5.1 What's new; F-AUD-005's verdict; registry T14 and B6 moved; OTIO row "planned" → the change's date
 - [ ] 5.2 `src/scripts/finish.sh` (orchestrator), version in the report
