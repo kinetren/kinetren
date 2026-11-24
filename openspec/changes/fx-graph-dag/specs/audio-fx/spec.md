@@ -17,7 +17,7 @@ Why: invariants 1–3 and 11; the layer strength's dry ring is the same alignmen
 #### Scenario: A line is the chain, sample for sample
 - **WHEN** every audio golden and the showcase render through the graph path with empty input fields
 - **THEN** the samples equal the line's; GOLDEN_AUDIO holds; four warm seconds allocate nothing
-- **TEST** t3212 (`src/libs/kt-engine/tests/golden_export.rs`)
+- **TEST** t3212 (`src/libs/kt-engine/tests/audio_graph.rs`), GOLDEN_AUDIO (`src/libs/kt-engine/tests/golden_export.rs`)
 
 #### Scenario: Parallel compression and a look-ahead arm
 - **WHEN** an event sums its source with a compressed arm, then with an arm through a look-ahead limiter

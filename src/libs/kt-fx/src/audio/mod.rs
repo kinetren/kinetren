@@ -3,18 +3,20 @@
 //! the paths of callers (`kt_fx::ClipProcessor` etc.) have not changed.
 
 pub mod cost;
+mod graph;
 pub mod loudness;
 mod nodes;
 pub mod primitives;
 mod sinc;
 mod warp;
 
+pub use graph::{ChainGraph, Feed, SoundSplit, chain_fingerprint_in, chain_lookahead_in, sound_split};
 pub use nodes::{AudioNode, Freeverb};
 pub use primitives::SmoothedParam;
 pub use warp::Warp;
 
 use crate::{CH, MIN_PREROLL_FRAMES, PullKind};
-use kt_model::FxInstance;
+use kt_model::{FxInstance, fx_graph};
 use kt_time::Tick;
 
 use kt_model::{AutoProfiles, ParamPoints, eff_rate, rate_at, source_progress};
@@ -304,12 +306,30 @@ pub struct TrackProcessor {
     opts: ChainOpts,
     /// Lookahead of the chain: the input runs ahead of the output by this many frames (R.48).
     la: i64,
+    /// The chain's wiring (fx-graph-dag D9, "track stages: a graph"); empty — the line. A track
+    /// has no source to read again: its graph opens no reads.
+    graph: ChainGraph,
+    plan: Option<graph::GraphPlan>,
+    gstate: graph::GraphState,
 }
 
 impl TrackProcessor {
     pub fn new(fx: &[FxInstance], opts: ChainOpts) -> TrackProcessor {
-        let mut p =
-            TrackProcessor { fingerprint: chain_fingerprint(fx), nodes: Vec::new(), opts, la: 0 };
+        Self::new_graph(fx, &ChainGraph::default(), opts)
+    }
+
+    /// A track chain with its wiring (`graph.reads` is ignored: a track reads no source).
+    pub fn new_graph(fx: &[FxInstance], graph: &ChainGraph, opts: ChainOpts) -> TrackProcessor {
+        let graph = ChainGraph { fx_in: graph.fx_in.clone(), reads: Vec::new() };
+        let mut p = TrackProcessor {
+            fingerprint: chain_fingerprint_in(fx, &graph),
+            nodes: Vec::new(),
+            opts,
+            la: 0,
+            graph,
+            plan: None,
+            gstate: graph::GraphState::default(),
+        };
         p.apply_params(fx, true);
         p
     }
@@ -335,11 +355,21 @@ impl TrackProcessor {
     /// fires before the speech (caught by t770 on the chain “limiter +
     /// compressor with a key”).
     pub fn slot_delay(&self, slot: usize) -> i64 {
+        if let Some(p) = &self.plan {
+            // a graph: the look-ahead of the slot's own input path
+            return self.nodes.iter().position(|(s, _)| *s == slot).map_or(0, |k| p.steps[k].lat_in);
+        }
         self.nodes.iter().take_while(|(s, _)| *s < slot).map(|(_, n)| n.lookahead()).sum()
     }
 
     pub fn tail(&self) -> Tick {
-        self.nodes.iter().map(|(_, n)| n.tail()).max().unwrap_or(Tick::ZERO)
+        self.nodes
+            .iter()
+            .enumerate()
+            .filter(|(k, _)| self.plan.as_ref().is_none_or(|p| p.live(*k)))
+            .map(|(_, (_, n))| n.tail())
+            .max()
+            .unwrap_or(Tick::ZERO)
     }
 
     pub fn tail_frames(&self) -> i64 {
@@ -353,7 +383,7 @@ impl TrackProcessor {
                 .enumerate()
                 .filter_map(|(slot, f)| AudioNode::build(f, self.opts.pitch_engine).map(|n| (slot, n)))
                 .collect();
-            self.fingerprint = chain_fingerprint(fx);
+            self.fingerprint = chain_fingerprint_in(fx, &self.graph);
             // a track's `pos` is the timeline frame: its frame 0 is timeline frame 0, on the
             // project's grid — where a device's sound half on the track reads its device
             // (track-device-sound; the default placement assumed 25 fps)
@@ -366,13 +396,28 @@ impl TrackProcessor {
             node.apply(&fx[*slot], structural);
         }
         // the track has neither a layer strength nor a dry side: there is nothing to mix with
-        self.la = self.nodes.iter().map(|(_, n)| n.lookahead()).sum();
+        if self.graph.is_line() {
+            self.la = self.nodes.iter().map(|(_, n)| n.lookahead()).sum();
+        } else {
+            let slots: Vec<usize> = self.nodes.iter().map(|(s, _)| *s).collect();
+            let plan = graph::GraphPlan::new(fx, &self.graph, &slots, |k| self.nodes[k].1.lookahead());
+            self.la = plan.la;
+            let same = self.plan.as_ref().is_some_and(|p| {
+                p.regs == plan.regs
+                    && p.steps.iter().zip(&plan.steps).all(|(a, b)| a.d_main == b.d_main && a.d_second == b.d_second)
+            });
+            if !same {
+                self.gstate = graph::GraphState::new(&plan);
+            }
+            self.plan = Some(plan);
+        }
     }
 
     pub fn reset(&mut self) {
         for (_, n) in &mut self.nodes {
             n.reset();
         }
+        self.gstate.reset();
     }
 
     /// Process the buffer standing at position `pos` (TIMELINE frames).
@@ -397,9 +442,27 @@ impl TrackProcessor {
         buf: &mut [f32],
         key: &dyn Fn(usize) -> Option<&'k [f32]>,
     ) {
-        for (slot, node) in &mut self.nodes {
-            node.process(buf, pos, key(*slot));
+        let Some(plan) = &self.plan else {
+            for (slot, node) in &mut self.nodes {
+                node.process(buf, pos, key(*slot));
+            }
+            return;
+        };
+        // a graph (fx-graph-dag D4): the same pass as an event's, without a source to read again
+        for (k, (slot, node)) in self.nodes.iter_mut().enumerate() {
+            if !plan.live(k) {
+                continue;
+            }
+            let delayed = self.gstate.enter(plan, k, buf);
+            let len = buf.len();
+            let second = self.gstate.second(plan, k, delayed, len);
+            match node {
+                AudioNode::Merge { crossfade, mix } => graph::merge(buf, second, *crossfade, mix.clamp(0.0, 1.0) as f32),
+                // the key socket wired in the chain wins over the track key
+                _ => node.process(buf, pos, second.or_else(|| key(*slot))),
+            }
         }
+        self.gstate.leave(plan, buf);
     }
 }
 
@@ -489,6 +552,13 @@ pub struct ClipProcessor {
     /// same frame every lap, and the warp map laid out its segments per call — an allocation per
     /// seam (per-sample-costs, t2684). Emptied when the curves or the chain change.
     offset_memo: std::cell::Cell<Option<(i64, u64, i64, i64)>>,
+    /// The chain's wiring (fx-graph-dag D4); empty — the line, run by the former pass.
+    graph: ChainGraph,
+    /// The graph pass's plan (`None` for a line) and its buffers and alignment rings.
+    plan: Option<graph::GraphPlan>,
+    gstate: graph::GraphState,
+    /// The chain the plan is made of (a graph only; a line keeps none).
+    fx_view: Vec<FxInstance>,
 }
 
 /// The kept buffers of one chunk (see `ClipProcessor::scratch`).
@@ -500,7 +570,7 @@ struct ChunkScratch {
 }
 
 /// `v` filled with a copy of `from`, without a new allocation once its capacity holds it.
-fn copy_into(mut v: Vec<f32>, from: &[f32]) -> Vec<f32> {
+pub(crate) fn copy_into(mut v: Vec<f32>, from: &[f32]) -> Vec<f32> {
     v.clear();
     v.extend_from_slice(from);
     v
@@ -518,7 +588,7 @@ struct Twin {
 /// having “eaten” part of the lookahead — without alignment the blend would mix different
 /// moments of the material. With a zero delta the ring is not created at all.
 #[derive(Clone)]
-struct DryRing {
+pub(crate) struct DryRing {
     buf: Vec<f32>,
     pos: usize,
 }
@@ -563,8 +633,21 @@ impl ClipProcessor {
         clip_len_frames: i64,
         opts: ChainOpts,
     ) -> ClipProcessor {
+        Self::new_graph(fx, &ChainGraph::default(), auto, src_in_frames, clip_len_frames, opts)
+    }
+
+    /// A processor of a chain with its wiring (fx-graph-dag D4): `fx` is the main chain of a
+    /// `sound_split` and `graph` its graph; an empty graph is `new_with_opts`.
+    pub fn new_graph(
+        fx: &[FxInstance],
+        graph: &ChainGraph,
+        auto: &AutoProfiles,
+        src_in_frames: i64,
+        clip_len_frames: i64,
+        opts: ChainOpts,
+    ) -> ClipProcessor {
         let mut p = ClipProcessor {
-            fingerprint: chain_fingerprint(fx),
+            fingerprint: chain_fingerprint_in(fx, graph),
             origin: 0,
             next_local: i64::MIN,
             src_in: src_in_frames,
@@ -599,6 +682,10 @@ impl ClipProcessor {
             ringing: false,
             scratch: ChunkScratch::default(),
             offset_memo: std::cell::Cell::new(None),
+            graph: graph.clone(),
+            plan: None,
+            gstate: graph::GraphState::default(),
+            fx_view: Vec::new(),
         };
         p.apply_params(fx, true);
         p
@@ -631,12 +718,18 @@ impl ClipProcessor {
         let n = self.nodes.len();
         self.ahead.clear();
         self.ahead.resize(n, 0);
-        let mut acc = 0i64;
-        for i in (0..n).rev() {
-            acc += self.nodes[i].1.lookahead();
-            self.ahead[i] = acc;
+        if self.graph.is_line() {
+            let mut acc = 0i64;
+            for i in (0..n).rev() {
+                acc += self.nodes[i].1.lookahead();
+                self.ahead[i] = acc;
+            }
+            self.la = acc;
+        } else {
+            // a graph (fx-graph-dag D4): a node sees content ahead of the output by what the Output
+            // path still reads past its input; a node off the Output path is not run
+            self.replan();
         }
-        self.la = acc;
         // lookahead at the layer-strength marker position and the dry-side delta
         let (mix_ahead, dry_delta) = match &self.mix {
             Some(m) => {
@@ -661,9 +754,34 @@ impl ClipProcessor {
         self.dry_ring = (dry_delta > 0).then(|| DryRing::new(dry_delta));
         // the context — the same decision as the static `chain_context` (t1109): the last node that
         // reads across the edges with a live look-ahead, unless a warp starts in hold or backwards
-        let last = (0..n).rev().find(|&i| self.across[i] && self.nodes[i].1.lookahead() > 0);
+        // the edge reader that sets the context stands on the trunk (an arm's would be a read)
+        let trunk = if self.plan.is_some() { fx_graph::trunk_len(&self.graph.fx_in, self.fx_view.len()) } else { usize::MAX };
+        let last = (0..n).rev().find(|&i| {
+            self.across[i]
+                && self.nodes[i].1.lookahead() > 0
+                && (self.plan.is_none() || (self.nodes[i].0 < trunk && self.plan.as_ref().is_some_and(|p| p.live(i))))
+        });
         self.ctx = last.filter(|_| !self.warp_back);
         self.recompute_ring();
+    }
+
+    /// The graph pass's plan from the nodes' current look-aheads; the alignment rings are made anew
+    /// only when a delay changed (a value edit keeps them, invariant 3).
+    fn replan(&mut self) {
+        let slots: Vec<usize> = self.nodes.iter().map(|(s, _)| *s).collect();
+        let plan = graph::GraphPlan::new(&self.fx_view, &self.graph, &slots, |k| self.nodes[k].1.lookahead());
+        self.la = plan.la;
+        for (k, st) in plan.steps.iter().enumerate() {
+            self.ahead[k] = if st.live { plan.la - st.lat_in } else { 0 };
+        }
+        let same = self.plan.as_ref().is_some_and(|p| {
+            p.regs == plan.regs
+                && p.steps.iter().zip(&plan.steps).all(|(a, b)| a.d_main == b.d_main && a.d_second == b.d_second)
+        });
+        if !same {
+            self.gstate = graph::GraphState::new(&plan);
+        }
+        self.plan = Some(plan);
     }
 
     /// "Rings on" (pitch-tail-choice): only when something before the edge-reader rings — otherwise
@@ -742,11 +860,19 @@ impl ClipProcessor {
     /// lives on, parameters arrive smoothed).
     pub fn apply_params(&mut self, fx: &[FxInstance], structural: bool) {
         self.offset_memo.set(None);
+        if !self.graph.is_line() {
+            self.fx_view = fx.to_vec();
+        }
         if structural {
+            let reads = &self.graph.reads;
             self.nodes = fx
                 .iter()
                 .enumerate()
-                .filter_map(|(slot, f)| AudioNode::build(f, self.opts.pitch_engine).map(|n| (slot, n)))
+                .filter_map(|(slot, f)| match reads.iter().position(|r| *r == slot) {
+                    // a sound read's output stands at its slot (fx-graph-dag D4)
+                    Some(k) => Some((slot, AudioNode::Input(k))),
+                    None => AudioNode::build(f, self.opts.pitch_engine).map(|n| (slot, n)),
+                })
                 .collect();
             self.across = self
                 .nodes
@@ -760,7 +886,7 @@ impl ClipProcessor {
         self.echo_on = self.nodes.iter().map(|(slot, _)| nodes::echo_rings(&fx[*slot])).collect();
         debug_assert_eq!(
             self.nodes.len(),
-            fx.iter().filter(|f| AudioNode::has_node(f)).count(),
+            fx.iter().enumerate().filter(|(i, f)| self.graph.reads.contains(i) || AudioNode::has_node(f)).count(),
             "node list out of sync with the chain"
         );
         self.mix = fx.iter().position(|f| f.is_layer_mix()).map(|i| match &fx[i] {
@@ -815,8 +941,16 @@ impl ClipProcessor {
             || self.rate_points().iter().any(|(_, r)| (r.abs() - 1.0).abs() > 1e-9)
     }
 
+    /// The chain's tail: the longest of the nodes that run (a dangling node does not ring,
+    /// fx-graph-dag D4).
     pub fn tail(&self) -> Tick {
-        self.nodes.iter().map(|(_, n)| n.tail()).max().unwrap_or(Tick::ZERO)
+        self.nodes
+            .iter()
+            .enumerate()
+            .filter(|(k, _)| self.plan.as_ref().is_none_or(|p| p.live(*k)))
+            .map(|(_, (_, n))| n.tail())
+            .max()
+            .unwrap_or(Tick::ZERO)
     }
 
     pub fn tail_frames(&self) -> i64 {
@@ -829,6 +963,7 @@ impl ClipProcessor {
         for (_, n) in &mut self.nodes {
             n.reset();
         }
+        self.gstate.reset();
         if let Some(r) = &mut self.dry_ring {
             r.reset();
         }
@@ -919,6 +1054,13 @@ impl ClipProcessor {
         out: &mut [f32],
         pull: &mut dyn FnMut(PullKind, i64, &mut [f32]) -> bool,
     ) -> u64 {
+        self.read_fed(local, out, &mut graph::PullOnly(pull))
+    }
+
+    /// `read` with the sound reads' outputs (fx-graph-dag D4): `feed.input(k, ..)` is asked for
+    /// read `k` at the clip-local frame its slot's content stands at.
+    pub fn read_fed(&mut self, local: i64, out: &mut [f32], feed: &mut dyn Feed) -> u64 {
+        let pull = feed;
         if self.next_local != local {
             if self.next_local == i64::MIN {
                 // Cold start or seek (`reset`): reset + pre-roll,
@@ -1044,10 +1186,11 @@ impl ClipProcessor {
         self.reseat_source(input);
     }
 
-    fn hard_seek(&mut self, local: i64, pull: &mut dyn FnMut(PullKind, i64, &mut [f32]) -> bool) {
+    fn hard_seek(&mut self, local: i64, pull: &mut dyn Feed) {
         for (_, n) in &mut self.nodes {
             n.reset();
         }
+        self.gstate.reset();
         self.twin = None;
         self.ringing = false;
         // pre-roll may reach into the left “handle”, but not before the start of the
@@ -1108,7 +1251,7 @@ impl ClipProcessor {
         kind: PullKind,
         local: i64,
         out: &mut [f32],
-        pull: &mut dyn FnMut(PullKind, i64, &mut [f32]) -> bool,
+        pull: &mut dyn Feed,
     ) {
         let total = out.len() / CH;
         let mut done = 0usize;
@@ -1261,9 +1404,9 @@ impl ClipProcessor {
                 sub.fill(0.0);
             } else {
                 match &mut self.warp {
-                    Some(w) => w.produce(kind, sub, pull),
+                    Some(w) => w.produce(kind, sub, &mut |k, f, b| pull.pull(k, f, b)),
                     None => {
-                        if !pull(kind, self.plain_cursor, sub) {
+                        if !pull.pull(kind, self.plain_cursor, sub) {
                             sub.fill(0.0);
                         }
                         self.plain_cursor += n as i64;
@@ -1307,14 +1450,21 @@ impl ClipProcessor {
             };
             let ahead = &self.ahead;
             let pos = |i: usize| fold(chunk_local + ahead[i]);
-            let pass = Pass { mix: self.mix.as_ref(), mix_k, pos: &pos };
+            // a Merge's mix by its curve at the chunk midpoint of the content it sees
+            let (auto, clip_len) = (&self.auto, self.clip_len);
+            let merge_k = |i: usize, slot: usize, base: f64| {
+                let tau = (pos(i) as f64 + n as f64 * 0.5) / clip_len as f64;
+                auto.value(slot, "mix", base, tau).clamp(0.0, 1.0) as f32
+            };
+            let pass = Pass { mix: self.mix.as_ref(), mix_k, pos: &pos, merge_k: &merge_k };
             let mut dry: Option<Vec<f32>> = None;
             let sc = &mut self.scratch;
             let nodes_len = self.nodes.len();
+            let mut g = self.plan.as_ref().map(|p| (p, &mut self.gstate));
             match self.ctx {
-                None => pass.run(&mut self.nodes, 0..nodes_len, sub, &mut dry, &mut self.dry_ring, &mut sc.dry),
+                None => pass.run(&mut self.nodes, 0..nodes_len, sub, &mut dry, &mut self.dry_ring, &mut sc.dry, &mut g, pull),
                 Some(c) => {
-                    pass.run(&mut self.nodes, 0..c + 1, sub, &mut dry, &mut self.dry_ring, &mut sc.dry);
+                    pass.run(&mut self.nodes, 0..c + 1, sub, &mut dry, &mut self.dry_ring, &mut sc.dry, &mut g, pull);
                     // THE CONTENT GATE (pitch-event-edges D1): right after the last node that reads
                     // across the edges, everything outside the event is cut — the content position
                     // there runs ahead of the output by what the later nodes still read
@@ -1330,7 +1480,7 @@ impl ClipProcessor {
                     // the twin gives the frames from the out-point on (pitch-tail-choice D3)
                     if let Some(t) = self.twin.as_mut() {
                         let mut tdry: Option<Vec<f32>> = None;
-                        pass.run(&mut t.nodes, 0..c + 1, &mut twin_sub[..], &mut tdry, &mut t.dry_ring, &mut sc.twin_dry);
+                        pass.run(&mut t.nodes, 0..c + 1, &mut twin_sub[..], &mut tdry, &mut t.dry_ring, &mut sc.twin_dry, &mut None, pull);
                         content_gate(&mut twin_sub[..], p0, gate_end, i64::MAX);
                         for (v, tv) in sub.iter_mut().zip(twin_sub.iter()) {
                             *v += tv;
@@ -1345,8 +1495,12 @@ impl ClipProcessor {
                             sc.twin_dry = td;
                         }
                     }
-                    pass.run(&mut self.nodes, c + 1..nodes_len, sub, &mut dry, &mut self.dry_ring, &mut sc.dry);
+                    pass.run(&mut self.nodes, c + 1..nodes_len, sub, &mut dry, &mut self.dry_ring, &mut sc.dry, &mut g, pull);
                 }
+            }
+            // the Output of a graph, when it is not the last node's buffer
+            if let Some((p, st)) = g {
+                st.leave(p, sub);
             }
             // the chunk's buffers go back to be filled again by the next one
             if let Some(d) = dry {
@@ -1367,9 +1521,15 @@ struct Pass<'a> {
     mix_k: Option<f32>,
     /// The content position node `i` sees at the chunk's first frame.
     pos: &'a dyn Fn(usize) -> i64,
+    /// A Merge's mix for node `i` at `slot` with the base value (its curve at the chunk).
+    merge_k: &'a dyn Fn(usize, usize, f64) -> f32,
 }
 
+/// A graph pass's plan and its state, when the chain is a graph.
+type GraphRun<'a> = Option<(&'a graph::GraphPlan, &'a mut graph::GraphState)>;
+
 impl Pass<'_> {
+    #[allow(clippy::too_many_arguments)]
     fn run(
         &self,
         nodes: &mut [(usize, AudioNode)],
@@ -1378,8 +1538,21 @@ impl Pass<'_> {
         dry: &mut Option<Vec<f32>>,
         dry_ring: &mut Option<DryRing>,
         spare: &mut Vec<f32>,
+        g: &mut GraphRun<'_>,
+        feed: &mut dyn Feed,
     ) {
         for i in range {
+            // a graph (fx-graph-dag D4): a node off the Output path does not run; the input is
+            // spilled, loaded and aligned as the plan says
+            let delayed = match g.as_mut() {
+                Some((p, st)) => {
+                    if !p.live(i) {
+                        continue;
+                    }
+                    st.enter(p, i, sub)
+                }
+                None => false,
+            };
             let (slot, node) = &mut nodes[i];
             if let Some(m) = self.mix
                 && *slot >= m.from
@@ -1403,9 +1576,17 @@ impl Pass<'_> {
                 }
                 continue;
             }
-            // an event has no key: the sidechain lives only in the TRACK chain
-            // (the owner’s decision, R.65)
-            node.process(sub, (self.pos)(i), None);
+            let len = sub.len();
+            let second = g.as_ref().and_then(|(p, st)| st.second(p, i, delayed, len));
+            match node {
+                AudioNode::Merge { crossfade, mix } => {
+                    graph::merge(sub, second, *crossfade, (self.merge_k)(i, *slot, *mix));
+                }
+                AudioNode::Input(k) => feed.input(*k, (self.pos)(i), sub),
+                // an event has no key from a TRACK: that sidechain lives only in the track chain
+                // (the owner’s decision, R.65); its key socket may take an arm of its own chain
+                _ => node.process(sub, (self.pos)(i), second),
+            }
         }
     }
 }

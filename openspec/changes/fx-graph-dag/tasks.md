@@ -59,12 +59,20 @@
 
 ## 3. v2c — the sound (after v2b, Q1 a)
 
-- [ ] 3.1 `ClipProcessor` routes held outputs; Merge Sum/Crossfade; pool buffers; t3212, t3213
-- [ ] 3.2 look-ahead alignment before a Merge (the dry ring generalised); t3214
-- [ ] 3.3 the compressor's key socket from its own chain; t3215
-- [ ] 3.4 tails of the Output path, dangling nodes silent; `chain_fingerprint` hashes `fx_in`;
-      t3216, t3217
-- [ ] 3.5 sound reads: an arm's warp, stream sound and edge reading get their own source window; t3229
+- [x] 3.1 `ClipProcessor` routes held outputs (`audio/graph.rs`: spill before the working buffer
+      is overwritten, load, the Output loaded last); Merge Sum/Crossfade; kept register buffers;
+      the track stage runs the same pass (`TrackProcessor::new_graph`); t3212, t3213
+- [x] 3.2 look-ahead alignment before a Merge and a keyed node (a ring per input that has less);
+      the chain's look-ahead is the Output path's (`chain_lookahead_in`); t3214
+- [x] 3.3 the compressor's key socket from its own chain (`FxInstance::has_key_socket`, a
+      `second` on a keyed kind passes validation; the wired key wins over a track key); t3215
+- [x] 3.4 tails of the Output path, dangling nodes not run (`sound_split` leaves them as
+      placeholders); `chain_fingerprint_in` hashes the wiring; t3216, t3217
+- [x] 3.5 sound reads: `sound_split` makes each read a line, `FxStateStore` keeps a processor
+      per read, `EventFeed` reads it through its own `SrcWindow`, the prefetch asks each read's
+      window; a reel instance opens no read (transparent, as the picture); t3229
+- [x] 3.6 the sound lane takes wiring (`SoundLater` gone); a Matte on a sound chain is refused
+      (`MatteOnSound`)
 
 ## 4. v2d — the editor
 

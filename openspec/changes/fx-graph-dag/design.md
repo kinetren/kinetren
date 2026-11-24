@@ -257,6 +257,24 @@ of the passes a merge reuses (EXACT for `Normal`/integer modes, as the composite
   (`AudioClip.fp` from the model event's `Debug`, which now carries `fx_in`) needs no new rule;
   t3229.
 
+**Applied in v2c.**
+- One plan, two passes: `kt_fx::audio::graph::GraphPlan` decides spills, loads, the alignment ring of
+  each input of a Merge or a keyed node, and the Output path's look-ahead; `ClipProcessor` and
+  `TrackProcessor` follow it. A line keeps the former pass (t3212 holds the graph pass equal to it).
+- `sound_split` gives the processor its MAIN chain: a read's time kind, the slots only that read
+  needs and the dangling slots become placeholders, so every static formula over the chain (tail,
+  context, warp, windows) speaks of what runs, without a second set of formulas; only the
+  look-ahead and the fingerprint take the graph (`_in`).
+- A read's output enters at the content position of the chain's input (latency 0): the read's own
+  processor aligns its look-ahead, as an event's does. The engine reads it through `EventFeed` with
+  the read's `SrcWindow`; the prefetch asks every read's window by the same function.
+- Not covered, on purpose: a reel instance opens no read (as in the picture; its arm's time kind is
+  transparent); an event with reads is never a split's run predecessor and its earlier loop laps
+  ring without their reads (a lap keeps the event's own processor only). A Merge on the sound lane
+  in a picture blend mode sums (the editor of v2d offers only Sum and Crossfade there).
+- The sound lane's refusal (`SoundLater`) is gone; a Matte on a sound chain is refused
+  (`MatteOnSound`): the sound has no coverage to make.
+
 ## D5. How it relates to compositing
 
 Three levels, and v2 adds only to the first:

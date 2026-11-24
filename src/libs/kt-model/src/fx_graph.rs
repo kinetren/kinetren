@@ -182,9 +182,9 @@ pub enum GraphWhy {
     TooManyHeld,
     /// More than `MAX_READS` reads of the source.
     TooManyReads,
-    /// Wiring on a SOUND chain: the sound graph comes with v2c (the owner's Q1 a, "Сначала
-    /// картинка"); until then the processor would run its arms one after another.
-    SoundLater,
+    /// A Matte on a SOUND chain: the sound has no coverage to make (a sound Merge sums or crossfades,
+    /// design D4).
+    MatteOnSound,
     /// A time kind in an arm whose own path from the Source branches: a read is a LINE (design D2),
     /// so it reads exactly as an event with that line does.
     ReadBranches,
@@ -199,11 +199,11 @@ pub struct GraphError {
     pub why: GraphWhy,
 }
 
-/// `check` for a chain on its lane: a sound chain takes no wiring yet (`SoundLater`).
+/// `check` for a chain on its lane: a sound chain runs its graph since v2c (design D4); it takes no
+/// Matte.
 pub fn check_lane(fx: &[FxInstance], fx_in: &[SlotInputs], lead: usize, sound: bool) -> Result<(), GraphError> {
-    if sound && !is_line(fx_in) {
-        let slot = fx_in.iter().position(|s| !s.is_line()).unwrap_or(0);
-        return Err(GraphError { slot, why: GraphWhy::SoundLater });
+    if sound && let Some(slot) = fx_in.iter().position(|s| s.matte.is_some()) {
+        return Err(GraphError { slot, why: GraphWhy::MatteOnSound });
     }
     check(fx, fx_in, lead)
 }
@@ -224,7 +224,8 @@ pub fn check(fx: &[FxInstance], fx_in: &[SlotInputs], lead: usize) -> Result<(),
                 return Err(GraphError { slot: i, why: GraphWhy::Forward });
             }
         }
-        if (s.second.is_some() || s.matte.is_some()) && !f.is_merge() {
+        // a second input on a Merge (its Foreground) or on a keyed effect (its key, design D4)
+        if (s.second.is_some() && !f.is_merge() && !f.has_key_socket()) || (s.matte.is_some() && !f.is_merge()) {
             return Err(GraphError { slot: i, why: GraphWhy::SocketOnPlain });
         }
     }
