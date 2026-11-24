@@ -1,7 +1,7 @@
 # Tasks: subtitles-and-text-editing
 
 > DESIGN ONLY until the owner answers Q1–Q3 (`proposal.md`). Depends on `ripple-and-trim-modes`
-> (`ripple_plan`) for text deletion. Tests reserved: t3460–t3484.
+> (`ripple_plan`) for text deletion. Tests reserved: t3460–t3465, t3467–t3484, t4210.
 
 ## 0. Notes first
 
@@ -23,7 +23,7 @@
 - [ ] 2.1 kt-model: `Transcript`, `Word`, word visibility through `clip_material_at`; t3460
 - [ ] 2.2 the recognizer component download (the `ffmpeg_setup` card pattern), dlopen loader, the job; t3461, t3462
 - [ ] 2.3 the Text panel (follow, click, search, region, Delete through `ripple_plan`, retype); t3463, t3465
-- [ ] 2.4 pauses from the pyramid, fillers from the catalogue; t3466
+- [ ] 2.4 fillers from the catalogue; t4210 (pauses: `pause-detection`)
 - [ ] 2.5 menus and the live scenarios `text_panel.py`, `captions.py`; t3464, t3473, t3474
 - [ ] 2.6 font packs on a click (Q3 a), the notice for a missing script
 
