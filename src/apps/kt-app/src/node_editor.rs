@@ -674,12 +674,42 @@ pub fn chain_graph(
     let detail = view.detail.unwrap_or(detail_w <= aw && detail_h <= room_h * DETAIL_SHARE);
     let head_w = if detail { head_full } else { head_chip };
     let row_h: Vec<Vec<f32>> = if detail { detail_rows } else { rows_of(false) };
-    let lane_h: Vec<f32> = row_h.iter().zip(laid).map(|(r, l)| height_of(r, l)).collect();
     let per_band = (((aw - PAD * 2.0 - head_w - END_W - GAP * 2.0) / (CHIP_W + CHIP_GAP)).floor() as usize).max(1);
     let bands = if detail { 1 } else { total.div_ceil(per_band).max(1) };
-    let band_h = lane_h.iter().sum::<f32>() + LANE_GAP * (lanes.len() as f32 - 1.0);
+    let band_of = |c: usize| if detail { 0 } else { c / per_band };
+    let band_of_node = |x: Node| match x {
+        Node::Slot(j) => band_of(col[j]),
+        Node::Source => 0,
+    };
+    // a band of chips is as tall as the arms that stand in it
+    let lane_rows: Vec<Vec<usize>> = (0..bands)
+        .map(|b| {
+            lanes
+                .iter()
+                .zip(laid)
+                .map(|(&l, lay)| {
+                    let li = lane_slots(l) as u8;
+                    (0..of.len()).filter(|i| (!both || of[*i] == li) && band_of(col[*i]) == b).map(|i| lay.row[i] + 1).max().unwrap_or(1)
+                })
+                .collect()
+        })
+        .collect();
+    let lane_h: Vec<Vec<f32>> = lane_rows
+        .iter()
+        .enumerate()
+        .map(|(b, rows)| {
+            rows.iter()
+                .enumerate()
+                .map(|(n, r)| {
+                    let tracks = laid[n].edges.iter().filter(|e| matches!(e.via, Via::Track(_)) && band_of_node(e.from) == b && band_of(col[e.to]) == b).count().min(laid[n].tracks);
+                    row_h[n][..*r].iter().sum::<f32>() + ARM_GAP * (*r as f32 - 1.0) + TRACK_H * tracks as f32
+                })
+                .collect()
+        })
+        .collect();
+    let band_h: Vec<f32> = lane_h.iter().map(|h| h.iter().sum::<f32>() + LANE_GAP * (lanes.len() as f32 - 1.0)).collect();
     let keys_h = if edit.keys.is_empty() { 0.0 } else { KEY_H + LANE_GAP };
-    let height = PAD * 2.0 + bands as f32 * band_h + (bands as f32 - 1.0) * LANE_GAP * 1.5 + keys_h;
+    let height = PAD * 2.0 + band_h.iter().sum::<f32>() + (bands as f32 - 1.0) * LANE_GAP * 1.5 + keys_h;
     let (canvas, canvas_resp) = ui.allocate_exact_size(egui::vec2(aw, height), egui::Sense::click_and_drag());
     crate::widgets::field_probe::note("fx.graph", canvas);
     // the table's keys act here while the pointer is over the graph (`KtApp::graph_keys`)
@@ -720,8 +750,8 @@ pub fn chain_graph(
     let mut ctx_rects: Vec<Option<egui::Rect>> = vec![None; edit.context.len()];
     let mut ends: Vec<(Lane, egui::Rect, egui::Rect)> = Vec::new(); // (lane, in, out)
     let lane_y = |li: usize, band: usize| -> f32 {
-        let base = canvas.top() + PAD + band as f32 * (band_h + LANE_GAP * 1.5);
-        base + lane_h[..li].iter().sum::<f32>() + LANE_GAP * li as f32
+        let base = canvas.top() + PAD + band_h[..band].iter().map(|h| h + LANE_GAP * 1.5).sum::<f32>();
+        base + lane_h[band][..li].iter().sum::<f32>() + LANE_GAP * li as f32
     };
     let x0 = canvas.left() + PAD - view.pan;
     for (li, &l) in lanes.iter().enumerate() {
@@ -815,17 +845,13 @@ pub fn chain_graph(
             Node::Slot(j) => rects[j].map(out_pos),
             Node::Source => Some(input.right_center()),
         };
-        let tracks_top = |band: usize| lane_y(n, band) + row_h[n].iter().map(|h| h + ARM_GAP).sum::<f32>() - ARM_GAP;
+        let tracks_top = |band: usize| lane_y(n, band) + row_h[n][..lane_rows[band][n]].iter().map(|h| h + ARM_GAP).sum::<f32>() - ARM_GAP;
         for e in &laid[n].edges {
             let e: &Edge = e;
             let (Some(a), Some(r)) = (start(e.from), rects[e.to]) else { continue };
             let b = in_pos(&edit, r, e.to, e.socket);
-            let band = |c: usize| if detail { 0 } else { c / per_band };
-            let from_band = match e.from {
-                Node::Slot(j) => band(col[j]),
-                Node::Source => 0,
-            };
-            let wrap = (from_band != band(col[e.to])).then_some(match e.socket {
+            let from_band = band_of_node(e.from);
+            let wrap = (from_band != band_of(col[e.to])).then_some(match e.socket {
                 Socket::Main => 0,
                 Socket::Second => 1,
                 Socket::Matte => 2,

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Live scenario fx-graph-dag v2d (kkt-26.11.18b U7, "like in Blender"; his A5, A6): branches and
-merges made by the mouse in the real program. The scene is OURS (R.67): one video event with Pixelate.
+merges made by the mouse in the real program. The scene is OURS (R.67): one video event with Duotone.
 
 PATH (ui-reach spec, "The node editor makes branches and merges"):
-1. double click the event → its node editor: In → Geometry → Pixelate → Out;
+1. double click the event → its node editor: In → Geometry → Duotone → Out;
 2. drag a wire from Geometry's output to the empty space under the graph → the picker opens there →
    Vignette → a second row under the trunk, dim: it reaches no Out yet;
-3. drag from Geometry's output again → Merge, the picker's first row → Merge before Out, Pixelate its
+3. drag from Geometry's output again → Merge, the picker's first row → Merge before Out, Duotone its
    Background, Geometry its Foreground;
 4. drag from Vignette's output onto Merge's Matte socket → the preview shows the clean picture where
-   the vignette is bright and Pixelate at its dark edges;
+   the vignette is bright and Duotone at its dark edges;
 5. click Vignette, pick Slowed+Reverb → it stands in the arm marked "Reads the source again", and the
    event's coverage line has a second row over it;
 6. drag the Geometry node onto Slowed in the arm → the status line refuses, nothing changes;
@@ -33,7 +33,7 @@ def scene(dest):
         "media": [{"id": 1, "path": "synth:ramp"}],
         "clips": [{
             "id": 1, "link_group": None, "kind": "video", "lane": 0, "start": 0, "duration": 6 * SEC,
-            "source_in": 0, "media": 1, "gain_db": 0.0, "fx": [{"kind": "pixelate"}],
+            "source_in": 0, "media": 1, "gain_db": 0.0, "fx": [{"kind": "duotone"}],
         }],
         "tracks": [{"id": 1, "kind": "video"}, {"id": 2, "kind": "audio"}],
     }
@@ -47,13 +47,13 @@ def field(app, name):
 
 
 def chain(text):
-    """The event's slots in the file: their kinds, and the inputs that are not the line."""
+    """The event's slots in the file: their kinds, and their inputs when the chain is not a line."""
     found = []
 
     def walk(node):
         if isinstance(node, dict):
             if isinstance(node.get("fx"), list) and node.get("kind") == "video" and "media" in node:
-                found.append(node["fx"])
+                found.append((node["fx"], node.get("fx_in") or []))
             for v in node.values():
                 walk(v)
         elif isinstance(node, list):
@@ -61,8 +61,8 @@ def chain(text):
                 walk(v)
 
     walk(json.loads(text))
-    slots = found[0] if found else []
-    return [(s.get("kind"), s.get("in")) for s in slots]
+    slots, wires = found[0] if found else ([], [])
+    return [(s.get("kind"), wires[i] if i < len(wires) else None) for i, s in enumerate(slots)]
 
 
 def kinds(app):
@@ -104,18 +104,20 @@ def pick(app, text, probe):
 def main(out):
     require_tools()
     proj = scene(os.path.join(out, "node_graph_branch.kt"))
-    # the strip (Geometry is its slot 0): Pixelate 1
+    # the strip (Geometry is its slot 0): Duotone 1
     with Live("node_graph_branch", out, project=proj) as app:
+        # the owner's working width: at 1440 the bottom row cuts the gauge button off
+        app.resize(1900, 1000)
         app.double_click(app.x_at(3 * SEC), app.lane_y("video", 0, frac=0.5))
         app.expect(app.until(lambda: field(app, "fx.slot.1") is not None), "the event's node editor")
-        app.step("line", "double click on the event → In, Geometry, Pixelate, Out")
+        app.step("line", "double click on the event → In, Geometry, Duotone, Out")
 
         # the first branch, its picker in view
         wire(app, 0, under(app))
         app.expect(app.until(lambda: field(app, "fxreg.popup") is not None), "a wire let go on empty space opened the picker")
         app.step("picker", "a wire from Geometry let go under the graph → the picker there, Merge its first row")
         pick(app, "vignette", "fxreg.tpl.vignette")
-        app.expect(app.until(lambda: kinds(app) == ["vignette", "pixelate"]), "Vignette is the arm's effect")
+        app.expect(app.until(lambda: kinds(app) == ["vignette", "duotone"]), "Vignette is the arm's effect")
         v, p = field(app, "fx.node.1"), field(app, "fx.node.2")
         app.expect(v and p and v["y"] > p["y"] + p["h"] - 1, f"the arm is a row under the trunk: {v} / {p}")
         app.step("branch", "Vignette → a second row under the trunk, dim until it reaches Out")
@@ -123,22 +125,22 @@ def main(out):
         # an unused branch dropped on Out becomes the result, one step back
         app.hover_probe("fx.dst.0", "the lane's Out")
         wire(app, 1, center(app, "fx.dst.0"))
-        app.expect(app.until(lambda: kinds(app) == ["pixelate", "vignette"]), "the branch dropped on Out is the result")
-        app.step("to-out", "a wire from Vignette onto Out → Vignette is the result, Pixelate the unused branch")
+        app.expect(app.until(lambda: kinds(app) == ["duotone", "vignette"]), "the branch dropped on Out is the result")
+        app.step("to-out", "a wire from Vignette onto Out → Vignette is the result, Duotone the unused branch")
         app.key("ctrl+z")
-        app.expect(app.until(lambda: kinds(app) == ["vignette", "pixelate"]), "one undo gave the trunk back")
+        app.expect(app.until(lambda: kinds(app) == ["vignette", "duotone"]), "one undo gave the trunk back")
         # a wire from In would skip the leading Geometry: refused
         app.hover_probe("fx.src.0", "the Source's output")
         drag(app, center(app, "fx.src.0"), center(app, "fx.in.2"))
-        app.expect(kinds(app) == ["vignette", "pixelate"], "a wire past the leading Geometry changed nothing")
+        app.expect(kinds(app) == ["vignette", "duotone"], "a wire past the leading Geometry changed nothing")
 
         wire(app, 0, under(app))
         app.expect(app.until(lambda: field(app, "fxreg.popup") is not None), "the picker opened where the wire was dropped")
         app.type_text("merge")
         app.click_probe("fxreg.merge", "Merge, the first row")
         app.wait_gone("fxreg.popup")
-        app.expect(app.until(lambda: kinds(app) == ["vignette", "pixelate", "merge"]), "Merge stands before Out")
-        app.step("merge", "a wire from Geometry → Merge: Pixelate in Background, Geometry in Foreground")
+        app.expect(app.until(lambda: kinds(app) == ["vignette", "duotone", "merge"]), "Merge stands before Out")
+        app.step("merge", "a wire from Geometry → Merge: Duotone in Background, Geometry in Foreground")
 
         # its mode, in the form below (Merge is selected)
         app.click_probe("fx.mode", "Merge's mode")
@@ -154,7 +156,7 @@ def main(out):
         app.expect(app.until(lambda: (chain(app.saved_text())[2][1] or {}).get("matte") is not None), "the matte wire is in the file")
         app.expect(app.screen_diff(before) > 0.005, "the preview shows the matte")
         app.hover_probe("fx.wire.3.matte", "the wire into Merge's Matte")
-        app.step("matte", "a wire from Vignette onto Merge's Matte → the clean picture in its bright middle, Pixelate at the edges")
+        app.step("matte", "a wire from Vignette onto Merge's Matte → the clean picture in its bright middle, Duotone at the edges")
 
         app.click_probe("fx.slot.1", "the Vignette node")
         app.click_probe("fxreg.add", "the picker's button")
@@ -183,7 +185,7 @@ def main(out):
 
         for _ in range(4):
             app.key("ctrl+z")
-        app.expect(app.until(lambda: chain(app.saved_text()) == [("pixelate", None)]), "four undos gave the line back")
+        app.expect(app.until(lambda: chain(app.saved_text()) == [("duotone", None)]), "four undos gave the line back")
         app.step("undone", "Ctrl+Z four times → the line the event opened with")
         for _ in range(4):
             app.key("ctrl+y")

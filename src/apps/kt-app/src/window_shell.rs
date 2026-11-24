@@ -249,7 +249,9 @@ impl Shell {
         }
         let esc = take_armed(ctx, id);
         let response = r.map(|r| {
-            record(ctx, id, r.response.layer_id, kind.takes_esc());
+            // a window told to close this frame is not what the NEXT frame's Esc closes (found-defects
+            // 905): still listed, it took a second press that came one frame later
+            record(ctx, id, r.response.layer_id, kind.takes_esc() && !esc && open);
             if let Some(p) = self.probe {
                 crate::widgets::field_probe::note(p, r.response.rect);
             }
@@ -281,8 +283,8 @@ pub(crate) fn modal<R>(
         IN_MODAL.set(false);
         r
     });
-    record(ctx, id, r.response.layer_id, true);
     let esc = take_armed(ctx, id);
+    record(ctx, id, r.response.layer_id, !esc);
     Shown {
         closed: esc.then_some(Closed::Esc),
         response: Some(r.response),

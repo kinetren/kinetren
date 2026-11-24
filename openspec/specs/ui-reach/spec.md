@@ -416,7 +416,7 @@ transition windows, and on another system it grew wider by itself.
 - **WHEN** the FX window is open with the morpher window over it and a slow frame reads two presses of Esc at once
 - **THEN** both windows close: each press closes the window that is on top for it
 - **PATH** double-click an event → its FX window → open the morpher layer's window over it → press Esc twice quickly while the program is busy → both windows are gone, the timeline is free
-- **TEST** t3291 (`src/apps/kt-app/src/reach_tests.rs`), live scenario `node_graph`
+- **TEST** t3291, t3241 (two frames running) (`src/apps/kt-app/src/reach_tests.rs`), live scenario `node_graph`
 
 #### Scenario: The title cross and Esc are one path
 - **WHEN** each openable window of the registry that has a title cross is opened twice in the same scene; once it is closed by a click on the cross, once by Esc; the model, the undo stack, the clipboard and the focus are compared
