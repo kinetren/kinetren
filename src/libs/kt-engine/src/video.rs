@@ -252,6 +252,26 @@ impl ClipMaskPlan {
             slots.push((m, list.to_vec(), m > pos));
         }
         let picture = (!c.masks.picture.is_empty()).then(|| (pos + 1, c.masks.picture.clone()));
+        ClipMaskPlan::some(picture, slots)
+    }
+
+    /// The masks of a read's line (fx-graph-dag D2): its slots are `keep` of the materialized chain,
+    /// ascending; the picture's stand after the leading node it shares.
+    fn of_line(&self, keep: &[usize]) -> Option<Arc<ClipMaskPlan>> {
+        let at = |m: usize| keep.iter().position(|k| *k == m);
+        let picture = self.picture.as_ref().and_then(|(p, l)| Some((at(p.checked_sub(1)?)? + 1, l.clone())));
+        let slots: Vec<_> = self.slots.iter().filter_map(|(m, l, f)| Some((at(*m)?, l.clone(), *f))).collect();
+        ClipMaskPlan::some(picture, slots)
+    }
+
+    /// The masks of the layer's own program when its reads run the slots `gone`: a read's finished frame
+    /// comes with its masks on.
+    fn without(&self, gone: &[usize]) -> Option<Arc<ClipMaskPlan>> {
+        let slots = self.slots.iter().filter(|(m, ..)| !gone.contains(m)).cloned().collect();
+        ClipMaskPlan::some(self.picture.clone(), slots)
+    }
+
+    fn some(picture: Option<(usize, Vec<kt_model::Mask>)>, slots: Vec<(usize, Vec<kt_model::Mask>, bool)>) -> Option<Arc<ClipMaskPlan>> {
         if picture.is_none() && slots.is_empty() {
             return None;
         }
@@ -996,6 +1016,14 @@ fn clip_order_quality(clip: &VideoClip, quality: Quality) -> Quality {
     }
 }
 
+/// A leaf layer's stream stages: its own and its reads' (fx-graph-dag D2), each with the number it has
+/// in the layer (0 — its own). What walks, sizes or counts the streams walks these.
+fn streams_of(c: &VideoClip) -> impl Iterator<Item = (usize, &VideoClip, &StreamStage)> {
+    let own = c.nest.is_none().then_some(c).into_iter().map(|c| (0, c));
+    let reads = c.reads.iter().enumerate().map(|(n, (_, r))| (n + 1, &**r));
+    own.chain(reads).filter_map(|(n, c)| c.stream.as_deref().map(|st| (n, c, st)))
+}
+
 /// A read a layer makes beyond its own (`VideoRenderer::read_rows`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReadRow {
@@ -1433,13 +1461,14 @@ impl VideoRenderer {
                 // one sequence, as in Vegas.
                 let (fx, auto, fx_in) = materialize_lead(c, fx, auto);
                 // the reads' lines, taken before the chain moves into the layer
-                let read_lines: Vec<(usize, Vec<kt_model::FxInstance>, Vec<Vec<kt_model::ParamCurve>>)> =
+                #[allow(clippy::type_complexity)]
+                let read_lines: Vec<(usize, Vec<usize>, Vec<kt_model::FxInstance>, Vec<Vec<kt_model::ParamCurve>>)> =
                     kt_model::fx_graph::reads(&fx, &fx_in)
                         .into_iter()
                         .map(|r| {
                             let lf = r.keep.iter().map(|&i| fx[i].clone()).collect();
                             let la = r.keep.iter().map(|&i| auto.get(i).cloned().unwrap_or_default()).collect();
-                            (r.slot, lf, la)
+                            (r.slot, r.keep, lf, la)
                         })
                         .collect();
                 // the layer READS by its trunk (fx-graph-dag D2): the warp and the stream stage are
@@ -1547,7 +1576,7 @@ impl VideoRenderer {
                 // each read: the same event over its own line (design D2)
                 let reads: Vec<(usize, Box<VideoClip>)> = read_lines
                     .into_iter()
-                    .map(|(slot, lf, la)| {
+                    .map(|(slot, keep, lf, la)| {
                         let mut r = base.clone();
                         r.warp = kt_model::clip_warp_of(&lf, &la, c.source_in, c.duration, c.reversed);
                         r.stream = if nest.is_none() { StreamStage::of(&lf, &la).map(Box::new) } else { None };
@@ -1568,7 +1597,10 @@ impl VideoRenderer {
                         );
                         r.fx = lf;
                         r.fx_in = Vec::new();
-                        r.masks = None;
+                        r.masks = base.masks.as_ref().and_then(|m| m.of_line(&keep));
+                        if let Some(m) = &r.masks {
+                            r.fx_hash = xxhash_rust::xxh3::xxh3_64(format!("{}|{:?}|{:?}", r.fx_hash, m.picture, m.slots).as_bytes());
+                        }
                         r.reads = Vec::new();
                         (slot, Box::new(r))
                     })
@@ -1576,6 +1608,8 @@ impl VideoRenderer {
                 // a reel's read would be a second sub-composite at another moment: not in v2, the arm's
                 // time kind on a reel instance stays transparent
                 if nest.is_none() {
+                    let gone: Vec<usize> = reads.iter().map(|(slot, _)| *slot).collect();
+                    base.masks = base.masks.as_ref().and_then(|m| if gone.is_empty() { Some(m.clone()) } else { m.without(&gone) });
                     base.reads = reads;
                 }
                 base
@@ -1799,22 +1833,15 @@ impl VideoRenderer {
     pub fn stream_advance(&self, cache: &BurstCache, t: Tick, quality: Quality) -> bool {
         let mut pending = false;
         for c in self.active(t) {
-            // a read's stream stage keeps its own history (fx-graph-dag D2)
-            for (_, r) in c.reads.iter().filter(|(_, r)| r.stream.is_some()) {
-                pending |= self.stream_advance_clip(cache, r, t, quality);
+            for (_, s, _) in streams_of(c) {
+                pending |= self.stream_advance_clip(cache, s, t, quality);
+                // nobody wants this advance any more: the rest of the stages neither
+                if stream::stopping() {
+                    return true;
+                }
             }
-            match (&c.stream, c.nest.and_then(|k| self.nests.get(&k))) {
-                (Some(_), None) => {
-                    pending |= self.stream_advance_clip(cache, c, t, quality);
-                    // nobody wants this advance any more: the rest of the stages neither
-                    if stream::stopping() {
-                        return true;
-                    }
-                }
-                (_, Some(sub)) => {
-                    pending |= sub.stream_advance(cache, clip_inner_tick(c, t, &self.grid), clip_decode_quality(c, quality))
-                }
-                _ => {}
+            if let Some(sub) = c.nest.and_then(|k| self.nests.get(&k)) {
+                pending |= sub.stream_advance(cache, clip_inner_tick(c, t, &self.grid), clip_decode_quality(c, quality));
             }
         }
         pending
@@ -1828,14 +1855,14 @@ impl VideoRenderer {
         let step = self.grid.frame_step().max(1);
         let mut pending = false;
         let mut done: Vec<kt_model::ClipId> = Vec::new();
-        for c in self.active(from).filter(|c| c.stream.is_some() && c.nest.is_none()) {
+        for (c, s) in self.active(from).flat_map(|c| streams_of(c).map(move |(_, s, _)| (c, s))) {
             // the run's last moment inside this event
             let last = Tick(to.0.min(self.grid.align_floor(Tick(c.end.0 - 1)).0).max(from.0));
             // the frame on screen first: its batch comes back before the frames ahead are walked
-            let short = self.stream_advance_clip(cache, c, from, quality);
+            let short = self.stream_advance_clip(cache, s, from, quality);
             pending |= short;
             if !short && last.0 > from.0 && !stream::stopping() {
-                pending |= self.stream_advance_clip(cache, c, last, quality);
+                pending |= self.stream_advance_clip(cache, s, last, quality);
             }
             if stream::stopping() {
                 return true;
@@ -1843,8 +1870,10 @@ impl VideoRenderer {
             done.push(c.id);
         }
         if to.0 > from.0 {
-            for c in self.active(to).filter(|c| c.stream.is_some() && c.nest.is_none() && !done.contains(&c.id)) {
-                pending |= self.stream_advance_clip(cache, c, to, quality);
+            for c in self.active(to).filter(|c| !done.contains(&c.id)) {
+                for (_, s, _) in streams_of(c) {
+                    pending |= self.stream_advance_clip(cache, s, to, quality);
+                }
             }
         }
         // a reel's stages: per moment, as before
@@ -1898,13 +1927,16 @@ impl VideoRenderer {
     /// sizing); the largest over the stages, a reel's included (found-defects 512).
     pub fn stream_checkpoints(&self, t: Tick, quality: Quality) -> usize {
         self.active(t)
-            .filter_map(|c| match (&c.stream, c.nest.and_then(|k| self.nests.get(&k))) {
-                (Some(st), None) => {
-                    let cs = stream::ClipStream::new(c, st, &self.grid, quality, None, &self.ident_look());
-                    Some(st.kernel().checkpoints(&st.values, &cs, cs.pos(t)))
-                }
-                (_, Some(sub)) => Some(sub.stream_checkpoints(clip_inner_tick(c, t, &self.grid), clip_decode_quality(c, quality))),
-                _ => None,
+            .flat_map(|c| {
+                let own = streams_of(c).map(|(_, s, st)| {
+                    let cs = stream::ClipStream::new(s, st, &self.grid, quality, None, &self.ident_look());
+                    st.kernel().checkpoints(&st.values, &cs, cs.pos(t))
+                });
+                let sub = c
+                    .nest
+                    .and_then(|k| self.nests.get(&k))
+                    .map(|sub| sub.stream_checkpoints(clip_inner_tick(c, t, &self.grid), clip_decode_quality(c, quality)));
+                own.chain(sub).collect::<Vec<_>>()
             })
             .max()
             .unwrap_or(0)
@@ -1935,29 +1967,28 @@ impl VideoRenderer {
     }
 
     /// The stream stages active at `t`, through the reels (`stream_want`).
-    fn stream_stages_at<'a>(&'a self, t: Tick, quality: Quality, out: &mut std::collections::HashMap<(usize, kt_model::ClipId), WantStage<'a>>) {
+    fn stream_stages_at<'a>(&'a self, t: Tick, quality: Quality, out: &mut std::collections::HashMap<(usize, kt_model::ClipId, usize), WantStage<'a>>) {
         for c in self.active(t) {
-            match (&c.stream, c.nest.and_then(|k| self.nests.get(&k))) {
-                (Some(st), None) => {
-                    let cs = stream::ClipStream::new(c, st, &self.grid, quality, None, &self.ident_look());
-                    let pos = cs.pos(t);
-                    let s = out.entry((self as *const VideoRenderer as usize, c.id)).or_insert_with(|| {
-                        let sq = stream::stream_quality(c, st, quality);
-                        WantStage {
-                            clip: c,
-                            stage: st,
-                            grid: &self.grid,
-                            quality,
-                            frame: sq.width as usize * sq.height as usize * 4,
-                            positions: std::collections::HashSet::new(),
-                            last: pos,
-                        }
-                    });
-                    s.positions.insert(pos);
-                    s.last = s.last.max(pos);
-                }
-                (_, Some(sub)) => sub.stream_stages_at(clip_inner_tick(c, t, &self.grid), clip_decode_quality(c, quality), out),
-                _ => {}
+            for (n, clip, st) in streams_of(c) {
+                let cs = stream::ClipStream::new(clip, st, &self.grid, quality, None, &self.ident_look());
+                let pos = cs.pos(t);
+                let s = out.entry((self as *const VideoRenderer as usize, c.id, n)).or_insert_with(|| {
+                    let sq = stream::stream_quality(clip, st, quality);
+                    WantStage {
+                        clip,
+                        stage: st,
+                        grid: &self.grid,
+                        quality,
+                        frame: sq.width as usize * sq.height as usize * 4,
+                        positions: std::collections::HashSet::new(),
+                        last: pos,
+                    }
+                });
+                s.positions.insert(pos);
+                s.last = s.last.max(pos);
+            }
+            if let Some(sub) = c.nest.and_then(|k| self.nests.get(&k)) {
+                sub.stream_stages_at(clip_inner_tick(c, t, &self.grid), clip_decode_quality(c, quality), out);
             }
         }
     }
@@ -1993,13 +2024,16 @@ impl VideoRenderer {
 
     pub fn stream_frame_bytes(&self, t: Tick, quality: Quality) -> usize {
         self.active(t)
-            .map(|c| match (&c.stream, c.nest.and_then(|k| self.nests.get(&k))) {
-                (Some(st), None) => {
-                    let sq = stream::stream_quality(c, st, quality);
+            .map(|c| {
+                let own = streams_of(c).map(|(_, s, st)| {
+                    let sq = stream::stream_quality(s, st, quality);
                     sq.width as usize * sq.height as usize * 4
-                }
-                (_, Some(sub)) => sub.stream_frame_bytes(clip_inner_tick(c, t, &self.grid), clip_decode_quality(c, quality)),
-                _ => 0,
+                });
+                let sub = c
+                    .nest
+                    .and_then(|k| self.nests.get(&k))
+                    .map_or(0, |sub| sub.stream_frame_bytes(clip_inner_tick(c, t, &self.grid), clip_decode_quality(c, quality)));
+                own.max().unwrap_or(0).max(sub)
             })
             .max()
             .unwrap_or(0)

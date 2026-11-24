@@ -3703,8 +3703,13 @@ impl Inner {
         let mut snap: Option<(wgpu::TextureView, u32, u32, bool)> = None;
         // the dry side of an effect slot's masks (shape-masks), kept apart from the morpher's
         let mut msnap: Option<(wgpu::TextureView, u32, u32)> = None;
-        // the graph's held frames (fx-graph-dag D3): a held texture stays out of the pool to the end
+        // the graph's held frames (fx-graph-dag D3): a register's texture stays out of the pool until the
+        // register takes another value — its last reader is encoded by then (`plan::lower` frees a register
+        // after it), so a layer holds at most `MAX_HELD` of them
         let mut held: Vec<Option<(wgpu::TextureView, u32, u32)>> = Vec::new();
+        let mut held_tex: Vec<Option<Tex>> = Vec::new();
+        // a held frame stands in two registers (a slot that made no pass): no early release any more
+        let mut shared = false;
         // the reads' results (D2), encoded first and kept to the end of the chain
         let mut read_views: Vec<(wgpu::TextureView, u32, u32)> = Vec::with_capacity(chain.reads.len());
         for r in &chain.reads {
@@ -3725,11 +3730,21 @@ impl Inner {
                 FxOp::Hold { reg } => {
                     if held.len() <= *reg {
                         held.resize(*reg + 1, None);
+                        held_tex.resize_with(*reg + 1, || None);
+                    }
+                    // a dry side still open may be the old value's own view: it waits for the chain's end
+                    if let Some(old) = held_tex[*reg].take() {
+                        if snap.is_some() || msnap.is_some() || shared {
+                            retired.push(old);
+                        } else {
+                            self.pool.release(old);
+                        }
                     }
                     if let Some(t) = owned.take() {
                         held[*reg] = Some((t.view.clone(), w, h));
-                        retired.push(t);
+                        held_tex[*reg] = Some(t);
                     } else {
+                        shared |= held.iter().flatten().any(|(v, ..)| *v == view);
                         held[*reg] = Some((view.clone(), w, h));
                     }
                 }
@@ -4123,6 +4138,7 @@ impl Inner {
         if let Some(t) = owned {
             retired.push(t);
         }
+        retired.extend(held_tex.into_iter().flatten());
         (view, retired)
     }
 

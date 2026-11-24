@@ -360,6 +360,25 @@ pub fn run_shapes(fx: &[FxInstance]) -> Vec<Vec<&'static str>> {
     out
 }
 
+/// `run_shapes` of a chain with its wiring (fx-graph-dag D3): the runs of each stretch between the
+/// graph's steps, as the plan cuts them; a slot that reaches no Output runs nothing.
+pub fn run_shapes_in(fx: &[FxInstance], fx_in: &[kt_model::SlotInputs]) -> Vec<Vec<&'static str>> {
+    let Some(g) = lower(fx, fx_in) else { return run_shapes(fx) };
+    let cuts = g.cuts();
+    let mut out = Vec::new();
+    let mut piece: Vec<FxInstance> = Vec::new();
+    for (i, f) in fx.iter().enumerate() {
+        if cuts.contains(&i) {
+            out.extend(run_shapes(&std::mem::take(&mut piece)));
+        }
+        if !g.dead[i] {
+            piece.push(f.clone());
+        }
+    }
+    out.extend(run_shapes(&piece));
+    out
+}
+
 /// Phase A: segmentation of the chain and the 1× program (items 311-312). `in_w/in_h` are
 /// the LOGICAL input sizes (the physical ones divided by the in_scale step).
 #[allow(clippy::too_many_arguments)]
