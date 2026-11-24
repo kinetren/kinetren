@@ -1,9 +1,9 @@
 # Tasks: export-into-surface
 
-> IMPLEMENTATION-READY (spec-engine, 2026-11-24, orch `0c2a4065`). Tests t4125–t4136. Areas: EXPORT, GPU (`engine.rs` submit/collect,
+> IMPLEMENTATION-READY (spec-engine, 2026-11-24, re-read at orch `229c694b`: render-result-check is in). Tests t4125–t4136. Areas: EXPORT, GPU (`engine.rs` submit/collect,
 > `yuv.wgsl`, new `surface.rs`), kt-ffmpeg `muxer_impl.rs`/`api.rs`/`hw_trial.rs`, `fixtures/fake_va`; CACHE in section 5
 > (`render_cache.rs` writer). Shares `mem.rs`'s `Tenant::Surfaces` and `ktfake_drv_video.c` with `device-decode-sources`: after its section 1,
-> or before it, not beside. Not beside `render-result-check`, `loudness-norms`, `cached-final-render` (EXPORT). Commit per section;
+> or before it, not beside. Sections 1–3 may start now; 4–6 not beside `loudness-norms` (running: EXPORT, DIALOG) or `cached-final-render`, and 1, 3, 4 not beside `track-stream-stage` 2 (`engine.rs`). Commit per section;
 > target-prune after each.
 
 ## 0. Notes first
@@ -38,7 +38,8 @@
 ## 4. The export
 
 - [ ] 4.1 `VideoGpuExec::{import_surface, submit_surface, surface_depth}`, `ExportSink::{surfaces, write_surface}`, `Job::Surface`, the serial export; the waits of D4
-- [ ] 4.2 `KT_EXPORT_SURFACE`; D7's fallbacks; t4127, t4128, t4131, t4132; t1451, t1556, t963 green, t963 prints the way
+- [ ] 4.2 `KT_EXPORT_SURFACE`; D7's fallbacks, the empty pool of D4 (the fake driver keeps every surface until the next frame: mode `keep`); t4127, t4128, t4131, t4132; t1451, t1556, t3998,
+      t963 green, t963 prints the way; every one of them compares written with announced
 - [ ] 4.3 `cargo test -p kt-engine -p kt-gpu -p kt-media -p kt-cli`; clippy; commit
 
 ## 5. The prerender

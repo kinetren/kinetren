@@ -62,9 +62,10 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
 
 | Area | Next row | With the three above |
 |---|---|---|
-| DECODE | ★ `device-decode-sources` | **section 1 and 2.1 may start now** (kt-ffmpeg, `fixtures/fake_va`, `kt-time/mem.rs`). 2.2 on waits for `persistent-cache` (`kt-media/ffmpeg.rs`, `copy.rs`, `worker.rs`) and section 3 for own-data-dir (`trace_query.rs`, kt-cli) |
+| DECODE | ★ `device-decode-sources` | **section 1 and 2.1 may start now** (kt-ffmpeg, `fixtures/fake_va`, `kt-time/mem.rs`). 2.2 on waits for `persistent-cache` (`kt-media/ffmpeg.rs`, `copy.rs`, `worker.rs`); 3 follows |
 | TESTS | `rest-is-said` (revision 2: 966, 967, 969 are fixed and cut; left 958 `idle`, 960, 961 and the class) | section 1 (`kt-time`, nextest, finish.sh) and 3 now; 2 and 4 after `persistent-cache` (PLAYER, `render_cache.rs`) |
-| EXPORT, DIALOG | `render-result-check` (S), then ★ `export-into-surface` (A13) or `loudness-norms` (its base is the unmerged branch `render-loudness-norms`): one at a time | now |
+| EXPORT, DIALOG | `loudness-norms` runs; then ★ `export-into-surface` 4–6 (its 1–3 are GPU and kt-ffmpeg) or `cached-final-render` from 2.2: one at a time | after `loudness-norms` |
+| any | **two small fixes that stand alone:** row 1068 (`adopt_sources`, cached-final-render 1.1: a wrong picture in a render) and row 1067 (a track's graph, track-stream-stage 1.0) | now; 1067 beside `shared-events` is a text merge in `video.rs` |
 | MODEL (files v2d does not write) | `timecode-is-text` (`genmedia.rs`, `project_file.rs`, `legacy_import.rs`, `gen_ui.rs`) | now; format 8 is merged |
 | MODEL (all of it) | ★ `shared-events` | **after v2d merges and not beside `persistent-cache`** (`worker.rs`, `player.rs` signatures); alone in kt-model/kt-engine until its section 3 is merged |
 | AUDIO | ★ `track-stage-preroll`, then ★ `durable-history-and-mix` (the mix tier) | after `persistent-cache` (both write `player.rs`) |
@@ -72,7 +73,7 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
 | MASKS | `magic-wand-mask` **v+** | now; its model field is one enum variant, a text merge with v2d |
 | PREVIEW-UI | `preview-canvas-and-gizmos` | now: it stood after `frame-format-variants` by area order only, its design asks nothing of it |
 | SHELL | `memory-breakdown` | now (it and device-decode 2.1 both append a `Tenant`: the second to merge takes the next number) |
-| LIBRARY | `download-library` | after own-data-dir (`kt-dirs`) |
+| LIBRARY | `download-library` | now (own-data-dir is in) |
 | GPU | `scopes` | after v2d's 2.6; not beside `export-into-surface` (`engine.rs`) |
 | new crates | `wasm-plugin-host`; `openfx-host` after it | now |
 | release build | `arm-build` (Linux aarch64) | now; it shares no file with anybody |
@@ -81,7 +82,7 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
 **Recommended next three**, as the slots free:
 1. ★ `device-decode-sources` at the first free slot: section 1 first, the rest once `persistent-cache` is in.
 2. ★ `shared-events` as soon as v2d is in and `persistent-cache` too. Every later MODEL row waits for it.
-3. ★ `export-into-surface` (A13: "Сделать сейчас") after `render-result-check`; not beside `device-decode-sources` section 1 (both write the fake
+3. ★ `export-into-surface` (A13: "Сделать сейчас"): 1–3 now, 4 on after `loudness-norms`; its section 2 not beside `device-decode-sources` section 1 (both write the fake
    VAAPI driver and `mem.rs`).
 
 ## Order after that
@@ -95,13 +96,13 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
 | `rest-is-said` | M | sections 2 and 4: `persistent-cache` | TESTS, PLAYER (the prefetch's near part), `audio_out.rs`, `render_cache.rs` | none | t4117–t4124 |
 | ★ `track-stage-preroll` | S | `persistent-cache` (`player.rs`) | AUDIO | answered A15 | t3361–t3366, t4103–t4104 |
 | ★ `durable-history-and-mix` (the mix tier only: D6 withdrew the history on disk) | M | `track-stage-preroll` (`mix.rs`) | CACHE (`mix/`), AUDIO, PLAYER | answered A14, D6 | t3336, t3337, t3346–t3352 |
-| `track-stream-stage` | L | `fx-graph-dag` (a read's stage) | STREAM (`TrackStream`), `video.rs`, EXPORT (`stream_preroll`), AUDIO | answered A23 | t3379–t3394 |
+| `track-stream-stage` | L | section 1.0 (row 1067): nothing; the rest: row 1068's fix and `shared-events`' engine sections (`video.rs`, `audio.rs`) | STREAM, `video.rs` (`Look`, `streams_at`), GPU (one op in `engine.rs`), AUDIO (`audio.rs` `TrackStage`), FX-UI (`track_window.rs`) | answered A23; implementation-ready 2026-11-24 | t3379–t3398, t4137 |
 | `persistent-cache` | L | **nothing** (corrected 2026-11-24, read at 14d30724: below) | CACHE, PLAYER, DECODE (`copy.rs`), SHELL in section 4 | answered B1, D1 | t3440–t3453, t4106 |
-| `cached-final-render` | L | `render-result-check` (EXPORT) | EXPORT (a copy path, SEI), CACHE, DIALOG | answered A16 | t3322–t3335, t3870–t3876 |
-| `hdr-sources-to-sdr`, 8-bit stages 1–4 | M | `device-decode-sources` | DECODE (`colour.rs`) | answered | t3800–t3811 |
+| `cached-final-render` | L | 1.1 (row 1068) nothing; 1.2 and 2.1 nothing; from 2.2 on `loudness-norms` (EXPORT, DIALOG) | EXPORT, kt-ffmpeg (`muxer_impl.rs`, new `nal.rs`, `gop.rs`), kt-plugin-api + plugins (two facts), CACHE (`Tenant::Render`), DIALOG | answered A16; implementation-ready 2026-11-24 | t3322–t3335, t3870–t3876, t4138–t4141 |
+| `hdr-sources-to-sdr`, 8-bit stages 1–4 | M | `persistent-cache` (`ffmpeg.rs`, `copy.rs`); **not** `device-decode-sources` (its pictures take the same host conversion), but not beside its sections 1–2 | DECODE (`colour.rs`, new `hdr.rs`, `source_impl.rs`, `kt-media/ffmpeg.rs`) | answered; implementation-ready 2026-11-24 | t3800–t3807, t3810, t3811, t4142, t4143 |
 | `hdr-sources-to-sdr`, 16-bit stage 5 **v+** | XL | every GPU, STREAM and COLOR-FX row | all core; runs with UI-only work beside it | answered B4 | t3877–t3899 |
 | `simulated-elements` | XL | `motion-driven-params` | the plan (`video.rs`), GPU (a sprite pass), MODEL (`SetSets`), SHELL | answered (D3) | t3968–t3973, t3983–t3992, t4107 |
-| ★ `export-into-surface` (A13, the dma-buf half of `export-host-copy`) | L | `render-result-check` (EXPORT); not beside `device-decode-sources` 1 (`fake_va`, `mem.rs`) | EXPORT, GPU (`surface.rs`, `engine.rs`, `yuv.wgsl`), kt-ffmpeg muxer, `hw_trial`; CACHE in section 5 | answered A13; his check C11 | t4125–t4136 |
+| ★ `export-into-surface` (A13, the dma-buf half of `export-host-copy`) | L | sections 1–3 nothing; 4 on `loudness-norms` (running: EXPORT); not beside `device-decode-sources` 1 (`fake_va`, `mem.rs`) | EXPORT, GPU (`surface.rs`, `engine.rs`, `yuv.wgsl`), kt-ffmpeg muxer, `hw_trial`; CACHE in section 5 | answered A13; his check C11 | t4125–t4136 |
 
 ### The model and the interface
 
@@ -131,7 +132,6 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
 
 | Change | Size | Needs first | Areas | Owner question | Tests |
 |---|---|---|---|---|---|
-| `render-result-check` | S | — | EXPORT (`ExportStats`), DIALOG, live `renderregion` | none | t3998 |
 | `loudness-norms` | M | `render-result-check` (DIALOG); takes the unmerged `render-loudness-norms` in | EXPORT, AUDIO (the program stage), DIALOG | answered B6 | t3919–t3923, t3966, t4200–t4203 |
 | `pause-detection` | M | — (Delete waits for `ripple-and-trim-modes`) | kt-media (`pauses.rs`, the pyramid's tail), a window | none | t3466, t4204–t4209 |
 | `edit-analysis` **v+** | L | A3 `ripple-and-trim-modes`; `speech` `pause-detection`; stage B `download-library` | kt-plugin-api (`measure.rs`), kt-media, TIMELINE overlay and snap, links, a bin tab | none | t4211–t4228 |
@@ -156,6 +156,9 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
   tier, never an export), and one factory. `device-decode-sources` D9 and 2.3 take `copy.rs` over when it comes. Section 4 is SHELL alone.
 - **`export-into-surface` is A13**: D6 of `export-host-copy` held it back on "wgpu offers none of that"; wgpu 30 imports dma-bufs. What stays
   unprovable without his card is in its D12; C11's text in `owner-checks.md` takes one sentence more (there).
+- **The owner's one key does not let a render be reused after a trim** (rows 1069, cached-final-render D2): the cached render has a key of its own.
+- **`hdr-sources-to-sdr` never needed `device-decode-sources`**: a device picture is laid out on the host and takes the same conversion, so there is no
+  device twin to write.
 - The five changes whose questions had not been put to him are Q66–Q74 now (and flatpak Q75).
 - **Stale heads.** The `tasks.md` of `frame-format-variants`, `multicam`, `ripple-and-trim-modes`, `geometry-fx-flex`,
   `magic-wand-mask`, `preview-canvas-and-gizmos`, `subtitles-and-text-editing`, `pro-keyer`, `temporal-barrier-3dnr`
@@ -168,4 +171,5 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
 
 Third block t4100–t4199: device-decode-sources t4100–t4102, track-stage-preroll t4103–t4104, (t4105 freed by D6),
 persistent-cache t4106, simulated-elements t4107, durable-moment-key t4108–t4116, rest-is-said t4117–t4124,
-export-into-surface t4125–t4136. The next free is t4137.
+export-into-surface t4125–t4136, track-stream-stage t4137, cached-final-render t4138–t4141, hdr-sources-to-sdr t4142–t4143. The next
+free is t4144.

@@ -1,129 +1,132 @@
 # Design: hdr-sources-to-sdr
 
-> Revised 2026-11-20 (kkt-26.11.20 A25): the project's or composition's precision decides. D1–D7 are the
-> **8-bit path** (the default, "быстрый i8"); D8–D15 are the **16-bit float path** ("тракт f16").
+> **D1–D7, the 8-bit path (the default, "быстрый i8"), are IMPLEMENTATION-READY** (spec-engine, revision 3, 2026-11-24, orch `229c694b`,
+> found-defects 724). D8–D15, the 16-bit path ("тракт f16", kkt-26.11.20 A25), are a design of its own stage (5): it waits for every GPU,
+> STREAM and COLOR-FX row and is re-read then.
 
-## Context
+## Context (what exists)
 
-- **source-colour-matrix** (`kt-ffmpeg/src/colour.rs`, media-index "A source's YUV becomes RGB with its
-  own matrix and range"):
-  - `ColourTags { matrix, range, primaries }` come from the picture, else the stream.
-  - `resolve` picks the swscale matrix and range.
-  - `to_rgba` in `source_impl.rs` converts with `sws_getContext(..., SWS_FAST_BILINEAR)` to 8-bit RGBA at
-    the decode size, keyed by matrix and range.
-  - Primaries are read and reported, not converted. The transfer is not read at all.
-- **Precision:** a 10-bit source (`yuv420p10le`, P010 from a device) is converted straight to RGBA8. A
-  PQ signal keeps about 50 of its 1024 code values below 100 cd/m², so any tone map AFTER this step works
-  on a few dozen levels.
-- **The working space** is BT.709 SDR 8-bit RGBA everywhere after decode: the burst cache, the kernels,
-  the memos, the export's RGB→YUV (F-CLR-008: no working-space decision has been taken).
-- **The export** (`kt-ffmpeg/src/format.rs`): `ExportOptions::default` has `matrix: Matrix::Bt601`,
-  limited range, BT.709 primaries and transfer tags. Its comment's reason ("what the preview's decode
-  does") is stale since source-colour-matrix (found-defects 1053).
-- **Device decode** (device-decode-sources, designed): device pictures (NV12/P010) are laid out
-  byte-equal to the processor decoder's planes, then take the same conversion.
+- `kt-ffmpeg/src/colour.rs` (pure): `ColourTags { matrix, range, primaries }`, `or`, `resolve` → `SourceColour`. The transfer is not read.
+- `source_impl.rs` (included once per major): `stream_colour_tags`, `conversion_colour(api, frame, stream_tags)`, `Rgba::convert`: one swscale context
+  (`SWS_FAST_BILINEAR`) to RGBA8 at the decode size, keyed by `SwsKey` (size, format, matrix, range); `None` from `conversion_colour` leaves swscale untouched. `span_sizes_threaded` runs
+  several `Rgba` at once on `rgba_threads` threads; a decoder keeps its own.
+- **Precision**: a 10-bit picture is converted straight to RGBA8. PQ spends about 50 of 1024 codes below 100 cd/m² on those 8 bits: a map after this step bands.
+- **Device decode** (device-decode-sources D1): a device picture is laid out as the processor's planes on the HOST and takes the same `convert`. So there is one
+  place; the WGSL twin an earlier revision planned has nothing to do and is cut.
+- **Names**: `FfmpegSource::ident` is the file's identity (durable-moment-key), compared in `cursor_for` with the file that lies there (row 1065); `Made.pixels` is
+  `THUMB_PIXELS_VERSION`.
+- The export's default matrix is by size (row 1054, t3603).
 
 ## D1. Which pictures are mapped
 
-A picture takes the HDR path when its resolved tags say it is not BT.709/BT.601 SDR:
+`ColourTags` gains `transfer` (`AVColorTransferCharacteristic`, unspecified = 2; `or` fills it from the stream; t2891's numbers on every major). `resolve_path(tags, kind) -> Path`:
 
-| transfer (`AVColorTransfer`) | primaries | path |
+| transfer | primaries | path |
 |---|---|---|
-| SMPTE ST 2084 (PQ, 16) | any | HDR: PQ EOTF, gamut, tone map |
-| ARIB STD-B67 (HLG, 18) | any | HDR: HLG inverse OETF + OOTF (system gamma 1.2 at 1000 cd/m²), gamut, tone map |
-| BT.709 / BT.601 / BT.2020-10/12 (SDR curves) / unspecified | BT.2020 (9) or P3-D65 (12) | WIDE: SDR curve, gamut only |
-| same SDR curves | BT.709 / BT.601 / unspecified | today's swscale path, byte for byte |
+| 16 (PQ) | any | `Pq { peak }` |
+| 18 (HLG) | any | `Hlg` |
+| 1, 6, 14, 15 (the video SDR curves), 2 (unspecified), 13 (sRGB) | 9 (BT.2020) or 12 (P3-D65) | `Wide { curve: Video or Srgb, from }` |
+| the same | anything else | `Sdr`: today's swscale path, byte for byte |
+| any other transfer | any | `Sdr`, and the facts name the number read |
 
-An unknown transfer falls to the SDR rule and says so in the source's facts. A tag override per FILE
-(F-CLR-008 trick 2) is a follow-up; the facts name what was read so an override has something to show.
+PQ/HLG with unspecified primaries are read as BT.2020. 11 (DCI-P3 with its own white) stays `Sdr`, named. `kind` is YUV or RGB (`is_yuv_format`, the descriptor's RGB flag): grey and palette pictures stay `Sdr`.
+A picture's own tag wins over the stream's, as the matrix does.
 
-## D2. The integer pipeline (one definition, two executors)
+## D2. The peak of a PQ stream is asked once, from its first picture
 
-Input: the picture's planes. Output: RGBA8 at the decode size. Every stage is integer or a table lookup.
+MaxCLL, else the mastering display's maximum, else 1000 cd/m². They ride on pictures as side data (`av_frame_get_side_data`, in every major: the required table; `mastering_display_metadata.h` joins build.rs's
+`HEADERS`), and not every picture need carry them. Taken from whichever picture is decoded first, a frame would depend on where reading began. So: a stream whose TAG is PQ has its first picture decoded at `Source::open`, on the opening thread,
+and its peak stands for the source's life; `PrebuiltIndex` hands it to the file's other decoders (one extra keyframe per open, HDR10 files only). A stream not tagged PQ whose pictures are: 1000. MaxCLL of 0 is "not
+stated". The peak is clamped to 203..10000 and rounded to 1 cd/m²; 203 and below map without a roll-off. HLG has no peak: its nominal 1000.
 
-1. **Scale and upsample on the processor:** swscale converts the planes to `yuv444p16` at the decode
-   size (the same scaler and flags as today, no matrix). Chroma siting comes from the tag
-   (`chroma_location`), and swscale applies it.
-2. **Matrix:** BT.2020 non-constant-luminance (or the tagged matrix), limited or full range, Q15
-   integer coefficients → R′G′B′ in 16 bits, clamped.
-3. **EOTF table:** 4096 entries indexed by the top 12 bits, linearly interpolated by the low 4, in Q16.
-   - PQ: absolute luminance / 10000 cd/m².
-   - HLG: the inverse OETF and the BT.2100 OOTF at the nominal peak (1000 cd/m², γ = 1.2), applied on
-     the luminance and expressed in the same absolute scale.
-4. **Gamut matrix** in linear light, BT.2020 → BT.709 (or P3-D65 → BT.709), Q14 signed. The result may
-   be negative or above 1.
-5. **Tone map**, a 4096-entry table on the maximum of R, G, B (hue and saturation kept by scaling all
-   three by the same ratio):
-   - the HDR reference white (203 cd/m², BT.2408) maps to the SDR reference white;
-   - highlights roll off by the BT.2390 EETF from the source peak (mastering MaxCLL or the mastering
-     display's peak when present, else 1000 cd/m²) to the SDR peak;
-   - below the knee the map is linear.
-   - The anchors are a table of constants in `colour.rs`, checked by eye on the fixtures (task 4.1).
-6. **Out of gamut:** a negative channel is brought in by mixing the pixel toward its BT.709 luminance by
-   the least amount that makes every channel ≥ 0 (integer, per pixel). A channel above 1 is clipped after
-   the tone map.
-7. **Encode:** the BT.709 SDR curve (the inverse of BT.1886, γ 2.4) by a 4096-entry table to 8 bits.
-   Alpha is 255.
+## D3. The integer pipeline (`kt-ffmpeg/src/hdr.rs`, pure; one definition)
 
-The WIDE path is stages 1, 2, 3 with the SDR curve's EOTF, 4, 6 and 7, with no tone map.
+In: a picture. Out: RGBA8 at the decode size. `Rgba::convert` takes it when the path is not `Sdr`; its swscale context then goes to `yuv444p16le` (`yuva444p16le` with alpha, `rgba64le` from RGB) with the same flags, so scaling and chroma are
+placed as for every other source; the context's key gains the target. Then, per pixel:
 
-The tables are built once per process from `kt_plugin_api::math` (frozen, t1066): the same bits on every
-CPU and OS. The processor executor is a row-parallel Rust kernel over the `yuv444p16` planes, inside the
-decoder's own thread (invariant 5). The device executor is the same integer arithmetic in a WGSL
-compute pass, with the tables as storage buffers. It arrives with device-decode-sources and is held
-byte-equal to the processor (t3807).
+1. **Matrix** (YUV only), Q15, rounded, clamped to 0..65535. `Y0` = 4096 limited, 0 full; `C0` = 32768.
+   `R' = (ky·(Y−Y0) + rv·(Cr−C0)) >> 15`, `G' = (ky·(Y−Y0) − gu·(Cb−C0) − gv·(Cr−C0)) >> 15`, `B' = (ky·(Y−Y0) + bu·(Cb−C0)) >> 15`, each with +16384:
 
-## D3. Where it sits, and why not in the plan
+   | | ky | rv | gu | gv | bu |
+   |---|---|---|---|---|---|
+   | BT.2020 limited | 38304 | 55222 | 6162 | 21396 | 70456 |
+   | BT.2020 full | 32768 | 48320 | 5392 | 18722 | 61650 |
+   | BT.709 limited | 38304 | 58974 | 7015 | 17531 | 69490 |
+   | BT.709 full | 32768 | 51603 | 6138 | 15339 | 60804 |
+   | BT.601 limited | 38304 | 52503 | 12887 | 26743 | 66359 |
+   | BT.601 full | 32768 | 45941 | 11277 | 23401 | 58065 |
 
-F-CLR-008 wanted conversions "in the plan, as a CPU + WGSL pair". This half cannot be there: the plan
-reads the burst cache, which holds RGBA8 (invariant 4). A tone map after that quantization bands
-(Context). The decode is where the source's precision still exists, and the matrix conversion is already
-there. Moving the cache to 16 bits for HDR sources only would double their cache bytes and touch every
-reader. That is the 16-bit path (D8–D15), chosen per project by the owner (kkt-26.11.20 A25).
+   FCC and SMPTE 240 by the same formula `round(c · 65535/56064 · 32768)` (luma) and `· 65535/57344` (chroma); a test derives the table from (Kr, Kb).
+2. **To linear**, `u32` Q24, 1.0 = 203 cd/m² (PQ, HLG) or SDR white (Wide): a table of 4097 entries at `i·16`, index `v >> 4`, linear by `v & 15`.
+   - PQ: ST 2084 EOTF / 203. HLG: the inverse OETF per channel, then the OOTF with gamma 1.2 at 1000 cd/m²: `× Ys^0.2 · 1000/203`, `Ys` = 0.2627 R + 0.6780 G + 0.0593 B.
+   - Wide: `v^2.4` (Video) or the sRGB curve. The SAME curve encodes at 6, so a neutral pixel keeps its code.
+3. **Tone map** (PQ with peak > 203, HLG), on `m = max(R, G, B)`: all three × `ratio(m)` Q16, so hue and saturation keep. `ratio` is the BT.2390 EETF in PQ space from the peak to 203 cd/m²: knee `KS = 1.5·maxLum − 0.5`, below it the ratio is 1.
+   Above the peak: 203 (ratio `203/m`).
+4. **Gamut** to BT.709 in linear, Q14 signed, rounded; rows sum to 16384, so white and greys stay:
+   BT.2020: `[27206, −9628, −1194; −2041, 18562, −137; −297, −1648, 18329]`; P3-D65: `[20069, −3685, 0; −689, 17073, 0; −322, −1288, 17994]`.
+5. **Into range without a hue turn**: `Y = 0.2126 R + 0.7152 G + 0.0722 B` (Q14). Where a channel is below 0 or above 1.0, all three move toward `Y` by the least `t` (Q16, rounded so the channel lands inside) that brings every channel in;
+   `Y` itself is clamped to 0..1 first. Integer division only for those pixels.
+6. **Encode** to 8 bits: `x^(1/2.4)` (or sRGB for a `Srgb` Wide), Q8, `(v + 128) >> 8`; 1.0 and above is 255. Alpha from the 16-bit plane `(a + 128) / 257`, else 255.
 
-**Keys:** the swscale context's key gains the path (SDR, WIDE or HDR with its transfer and peak). The
-burst cache's keys do not change: a source's frames at a quality are what this build decodes, as they
-were before source-colour-matrix. The disk caches of decoded pixels move their versions, and the
-render-cache disk tier is salted by the build.
+Functions of a linear value (`Ys^0.2`, `ratio`, the encode) are read from an exponent-and-mantissa table: 128 steps an octave, linear between (`x < 128` indexes directly): a plain table over Q24 has no steps left for the darks. Products that pass 32 bits are `i64`.
 
-## D4. The export default (the owner's Q50: "709 от HD, 601 ниже"; built, t3603)
+**What it gives** (cd/m² → code; the owner's eye check and t3803's numbers):
 
-`ExportOptions::default` takes its matrix from the output size by `colour::is_hd`: BT.709 at HD and
-above, BT.601 below. The range stays limited. The tags are written as converted (t2806's law holds). The
-render window still offers both. The text form (`export_settings`) writes `matrix=auto` for the default,
-so a preset made before this change, which stored `bt601`, keeps it.
+| | 1 | 10 | 26 | 50 | 100 | 203 | 400 | 1000 |
+|---|---|---|---|---|---|---|---|---|
+| PQ, peak 1000 (knee 88) | 28 | 73 | 108 | 142 | 189 | 230 | 250 | 255 |
+| PQ, peak 4000 (knee 40) | 28 | 73 | 108 | 142 | 178 | 210 | 233 | 250 |
+| HLG (signal 0.38 / 0.5 / 0.75 / 1.0 = 26 / 51 / 203 / 1000) | | | 109 | 143 | | 230 | | 255 |
 
-## D5. Facts and telemetry
+Diffuse white (203) is NOT code 255: a map that puts it there has no codes left for highlights, and they clip. This is mpv's `bt.2390` with its default target. An earlier revision's text said both at once ("203 at the SDR
+reference white, highlights rolled off below the SDR peak"), which no curve does.
 
-- `MediaInfo` gains `transfer`, `primaries` (already read) and `hdr_peak: Option<u32>` (cd/m²).
-- `kt-cli probe` prints the path a source takes ("HDR PQ → SDR, peak 1000", "wide gamut BT.2020 → 709").
-- The trace's decode record names the path, so a "my clip looks washed out" complaint is answered from
-  the owner's trace (telemetry rule).
+The tables are built once per (path, peak) in the process from `kt_plugin_api::math` (frozen, t1066), about 60 KB each, at most 8 kept. kt-ffmpeg gains the dependency on kt-plugin-api (kt-time and serde, no FFmpeg).
 
-## D6. Class walk: every place a picture's colour is decided or written
+**Threads**: the pipeline runs inside the converter that has the picture; a span's converters are already parallel. No rows are shared between threads: the bytes cannot depend on their number.
 
-| Place | Today | After |
-|---|---|---|
-| processor decode `to_rgba` | matrix + range | + the WIDE/HDR path (D1, D2) |
-| device decode (device-decode-sources) | planes laid out, same conversion | the WGSL twin of D2 |
-| thumbnails, reel strips, posters | the same decode | the same; versions moved |
-| still images (PNG/JPEG with ICC or wide gamut) | decoded as sRGB | unchanged; an ICC profile is a follow-up (F-CLR-008) |
-| generators, titles | drawn in the working space | unchanged |
-| the render-cache segments (H.264, BT.709 tags) | working-space pictures | unchanged |
-| the export RGB→YUV and tags | BT.601 default | the size rule (D4) |
-| proxies (spec-features `proxies`) | a proxy written from the decode | written from the mapped picture, tagged BT.709 SDR: a proxy of an HDR source is SDR, and the design notes it |
-| scopes (spec-features `scopes`) | read the working space | unchanged: they show the mapped picture |
-| LUTs (F-CLR-004) | applied in the working space | unchanged: a LUT made for HLG input sees the mapped picture; a "no mapping" override is the follow-up |
+## D4. Why at the decode and not in the plan
 
-## Risks (the 8-bit path)
+F-CLR-008 wanted conversions in the plan. The plan reads the burst cache, which holds RGBA8 (invariant 4): a tone map after that quantization bands. A 16-bit cache for HDR sources only would double
+their bytes and touch every reader: that is the 16-bit path (D8–D15), chosen per project.
 
-- **The look of the tone map is a taste.** The standard's anchors are the default, and the fixture
-  frames are checked by eye before they are stored (task 4.1).
-- **Cost:** a 4K HDR frame runs about seven table lookups and two small matrices per pixel on the
-  processor, row-parallel inside the decoder. It is measured on release against the decoder's own time
-  before it is merged (task 2.6).
-- **A file with wrong tags** (an SDR file tagged HLG) is mapped wrongly. The facts show the path, and
-  the per-file override is the follow-up.
+## D5. Names: only the mapped sources move
+
+- `FfmpegSource` keeps `file_ident` (what `cursor_for` compares) and answers `identity()` = the same mixed with `HDR_MAP_VERSION` (1) when its path is not `Sdr`. The burst cache, stream positions, the moment key, the disk tier's key and the render index
+  of an HDR source are new names; an SDR project keeps its prerender.
+- `Made.pixels` becomes its own constant (1): it is the conversion of EVERY file, and it does not move here.
+- `THUMB_PIXELS_VERSION` (1 → 2) and `STRIP_ROW_VERSION` (3 → 4) move for all: a thumbnail is keyed by the file's content and read before the file is opened, so it cannot ask the path. They are drawn again once.
+- `persistent-cache`: a copy of a mapped source is written from mapped pictures, tagged BT.709 SDR, and its name says so (`copy-<w>x<h>.m1.mkv`): a copy an earlier build made from unmapped ones is no copy of this source any more.
+
+## D6. Facts and telemetry
+
+- `MediaSource::colour(&self) -> Option<ColourFacts>` (default `None`; `FfmpegSource` answers; a field of `MediaInfo` would touch its 39 makers): transfer, primaries, matrix, range, peak, path.
+- `kt-cli probe` prints it per file: "HDR PQ → SDR, peak 1000 (MaxCLL)", "HDR HLG → SDR", "wide BT.2020 → 709", "SDR", "SDR (transfer 8 read, not mapped)".
+- The trace: a record at a source's open with the path and the peak (`Ev::Decoded` keeps its fields: one picture's record need not repeat a fact of the file).
+- The media bin's file facts line says the same in words (i18n ×5): "HDR (HLG), shown in SDR".
+
+## D7. Class walk and the cost
+
+| Place | After |
+|---|---|
+| `Rgba::convert`, single and span threads, every size of a moment | D3 |
+| device decode | the same planes, the same `convert`: t3807 |
+| the disk tier's segments, `persistent-cache` copies | BT.709 SDR by our own tags: `Sdr` |
+| copies' making (`Source::next_video`) | through `to_rgba`: mapped (D5) |
+| thumbnails, filmstrip, bin scrub, reel strips, posters | the same decode; versions moved |
+| stills: AVIF/HEIF in PQ or HLG, PNG with P3 (`cHRM`/`cICP`) | by the same table (their tags are the picture's); JPEG and untagged: today's bytes. An ICC profile is a follow-up (F-CLR-008) |
+| alpha (ProRes 4444 HLG) | kept (D3.6) |
+| generators, titles, the export's RGB→YUV, scopes, LUTs | unchanged: the working space is BT.709 SDR |
+| Datamosh, Tape, ISP over an HDR file | read the mapped picture |
+| audio, peak pyramid | no picture |
+| `magic-wand-mask`, `chroma-key-upgrade` (a picked colour) | a colour picked from an HDR clip before this is another colour after: the key's old number is the old picture's. Said in What's new |
+| a project with an HDR clip graded by hand to fight the grey | looks different: said in What's new; a per-file override is a follow-up (below) |
+| OTIO, `.kt` | untouched |
+
+**The override** ("treat this file as SDR / PQ / HLG") is not here: a wrong tag is seen in the facts (D6), and the override needs a field on the media (MODEL, a format by content). A row for after `shared-events`.
+
+**Cost**: measured on release before the merge (task 2.5): a 4K HDR10 frame's `convert` beside its decode, one thread, `kt-cli probe … --time`. The budget is stated there, not here; if the map costs more than the decode, the
+tables' layout is looked at before anything is merged.
 
 ## D8. The precision setting
 
@@ -151,7 +154,7 @@ so a preset made before this change, which stored `bt601`, keeps it.
 
 ## D10. The decode
 
-The D2 pipeline runs on every picture of a 16-bit plan up to stage 4 (gamut to BT.2020 instead of
+The D3 pipeline runs on every picture of a 16-bit plan up to its gamut step, with no tone map (gamut to BT.2020 instead of
 BT.709). Then:
 - the result is scaled to the working white (D9);
 - it is written as f16 by an exact integer conversion: a table from Q16 linear to the f16 bit pattern,
@@ -212,7 +215,7 @@ every processor (invariant 11). `VideoFrame` gains `format: PixFormat { Rgba8, R
 
   The interface itself (egui) is drawn at SDR white on that surface, so it does not glare.
 - **On an SDR surface** (every other case, and GL) the display pass tone-maps by BT.2390 from the frame's
-  peak to the monitor's SDR white (the same anchors as D2 stage 5, in float) and writes `Rgba8Unorm` as
+  peak to the monitor's SDR white (the same curve as D3 step 3, in float) and writes `Rgba8Unorm` as
   today.
 - **What the person sees:** the display's facts (Diagnostics, the trace's machine facts) name the surface
   and why: "HDR (scRGB, peak 600 cd/m²)" or "SDR (tone-mapped): the compositor gives no HDR surface".
@@ -245,7 +248,7 @@ Where no 10-bit hardware encoder opens, it writes nothing, and the Diagnostics w
 
 | Place | 8-bit path | 16-bit path |
 |---|---|---|
-| decode | D1–D3: matrix, and HDR/WIDE mapped to SDR 8-bit | D10: linear BT.2020 f16 |
+| decode | D1–D4: matrix, and HDR/WIDE mapped to SDR 8-bit | D10: linear BT.2020 f16 |
 | frames cache | RGBA8 | RGBA16F (8 B/px), the precision in the key |
 | core shaders | u32 0..255 | float twins (D11) |
 | effects | as today | float kernels where declared, else an 8-bit island (D12) |
@@ -264,22 +267,10 @@ Where no 10-bit hardware encoder opens, it writes nothing, and the Diagnostics w
 
 ## D16. Stages and tests
 
-1. Tags:
-   - `transfer` and the mastering peak read on every major (t3800);
-   - the path resolve (t3801).
-2. The pipeline on the processor:
-   - an SDR source is byte for byte as before, GOLDEN_VIDEO unchanged (t3802);
-   - PQ and HLG fixtures (generated by `fixtures/gen.sh` with tags) map to stored frames, identical on
-     two CPUs' tables and in a scalar and a row-parallel run (t3803);
-   - a 10-bit gradient keeps more than 200 distinct output levels across its SDR range (no banding,
-     t3804);
-   - a saturated BT.2020 green maps inside BT.709 with its hue within 3° (t3805);
-   - the WIDE path for P3 (t3806).
-3. The device twin equals the processor byte for byte (t3807), when device-decode-sources lands.
-4. Export:
-   - the default by size: built by the mosh-sharp executor (found-defects 1054, t3603); t3808 and t3809
-     stay free.
-5. Facts and `kt-cli probe` print the path (t3810); the trace names it (t3811).
+1. Tags: the transfer on every major, the peak from the first picture whichever frame is asked first (t3800); the table of D1 (t3801).
+2. The pipeline: SDR does not move (t3802); PQ, HLG and Wide frames by 1 and 4 converter threads (t3803); steps (t3804); hue and neutrals (t3805, t3806); the constants derived (t4142).
+3. A device decode equals the processor's (t3807), where `device-decode-sources` is in.
+4. Names (t4143), facts and trace (t3810, t3811). t3808 and t3809 stay free (the export default was built as t3603).
 
 6. The 16-bit path (the owner answered Q1–Q4, kkt-26.11.20b B4):
    - the precision setting, the file's next free format, OTIO (t3877–t3880);

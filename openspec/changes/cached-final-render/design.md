@@ -1,196 +1,168 @@
 # Design: cached-final-render
 
-## Context
+> IMPLEMENTATION-READY (spec-engine, revision 3, 2026-11-24), read against orch `229c694b` (durable-moment-key, project-cache-folder,
+> render-result-check merged). Code is named by function and file.
 
-- `render_cache::durable_hash` (render-cache-disk D1): `xxh3_64` over a documented byte layout — the plan's
-  fields in `plan_hash` order without content serials, then `Leaves::digest` (each leaf's source address and
-  `src_rev`, each file's `(media id, xxh3(path, size, mtime ns))`, the project's files for a stream stage) —
-  plus the program build salt (with the FFmpeg version). The device is the store's folder, not the key.
-  The plan's `out_w/out_h` and the quality are in it, so the same moment at the export's size has its own key.
-- After `durable-moment-key` (2026-11-24) the key is `kt_engine::moment_key` and there are no leaves: a frame is
-  named by its source's identity (a file's name, size and mtime as opened), held by the CACHE. An export's private
-  cache has no identities, so the cached render adopts them (`BurstCache::adopt` with each source's `identity()`)
-  before it asks a key; with none the key falls back to serials and matches nothing.
-- render-cache-codec D3 wrote that key per frame into each segment's manifest "so the cached final render
-  (F-EXP-003) can match it later"; the preview's segments are lossy, at the preview's size: they are not
-  the final render's index.
-- video-plan: an export frame always runs the settled form of a point-wise run (t2516); the preview may
-  show own passes during a trial (t2514) — within 1 LSB a boundary on a card, equal on a software adapter.
-- export: the pipelined writer takes frames in order (`export_pipeline.rs` writer), the encoder cascade
-  per codec (`kt_ffmpeg::encoders`), MKV and MP4 containers (render-settings), `t2805` same settings → same
-  bytes (fixed encoder threads), invariant 11.
-- F-EXP-003 (`docs/features/export/pipeline/smart-render-passthrough.md`): "smart render" is two
-  mechanisms — copying the source's packets, and reusing already computed render files (Premiere's "Use
-  Previews", FCP's render files). The note rejected a hybrid file because one MP4 header carries one
-  SPS/PPS and our encoder is chosen from a cascade. X1/U5 is the second mechanism between OUR renders.
+## Context (what exists)
 
-## Goals / Non-Goals
+- **The one key** is `moment_key(plan)` (kt-engine `moment_key.rs`); the disk tier's is `disk_key(plan, made) = DiskKey { key: FORMAT + moment_key +
+  put_rows, salt: Made::salt }`. The salt is what makes the pixels (the decoder's major, `COMPOSITE_PATH_VERSION`, the plugins that run), not the build.
+- **A frame is named by its source's identity**, which the CACHE holds (`BurstCache::adopt`). An export's private cache adopts nothing, so its leaves have no
+  names and its plans no `disk_key`.
+- **The moment key is not a key of the picture** (this reading): `put_plan` hashes the timeline tick; `fx_hash` (`fx_chain_hash`) the event's start, length and `source_in`;
+  `u` the progress over the length; a reel's subtree its whole `content_hash`, a track stage its whole `revision`. So a trim of an event's tail renames every frame of the event, and a
+  ripple everything after it. For the preview that costs a recomposition (found-defects 1069); for X1 ("мелкая оплошность (склейка кривая обнаружена)") it is
+  the whole feature: the two renders would share only what lies before the fix, and t3328's "another position" could never occur.
+- **The export**: `export_pipeline::run` (chunks over the range, `decode_chunk`, the compose thread, `write_all`), the serial reference in `export.rs`; `write_all` counts a frame where
+  the sink took it and `ExportStats` carries announced and written (render-result-check). `Muxer` (kt-ffmpeg) has one video encoder for the file, `drain` writes its packets straight to
+  `av_interleaved_write_frame`.
+- **The preview's tier**: `render_cache::DiskStore::get(DiskKey)`; `RenderCache` of the player; its readers live on `render-cache-read`.
 
-Goals: a second render of a project after a small fix costs only the GOPs the fix touches; the render
-window shows what is cached; nothing reused can be stale; a render without the option is unchanged.
+## D1. Every offline cache adopts its sources' names (found-defects 1068; needed here, right by itself)
 
-Non-goals: copying the SOURCE's packets (F-EXP-003's first mechanism, its own verdict); reuse across
-program builds or devices; reuse of the preview's tier by a final render (the draft render, D7, is its
-own mode).
+`kt_engine::adopt_sources(&BurstCache, &HashMap<MediaId, Box<dyn MediaSource>>)`: `adopt(source_id(m), src.identity().unwrap_or_else(SourceIdent::once))`. Called right after the
+cache is made, in `export.rs` (serial), `export_pipeline::run`, `reel_preview.rs` (both), `fx_thumbs.rs` (as it opens each source), kt-cli `framecost`, `streamcost`, `gpushare`. The renderer
+gets `set_source_idents(cache.ident_reader())`, as the player's. No frame's bytes change: an identity is part of names only.
 
-## D1. The unit of reuse is a closed GOP of an earlier export
+It closes row 1068: `ClipStream::ident` without an identity is (media id, pts, size, front), and the FRONT memo is the process's: an export of another project
+whose media has the same id, or of the same one after its file was replaced, reads the former's pictures through a Datamosh with a slot in front.
 
-A packet cannot be copied alone: inter frames reference their GOP. A closed GOP (it starts with an IDR
-and no frame references outside it) can. The cached render works in GOPs:
+## D2. The picture key
 
-- an earlier file's GOP `g` is reusable for the new timeline's frames `[a, a+len)` when every frame's
-  durable key equals the key the index lists for the same position in `g`, in order, and the file's
-  fingerprint (D3) equals the new render's;
-- a GOP of the new timeline that is not wholly matched is composed and encoded as today.
+`moment_key::picture_key(plan) -> Option<u64>`: what the kernels of a frame are GIVEN, with no place in it. `None` unless every leaf is named and durable. Hashed, in this order:
 
-Frames, not NAL units: X1 says "кадры/nalu/etc"; the frame key is the unit of identity, the GOP the unit
-of copy. A partial match inside a GOP is rendered (encoding the matching frames again costs what
-encoding always costs; decoding the old GOP to splice would put a decode generation into the final file).
+1. `out_w`, `out_h`; per layer its role, `alpha_k`, `scale_alpha`, fade (`k`, mix, incoming) or dissolve (`k`, mix): `put_mix` as today;
+2. per source: the leaf's key and `cache_idx` (the source's own time), the blend pair the same way; the RESOLVED chain (each slot's `Debug`: the
+   values the curves gave), the wiring, the reads recursively, the evaluated masks, `src_scale`, the lead, `cam3d`, `blend_mode`, the matte (track-stream-stage);
+3. a subtree: `blend`, `nest_scale`, its plan recursively. Not its `seq`, `content_hash`, `inner_t`;
+4. `u`, only where a slot of the chain reads progress; the plan's `t`, only where a slot or a transition reads time.
 
-## D2. Keyframes where reuse can happen
+Not hashed: `fx_hash`, the tick, start/length/`source_in`: what they decide is in 2 and 4 already.
 
-A cached-render export places an IDR (closed GOP) at every frame whose durable key run differs from the
-previous frame's "edit identity": a cut, the start or end of an effect's key range, a transition's edges —
-in practice where `Leaves::digest` or the plan's layer set changes — and otherwise at the GOP rule's
-spacing counted from that point. This is a function of the timeline (invariant 11), so two renders of
-nearly the same timeline put GOPs at the same places, and a fix inside one shot invalidates only that
-shot's GOPs. With the option off the encoder's own GOP rule stays as today (no file changes).
+**Who reads time or progress** is a fact of the plugin: `Plugin::reads_time()` and `Plugin::reads_progress()`, both `true` by default (safe); a plugin whose kernel's parameters do not use `ctx.burst_index` / `u`
+answers `false`. Geometry and the colour families are `false`; noise, the camera, the tape, VHS stay `true` (the files that name `burst_index` today: `fx-video-camera`, `fx-video-stylize`,
+`fx-video-tape`). t3335 holds it: for every plugin that answers `false` the cooked parameters, taps and geometry primitives are byte-equal at three ticks and three progresses over
+the passport's corners. `CamMotion` (core) reads progress. A stream stage's key holds its absolute positions (its losses are seeded by them): it does not move, and that is said.
 
-Cost: a few more IDRs per minute (one per cut) — visible as a slightly larger file at the same quality;
-the window says so.
+`moment_key` is not touched: the preview's and the disk tier's keys stay.
 
-## D3. The fingerprint: what makes a copied GOP fit the stream
+## D3. The entry of a frame, and the fingerprint of a file
 
-One hash, written in the index, of: container, codec, encoder name and its library version
-(`avcodec_version()`, x264/x265 build where the encoder reports it), profile, level, pixel format,
-size, frame rate, rate control mode, bitrate or quality value, GOP rule, B-frame count, colour tags,
-encoder threads, the device identity (adapter + driver; frames composed on another card differ within
-tolerance) and the program build salt (a kernel changed in a new build would otherwise come back from
-an old file). Equal fingerprints → the copied GOP decodes with the stream's parameters; different → that
-file is not a candidate at all, and the window says why ("other bitrate", "other encoder", "other
-build").
+**A frame**: `FrameId { picture: u64, salt: u64 }` (16 bytes), the salt `Made::salt(plan)`.
 
-Rejected: a lenient match ("same codec and size") — rate control and level mismatches produce files
-that some decoders refuse; the owner's X1 itself says "управление битрейтом/параметрами и разрешение
-видео должно быть одинаковым на всех участках".
+**A file**: one xxh3 over a text of `key=value` lines (the text is kept in the index's first SEI too, so a mismatch names its line): container, codec, encoder name, `avcodec` major.minor, profile and
+level as opened, pixel format, size, frame rate, rate mode and its number, maximum, `keyint_tenths`, B-frames, speed, depth, matrix, range, the composing device's class (the string
+the disk tier's folder is of), `COMPOSITE_PATH_VERSION` (it holds `yuv.rs` and the composite path), and `cached=1`. Not the program's build: an update that changed no pixel keeps
+its renders; a changed kernel is in the salt of the frames it runs in. Not `threads`: it decides no compatibility.
 
-## D4. Parameter sets in-band, timestamps re-stamped
+## D4. The GOP plan: a function of the timeline
 
-- H.264/HEVC: a cached render writes the parameter sets before every IDR (x264 `repeat-headers`, NVENC/
-  VAAPI's in-band headers; the `dump_extra` bitstream filter where an encoder only gives extradata). In MP4
-  the sample entry is `avc3`/`hev1` (parameter sets in the stream may change); MKV allows it always.
-  X1: "не мешает pps/sps/vps/etc перед сегментами класть".
-- Timestamps: a copied GOP's packets keep their decode order and relative pts/dts; they are shifted to
-  the new position (`av_packet_rescale_ts` + offset), so the B-frame reorder inside the GOP is preserved
-  ("соблюсти pts nalu"). The muxer gains a packet input beside `write_video_frame`.
-- The encoder's own state around a copied GOP: the encoder is flushed at the GOP before the copy and
-  reopened (or forced IDR with a fresh rate-control segment) after it; the per-GOP restart is what makes
-  a GOP closed on both sides. The cost is measured (x264's lookahead restart is ~the lookahead length).
-- Audio is always rendered and encoded (cheap; its encoder priming and frame grid make packet copies
-  fragile); invariant 1 unchanged.
+Before anything is decoded, `gop_plan(video, cache, range, q) -> Vec<Gop { first, len, ids: Vec<FrameId> }>` asks every frame's `probe_plan` (keys without frames: a stream stage by `key_only`).
+A GOP starts at frame 0, at every frame whose `shape(plan)` differs from the frame's before, and every `keyint` frames FROM that start. `shape` hashes the layers' roles, sources, reels, the
+plugin ids of the chains, the wiring and which transition is running: not values. Counting from the shape's start, not from 0, keeps the GOPs of a shot that moved.
 
-## D5. The index inside the video (the owner's Q3 b)
+Cost: a plan per frame; measured on the showcase in the trace (a `Job` span `cached_plan`), done on the export's thread, cancellable between frames. A frame without a picture key (a placeholder,
+a leaf without a name) has `FrameId::NONE`: its GOP is never copied and never offered.
 
-**The form.** The index is one user-data-unregistered SEI (H.264 payload type 5, HEVC prefix SEI type 5)
-per GOP. It carries our UUID and a version, then:
-- in every GOP: the GOP's first frame number, its frame count, the durable key of each frame (16 bytes
-  each, the documented layout), and the xxh3-64 of the GOP's other NAL units (the SEI itself excluded),
-  so a damaged or edited GOP does not verify;
-- in the first GOP also the fingerprint (D3) and the program build.
+**The encoder under this mode**: `Muxer::set_gops(starts)`: the frame at a start gets `pict_type = I` and the encoder its forced-IDR option (`forced-idr=1` for libx264, libx265, nvenc;
+`forced_idr=1` for qsv and amf; VAAPI takes an I picture as IDR); `gop_size` becomes the longest planned GOP, scene cut off (`sc_threshold=0` / `no-scenecut=1`), closed GOPs (libx265 `open-gop=0` in
+`x265-params`). An encoder that gives no IDR at a planned start is found by the writer (D5) and ends the mode for this file with the reason, not the render.
 
-The SEI is written into the access unit of the GOP's IDR, after the parameter sets. Per GOP of 2 s at 25
-fps it is about 0.8 KB, under 0.05 % of a typical file. The keys are hashes: they show that two frames
-are the same picture, not what the picture is.
+## D5. The writer of a cached render: GOPs, not packets
 
-**Where it can live.** Cached renders are offered for H.264 and HEVC, the codecs that carry SEI (MKV and
-MP4 alike). For ProRes, VP9 and AV1 the window's step says "the cached render needs H.264 or HEVC".
-AV1's metadata OBU could carry it later.
+In this mode `drain` hands the video packets to a `GopWriter` (kt-ffmpeg, pure over bytes but for the mux call) that holds one GOP:
+1. NAL units are read from Annex B (what every encoder of ours gives) by `kt_ffmpeg::nal` (new, pure: split, length-prefix ↔ Annex B, emulation prevention, types per codec);
+2. a planned start without SPS/PPS (VPS) in its IDR gets them from the encoder's current extradata;
+3. when the GOP is whole (the next planned start's packet, or the end) its hash is xxh3 over its NAL units except our SEI, in decode order; the SEI is built and put into the IDR's access unit after the
+   parameter sets (H.264 type 6 payload 5; HEVC prefix SEI, type 39);
+4. the packets go to the muxer as today.
 
-**Finding earlier renders.** The project's cache folder keeps `renders.tsv` (change
-`project-cache-folder`): each finished cached render's path, size, modification time and fingerprint. A
-candidate is read by demuxing only, with no decode: its SEIs give the GOP table and keys. The table read
-is kept in the cache folder, keyed by the file's identity, so a second lookup reads nothing. A moved
-output is not a candidate until found again (the render window offers "Look in folder…", which reads
-the SEIs of the files there). A GOP whose hash does not verify is skipped with its reason.
+Sample entries: H.264 `avc3`, HEVC `hev1` in MP4/MOV (the parameter sets stand in the stream). **MKV is the default container of a cached render**; MP4/MOV are offered
+with the note that Apple's players refuse `hev1` (`format.rs` writes `hvc1` without this mode, D8 of render-settings). At most one GOP of packets is held: 2 s.
 
-**Stripping it.** The render window's "Remove the render index" makes a copy of a file without our SEIs,
-re-muxed with the `filter_units` bitstream filter (`remove_types` for our SEI only, by UUID through a
-packet-level filter of ours where `filter_units` cannot match a UUID). No re-encode is done, and the
-pictures are byte-identical. A stripped file is no longer a candidate.
+**The SEI** (version 1): our UUID, `u8` version, `u32` first frame, `u16` frames, frames × 16 bytes, `u64` hash; in the first GOP also the fingerprint's text. About 0.8 KB for 2 s at 25 fps. x264's own SEI has another UUID and is
+never touched.
 
-## D6. The render window
+## D6. Where earlier renders are found
 
-A "Cached render" step (X1: "отдельный шаг настройки рендера"): the switch, the candidate files with
-their verdicts, and a strip over the timeline range showing which GOPs are found (the bars' colour
-language of the timeline, invariant 4's honesty: a GOP shown cached IS copied). The estimate counts
-copied GOPs at the copy's speed. The finished render's summary says "copied N of M seconds from F
-files". UI rules (`src/apps/kt-app/CLAUDE.md`) and a `- **PATH**` line apply to its scenarios when built.
+`renders/index.tsv` in the project's cache folder (a new `cache_folder::Tenant::Render`, appended): path, size, mtime, fingerprint; and `renders/<hash of path>.gops`, the file's GOP table as written, by `Folder::write`
+(versioned, checksummed). A listed file whose size or mtime differs is not a candidate. The SEI is the truth for any other file: "Look in folder…" seeks each key frame by the container's own index and reads ONE
+packet (no decode, no full read), and writes the table. A table evicted from the folder is read from the SEIs again.
 
-## D7. The draft render, and why the final render never reads the prerender (found-defects 773)
+## D7. Matching and copying
 
-**The final render** (cached or not) never reads the preview's prerender. The tier holds the preview's
-size and quality, lossy, possibly in a run form the export does not use. A final render made of those
-frames would be worse than its own and not byte-stable, since the preview's kept set changes run to run.
-The cached render reuses only exports' own GOPs, composed in the settled form at the export's size.
+`reuse(gops, candidates) -> Vec<Span>`, pure: spans `Render(first..end)` and `Copy { file, their_first, first..end }`. A planned GOP is a copy when ONE candidate GOP with an equal fingerprint has the same number of frames
+and the same ids in order. Candidates are ordered by fingerprint text, then by the table's hash: first match wins, never time or disk order. Neighbouring copies from
+one file merge.
 
-**The draft render** (the owner's Q1 b) is a separate option in the render window, "Draft (from the
-preview's prerender)":
-- a moment the prerender holds for the current state is decoded from its segment and scaled to the
-  draft's size;
-- every other moment is composed at the preview's quality, with the export's path otherwise;
-- the size defaults to the preview's size; the person may pick the project's size, and the window warns
-  that frames are upscaled;
-- the file is tagged as a draft (container title "Draft — Kinetren", a `kinetren_draft=1` metadata key);
-- the summary says how many seconds came from the prerender;
-- it writes no render index (its frames are not an export's) and is never a candidate for a cached
-  render;
-- its bytes are not stable run to run, and the window says so;
-- the audio is rendered as for any export.
+**Verification**: before the first frame is composed, every GOP to be copied is read whole and its hash compared (a `Job` span `cached_verify`); one that differs becomes a `Render` span and the summary says so.
 
-**Why it pays:** a heavy loop the preview already prerendered goes into a look-at file at the decoder's
-speed instead of the composite's.
+**Copying**: `Muxer::copy_gop(&CopiedGop)`: drop the old SEI, write ours with the NEW first frame; pts/dts in frames: `pts' = pts − their_first + first`, the same for dts (the source's dts are decode order minus the delay of its B-frames; the
+fingerprint has the same B-frames, so the delay is the same and dts stay ascending across spans: the writer asserts it and errs otherwise). Before a copy the encoder is
+flushed (`send_frame(NULL)`, drained to EOF); after it a fresh one is opened by `open_encoder(spec, …)`, the part of `Muxer::open` that makes the context, taken out; a VAAPI context keeps its device and frames.
+The reopened encoder's pts continue on the file's grid.
 
-## D8. Invariant 11 for a cached render
+## D8. The pipeline
 
-A copied GOP is the earlier render's bytes; a fresh render at the same place would encode differently
-(rate control state). So a cached render's bytes are a function of (project, settings, the set of
-verified indexed files). Deterministic given those inputs: candidate files are ordered by their index
-hash, the first match wins, never by time or disk order. A render with the option off is unchanged and
-keeps t2805/t11. Q2 is the owner's amendment of invariant 11 for this mode.
+- Chunks are made over the `Render` spans only, with the frames' real indices; `decode_chunk`, the look-ahead and the compose thread do not change. A stream stage is pre-rolled at the first frame of
+  EVERY rendered span (today: of the export).
+- `write_all` iterates frames; at a `Copy` span it calls `sink.copy_span(span, gop)` per GOP: `frames += gop.len; gate.set(end); video_done(end)`, then the audio up to the GOP's end by its fixed rule. The counts of render-result-check
+  are what the file took: a copied frame is counted when the muxer took its GOP's packets, and a failed copy ends the render short and SAID (t3998's path).
+- The serial export does the same (t1451's law gains a cached pair).
+- `export-into-surface`: a rendered span goes by surface as any; a span boundary flushes the encoder and the pool is the same frames context.
+- The audio is rendered whole, as always.
 
-## D9. The class walk: everything that keys or writes a rendered frame
+## D9. The window and kt-cli
+
+A section "Cached render" of the render setup: the switch; the candidates with their verdict ("12 of 60 s", "other bitrate: 8000 / 12000", "file changed", "other device"); the strip over the range (a copied GOP is drawn bright only
+after D7 verified it is a candidate GOP: what it shows IS copied, invariant 4's honesty); the estimate. Plan and match run on the window's job thread, cancelled by any change; nothing at rest. The finished summary: "copied N of M s from F files". "Remove the render index": a
+copy of a file without our SEIs, packets re-muxed, no decode (`nal` drops them). `kt-cli export --cached [--look DIR]`, `kt-cli strip-index <file> <out>`.
+
+Offered for H.264 and HEVC; the section says "needs H.264 or H.265" otherwise.
+
+## D10. The draft render (the owner's Q20 b), and why the final never reads the prerender (found-defects 773)
+
+The tier holds the preview's size and quality, lossy, possibly in a run form the export does not use. A final render made of it would be worse than its own frames and not byte-stable. The draft is another mode:
+- `DraftSource::get(t) -> Option<Picture>`: the plan of `t` at the PREVIEW's quality (a renderer of the export's project and its adopted names), `disk_key`, `RenderCache::read` of the player in the program (its own reader thread); kt-cli opens a
+  `DiskStore` of the folder for the device class it would preview on (read only: no write, no eviction).
+- A held moment is scaled to the draft's size (`fit_into`); every other moment is composed at the preview's quality and scaled the same way.
+- The size is the preview's by default; the project's size with the warning "frames are upscaled".
+- Title "Draft — Kinetren", metadata `kinetren_draft=1` (both containers take it as a tag); no index; never a candidate. Its bytes are not stable run to run, and the window says so. The audio as in any export.
+- The summary and `kt-cli export --draft` say the seconds taken.
+
+## D11. Invariant 11
+
+A cached render's bytes are a function of (project, settings, the verified files). The same inputs give the same bytes (t3330), for a render of ONE composing device (several software devices give frames equal to one's, t1573). With the option off no
+file moves (t3324, t2805).
+
+## D12. Class walk
 
 | Place | Relation |
 |---|---|
-| `render_cache::durable_hash`, `Leaves` | the shared key; its layout becomes a contract (video-plan delta); a new plan field hashed by `plan_hash` must reach it (render-cache-disk's rule) |
-| Prerender manifests `<id>.idx` | same key form; never a source for a final render; the draft render's source (D7) |
-| The project's cache folder | `renders.tsv` and the read GOP tables of candidates (`project-cache-folder`) |
-| Kept composites / render-ahead / present memo | in-process, serial-keyed; not involved |
-| Export pipelined and serial | the writer gains the copy path; compose/convert skip copied frames |
-| Encoder cascade | the fingerprint names the encoder actually opened; a different machine's cascade yields another fingerprint |
-| `export-host-copy` (YUV on device) | orthogonal; the fingerprint includes the build, so a conversion change re-keys |
-| `device-decode-sources` | orthogonal (sources' frames are byte-equal whichever decodes) |
-| Stream stages (Datamosh history) | their key carries every project file (render-cache-disk D1); a GOP inside a stream stage is reusable only with the same history inputs |
-| Audio | always rendered |
-| OTIO door | nothing in the model; no row in "What OTIO export loses" |
-| `.kt` format | untouched |
-| Windows | same design; MF encoders' in-band headers to be checked per encoder (the cascade's trial) |
+| every offline `BurstCache` (7 places) | adopts names (D1, row 1068) |
+| `moment_key`, `disk_key` (preview, tier) | unchanged; row 1069 stays the preview's |
+| `Plugin` trait, ~90 built-ins | two defaulted facts; only the `false` ones are touched |
+| wasm/OpenFX plugins (designed) | the default `true` |
+| `render_cache` `plugins_of`/`put_rows` | a new layer input (track-stream-stage's matte) joins both and `picture_key` |
+| `Muxer::open`, `drain`, `finish` | `open_encoder` taken out; `GopWriter` only in this mode |
+| the encoder cascade and its trial | unchanged; a reopened encoder is the same candidate, no second trial |
+| `encoders.rs` options | the forced-IDR names per encoder, in this mode only |
+| `probe_output` | names `avc3`/`hev1` |
+| `export_pipeline`, the serial export | spans (D8) |
+| `ExportStats`, `report`, `render_dialog` | announced = the whole range; copied frames counted where taken |
+| `hdr-sources-to-sdr` | its `Made.pixels` step renames every frame it changes |
+| `persistent-cache` copies | an export reads no copy: the names are the originals' |
+| `loudness-norms` | audio: rendered whole |
+| Windows | the same; `h264_mf`, `*_amf` forced IDR checked by t3325 where a machine has them: an encoder that gives none ends the mode with its name |
+| OTIO, `.kt` | untouched |
 
-## D10. Stages (the owner answered; the orchestrator gives the go)
+## D13. Order
 
-1. The index: fingerprint, per-frame keys at the export's quality, per-GOP hash, written as SEI inside an
-   H.264/HEVC export (no reuse yet); `renders.tsv`; the strip tool. t3322–t3324, t3870, t3871.
-2. Keyframes at edit points and in-band parameter sets under the option. t3325, t3326.
-3. The copy path in the writer, candidate lookup, re-stamping, encoder restart around copies. t3327–t3331.
-4. The render window step and the summary; kt-cli `export --cached`. t3332–t3334.
-5. The draft render: the option, the prerender's frames scaled, the draft tag, the summary; kt-cli
-   `export --draft`. t3872–t3876.
+1. D1 alone (row 1068). 2. The picture key and its facts. 3. `nal`, the SEI, the GOP plan, `GopWriter`; the tables. 4. Match, verify, copy, the pipeline. 5. The window, kt-cli. 6. The draft.
 
 ## Risks
 
-- Encoders that cannot restart cheaply or cannot emit in-band headers: the fingerprint then marks the
-  file "not reusable" (the cascade's trial learns it once per encoder).
-- Players and NLEs that dislike `avc3`/`hev1` in MP4: MKV is the default container of cached renders;
-  MP4 only when the person asks, with the window's note.
-- A key collision (64 bits per frame): a GOP needs all its frames to match in order; the probability
-  is negligible against a disk error, and the build salt + fingerprint narrow it further.
+- **A plugin that answers `false` wrongly** brings back a stale frame: t3335 runs every one; the default is `true`.
+- **An encoder that cannot restart or force an IDR**: found at the first GOP, named, the render goes on without the mode.
+- **`hev1`/`avc3` in MP4**: MKV is the default; the note says who refuses.
+- **64-bit keys**: a GOP needs all its frames in order.

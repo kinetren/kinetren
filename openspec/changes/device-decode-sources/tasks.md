@@ -2,13 +2,14 @@
 
 > IMPLEMENTATION-READY (2026-11-22). The owner answered (kkt-26.11.20 A12): on by default, a checkbox in
 > Settings. Tests: t3300–t3311, t4100–t4102. Code references re-checked
-> against orch `286c406c` (2026-11-24); D2, D4, D6 revised that day. Read first:
+> against orch `229c694b` (2026-11-24); D2, D4, D6, D8 revised that day. Line numbers below are of `286c406c` and have moved
+> by tens of lines: names decide. Read first:
 > `design.md` D1–D4, D6, D11; `src/libs/kt-ffmpeg/CLAUDE.md`, `src/libs/kt-media/CLAUDE.md`;
 > `openspec show media-index --type spec`. Commit per section; `scripts/target-prune.py` after each.
 > Build-queue areas: DECODE, `kt-time` mem/trace, SHELL (Preferences). Do not run beside another change
 > writing `source_impl.rs`, `mem.rs` or `trace.rs`. **Section 1 and 2.1 may start beside anything; 2.2 on not
-> beside `persistent-cache`** (`ffmpeg.rs`, `worker.rs`, `copy.rs`; `durable-moment-key` is in); 3 after own-data-dir
-> (`trace_query.rs`, kt-cli `main.rs`). Not beside `export-into-surface` section 2 (`ktfake_drv_video.c`, `mem.rs`).
+> beside `persistent-cache`** (`ffmpeg.rs`, `worker.rs`, `copy.rs`; its `Source::next_video` goes through `decode_next_frame`,
+> so D1's layout covers it); 3 may follow at once (own-data-dir is in). Not beside `hdr-sources-to-sdr` 1–3 (`source_impl.rs`, `ffmpeg.rs`) and not beside `export-into-surface` section 2 (`ktfake_drv_video.c`, `mem.rs`).
 
 ## 0. Notes first
 
@@ -33,7 +34,7 @@ What exists (keep it): `Source::open_hw` (`lib.rs:1080` → `source_impl.rs:726`
       process's reference is never released (`hw_device_opened`)
 - [ ] 1.3 D2, eligibility: the codec table (H.264, HEVC, VP9, AV1), 4:2:0 8/10-bit offered by `get_format`,
       no odd crop the copy cannot keep; the first-keyframe proof (device picture == processor picture of the
-      same packet), memoized per (`file_key`, device); t3302 in `device_layout.rs`
+      same packet), returned as a verdict and memoized per (`file_key`, device) by `remember_proof` (D2: after the identity check); t3302 in `device_layout.rs`
 - [ ] 1.4 D6, a device fault mid-stream reopens that decoder on the processor at the same keyframe and marks
       the file processor-only for the process
 - [ ] 1.5 the bit: `set_decode_device(bool)` beside `set_decode_threads` (`lib.rs:23`), the third field of `DecodeSettings`
@@ -52,7 +53,7 @@ What exists (keep it): `Source::open_hw` (`lib.rs:1080` → `source_impl.rs:726`
       tests: a live claim leaves the bound as it is (part of t3305)
 - [ ] 2.2 `FfmpegSource` (`kt-media/src/ffmpeg.rs:11`): its `hw: bool` field becomes the kind chosen per decoder by eligibility, the bit and the `Surfaces` bound; it
       keeps the `DecodeSettings` it was opened with and `cursor_for` (`:149`, the open at `:167`) opens its cursors under
-      them (found-defects 1064); released on drop; t3305
+      them (found-defects 1064) and keep its identity check after the open (row 1065); `remember_proof` after it; released on drop; t3305
 - [ ] 2.3 D6: `factory::open_source(path, store, Purpose)` in `kt-media/src/factory.rs` (beside `open_indexed`, `:103`); route
       the openers through it: `kt-app/src/util.rs:36`, `render_dialog.rs` `open_all` (`:616`, today
       `FfmpegSource::open` with no index), kt-cli export (`main.rs:2056`), `open_sources` (`:1344`), `preview` (`:1130`), `pause-scan` (`:1007`);

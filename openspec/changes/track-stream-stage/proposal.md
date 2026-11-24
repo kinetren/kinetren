@@ -1,7 +1,7 @@
 # Proposal: track-stream-stage
 
-> DESIGN ONLY (spec session). Code starts after the owner answers the questions at the end and the
-> orchestrator gives the go. Tests reserved: t3379–t3398. Base: `orch-26-11-01` at `b2653fcc`.
+> IMPLEMENTATION-READY (spec-engine, revision 2, 2026-11-24, orch `229c694b`). The owner answered Q1–Q3 (kkt-26.11.20
+> A23, line 34). Tests: t3379–t3398, t4137.
 
 ## Why
 
@@ -37,10 +37,13 @@ effects. An event-level mosh imitates this through "the event before". A track-l
 - **Order and pacing count every layer.** A history position asks every frame the track's sub-plan
   asks at that moment, at the stream's size. The paced window and the far walk count those bytes, not
   one frame per position.
-- **Keys from addresses.** A position's identity is the hash of the sub-plan's layers at that moment,
-  with no content serial (the durable form). An edit of one event changes the identities only where
-  that event is active. The disk tier notes every file the segment's history reads (the history itself is not
-  stored, the owner's D6).
+- **One key.** A position's identity is `moment_key` of the composite's plan at that moment, built by the same builder
+  with names instead of frames. An edit of one event changes the identities only where that event is active. (The history
+  itself is not stored on disk, the owner's D6.)
+- **The picture keeps the track's coverage.** A codec's picture is opaque; it takes the alpha of the track's composite at the
+  moment shown, so a title, a picture-in-picture or a fade-out on the track still shows the tracks below.
+- **A video track's branched chain is rendered as its graph** (found-defects 1067): the plan dropped its wiring. A Datamosh in
+  an arm of a track's chain is a read of the track.
 - **The second input** (`SecondFrom::TrackAbove/Below`) is the composite of the adjacent video track.
 - **The sound half** pairs on the track: the sound track's stage encodes its mix and breaks it on the
   picture's schedule over the same track layout. The model's `track_pairs` exclusion is lifted.
@@ -60,12 +63,12 @@ effects. An event-level mosh imitates this through "the event before". A track-l
 ## Impact
 
 - **kt-engine:**
-  - `video_stream.rs`: `TrackStream`, and `StreamStage` for a track;
-  - `video.rs`: `track_stage_layer` runs the stage, the probe key, `stream_want`, `stream_advance_*`,
-    `layers_at`/`wanted_frames` for the stage's history;
-  - `render_cache.rs`: the leaves;
-  - `export.rs` / `export_pipeline.rs`: `stream_preroll`, `project_may_stream`;
-  - `audio.rs`: the track stage seats the sound half with the track layout.
+  - `track_layout.rs` (segments, both builders), `track_stream.rs` (the host);
+  - `video.rs`: the stage's wiring, `Look` (one plan builder for frames and names), `streams_at` for the seven stream walkers;
+  - `video_plan.rs`, `moment_key.rs`: `LayerSrc.matte`;
+  - `audio.rs`: the track stage's segments and the kept mix's hash.
+- **kt-gpu:** the matte of a layer (a sub-composite, two existing passes).
+- **kt-plugin-api:** `AudioState::segments` (a default that does nothing).
 - **Plugins:** `fx-video-codec` `sound.rs` takes a segmented layout (the picture's `Plan` already works
   per layout).
 - **kt-model:** `track_pairs` admits Datamosh.

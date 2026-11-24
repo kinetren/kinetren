@@ -1,11 +1,12 @@
 # Design: export-into-surface
 
-## Context: what exists (read at orch `0c2a4065`)
+## Context: what exists (read at orch `0c2a4065`; re-read at `229c694b`, render-result-check merged)
 
 - **The pass.** `yuv.wgsl` mirrors `kt_engine::yuv::convert` in integers (t3313). It writes a word texture of PACKED planes;
   `submit_as(plan, Some(layout))` (`engine.rs:2239`) copies it to a staging buffer of the ring, `collect` maps and copies.
 - **The pipeline** (`export_pipeline.rs`). The compose thread submits and collects in order; `Job::Convert { planes }` goes to a frame
-  worker that copies the bytes into an `AVFrame` (`fill_planes`); `write_all` writes in order on the muxer's thread.
+  worker that copies the bytes into an `AVFrame` (`fill_planes`); `write_all` writes in order on the muxer's thread and counts a frame where the sink took it:
+  `Wrote { frames, samples, incomplete }`, beside the announced totals in `ExportStats` (render-result-check).
 - **The muxer** (`muxer_impl.rs`). A VAAPI candidate opens a device and a frames context (`initial_pool_size` 20, NV12: `pix10` of every
   VAAPI row is `None`, `encoders.rs:232`), and `encode_video_frame` (`:829`) does `av_hwframe_get_buffer` + `av_hwframe_transfer_data` per frame.
 - **The trial** (`hw_trial.rs`). The cascade's VAAPI candidates meet a throwaway process of our own binary first.
@@ -69,13 +70,17 @@ implicit fence is relied on.
 
 `VideoGpuExec::submit_surface(plan, layout, &ImportedSurface) -> ticket` and `collect` with no bytes; `surface_depth()`.
 - The compose thread: `acquire` → `submit_surface` → in flight with its `Surface`. `acquire` empty: collect the oldest in flight; none in flight: wait
-  on the writer's `Gate` (it moves when the encoder took a frame), never a clock.
+  on the writer's `Gate` (it moves when the encoder took a frame), never a clock. **It cannot wait for ever**: when every frame sent is written and the pool is still empty, the
+  encoder holds them all and needs a frame to give one back; that frame goes by upload (D7), and the log says so.
 - At most `SURFACE_RING = 8` in flight; the frames context is opened with `20 + 8` surfaces where surfaces are used, 20 as
   today otherwise: what the encoder keeps (its lookahead, B-frames) is what the 20 were for.
 - `Job::Surface { t, surface, complete }` passes through the same worker queue, so the order rule (`order_tx`) does not change; the worker forwards it.
-  `Done.frame` is `Frame | Surface`; `ExportSink::write_surface(Surface)` sets its pts and encodes.
+  `Done.frame` is `Frame | Surface`; `ExportSink::write_surface(Surface)` sets its pts and encodes. `write_all` keeps ONE counting line:
+  `frames += 1` after whichever of the two writes returned; only a `Frame` goes back through `back_txs`, and a surface job takes no buffer from them (the encoder's own reference frees a surface).
+  `surface_upload_ns` does not move for it.
 - **An incomplete frame** (the RETRIES rule): composed again into the SAME surface before it is handed on, as today into the same buffer.
-- **The serial export** (`export.rs`) does the same with one surface at a time, so t1451 (pipelined = serial) holds.
+- **The serial export** (`export.rs`): `render_raw_video_planes`' frame closure takes `Planes(&[u8]) | Surface(Surface)`, one surface at a time, so t1451 (pipelined = serial) holds and its count stays
+  where its closure returned.
 - **An empty plan** draws black through the pass (there is no readback to fill by the reference).
 
 ## D5. When it is used
@@ -106,7 +111,8 @@ another cache than the driver's image copy): that is D3's release barrier and th
 **The trial** (invariant 9's one exception, widened): the process that meets a libva driver now may import and draw too. `hw_trial`'s
 third kind, `surface <node> <w> <h>`, opens the device, the pool, one wgpu device, imports and runs the proof, and says it. It runs after conditions
 1–6 hold, at most once per export, within the existing 20 s; a fault, a hang or a refusal there is condition 7. kt-ffmpeg does not
-know kt-gpu: `hw_trial::serve_with(Host { surface: fn(..) })`, called by the two binaries with kt-gpu's function; a process that does not
+know kt-gpu: `hw_trial::serve_with(Host { surface: fn(..) })`, called by the two binaries with kt-gpu's function at the place `serve()` is today (before own-data-dir's check, the
+supervisor and any file of the person: the trial writes nothing); a process that does not
 host it (a test harness) proves in-process, as the encoder's trial does.
 
 ## D7. What fails midway
