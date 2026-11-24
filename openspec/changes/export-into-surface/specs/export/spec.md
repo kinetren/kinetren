@@ -16,12 +16,12 @@ processor and was uploaded to the same card (export-into-surface D1–D4).
 
 #### Scenario: The file is the upload path's file
 - **WHEN** sixty frames are exported through the fake VA driver's exported surfaces (the import replaced by a copy into their memory), and again with `KT_EXPORT_SURFACE=off`, pipelined and serial
-- **THEN** the four files' video packets are equal byte for byte; in the first the driver mapped each surface once, and no copy out, conversion or upload is counted
+- **THEN** the four files' video packets are equal byte for byte and each result's written frames equal the announced; in the first the driver mapped each surface once, and no copy out, conversion or upload is counted
 - **TEST** t4127 (`src/libs/kt-engine/tests/export_options.rs`)
 
 #### Scenario: The pool is waited for, and released
 - **WHEN** an encoder keeps every surface but one until its next frame, over forty frames; then the export is cancelled midway
-- **THEN** the export goes on at one frame in flight and ends whole; after the cancel no imported texture and no surface is left
+- **THEN** the export goes on at one frame in flight and ends whole; with an encoder that gives none back until the next frame, the frames it cannot give a surface go by upload and the export ends whole; after the cancel no imported texture and no surface is left
 - **TEST** t4128 (`src/libs/kt-engine/tests/export_options.rs`)
 
 #### Scenario: An incomplete frame is composed again into its surface

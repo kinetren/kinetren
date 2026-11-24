@@ -1,10 +1,7 @@
 # Proposal: hdr-sources-to-sdr
 
-> DESIGN (spec session). Revised 2026-11-20 on the owner's answer (kkt-26.11.20 A25, line 33): the
-> project's or composition's setting decides between a 16-bit float path and today's fast 8-bit path.
-> He answered the revised Q1–Q4 (kkt-26.11.20b B4). Code starts on the orchestrator's go. Tests reserved: t3800–t3811
-> (the 8-bit path, unchanged numbers), t3877–t3899 (the 16-bit path). Base: `orch-26-11-01` at `5e7a8ea9`.
-> Feature note: F-CLR-009 (`docs/features/color/management/hdr-sources-in-sdr-edit.md`).
+> **The 8-bit path (stages 1–4) is IMPLEMENTATION-READY** (spec-engine, revision 3, 2026-11-24, orch `229c694b`); the 16-bit path (stage 5) is a
+> design re-read when its turn comes. The owner answered (kkt-26.11.20 A25, line 33; kkt-26.11.20b B4). Feature note: F-CLR-009.
 
 ## Why
 
@@ -31,8 +28,10 @@
   - It is written in the `.kt` only when it is 16-bit, so old files do not change.
 - **8-bit path:** as designed before. The decode reads the transfer and the mastering levels, and maps
   HDR and wide-gamut pictures to BT.709 SDR 8-bit by one integer pipeline:
-  - EOTF, gamut, the BT.2408/BT.2390 tone map, out-of-gamut toward luminance, BT.709 encode;
+  - EOTF, the BT.2390 tone map (peak → 203 cd/m², reference white at code 230 for a 1000 cd/m² master, so highlights
+    have codes left), gamut, out-of-gamut toward luminance, SDR encode;
   - its tables come from `kt_plugin_api::math`;
+  - the peak is asked once, from the stream's first picture; only mapped sources get new names;
   - SDR sources keep today's bytes.
 - **16-bit path:**
   - **The working space** is scene-linear light in BT.2020 primaries, f16 RGBA, with 1.0 = 203 cd/m², the
@@ -71,11 +70,11 @@
 
 ## Impact
 
-- **kt-ffmpeg:** `colour.rs` (`transfer`, the mastering levels, the integer pipeline, its tables and its
-  f16 output); `source_impl.rs` (the 16-bit conversion branch); `format.rs` and `muxer_impl.rs` (10-bit
+- **kt-ffmpeg:** `colour.rs` (`transfer`, the path), new `hdr.rs` (the integer pipeline, its tables; later its
+  f16 output), a dependency on kt-plugin-api (the frozen math); `source_impl.rs` (the 16-bit conversion branch); `format.rs` and `muxer_impl.rs` (10-bit
   HDR tags, mastering display and content light SEI).
-- **kt-media:** `VideoFrame` gains a pixel format (`Rgba8` | `Rgba16F`); the facts carry transfer and
-  peak.
+- **kt-media:** `MediaSource::colour`, a mapped source's identity, the copy's name; with stage 5 `VideoFrame` gains a pixel
+  format (`Rgba8` | `Rgba16F`).
 - **kt-cache:** byte accounting is already by length; the ledger's frames budget holds half as many
   16-bit frames.
 - **kt-gpu:**

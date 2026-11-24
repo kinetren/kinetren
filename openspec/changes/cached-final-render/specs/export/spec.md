@@ -2,11 +2,11 @@
 
 ### Requirement: An export can write the index of what it holds
 An export with the cached render on SHALL write its index INSIDE the video: one user-data-unregistered SEI
-per GOP carrying our UUID, the GOP's first frame and frame count, the durable key of every frame at the
-export's size and quality, and a hash of the GOP's other NAL units; the first GOP's SEI SHALL also carry the
+per GOP carrying our UUID, the GOP's first frame and frame count, the picture key of every frame at the
+export's size and quality with what makes its pixels, and a hash of the GOP's other NAL units; the first GOP's SEI SHALL also carry the
 fingerprint of everything that decides the bitstream (container, codec, encoder and library version, profile, level,
-pixel format, size, rate, rate control and its value, GOP rule, B-frames, colour tags, encoder threads,
-the device identity and the program build). The cached render SHALL be offered for H.264 and HEVC only. A
+pixel format, size, rate, rate control and its value, GOP rule, B-frames, colour tags and
+the device's class). The program's build SHALL NOT be in it. The cached render SHALL be offered for H.264 and HEVC only. A
 GOP whose hash does not verify SHALL not be used. A finished cached render SHALL be listed in the project's
 cache folder (`renders.tsv`), and a candidate's GOP table SHALL be read by demuxing its SEIs, with no decode.
 The render window SHALL offer a copy without the index, re-muxed, with no re-encode.
@@ -15,12 +15,12 @@ Why: `v26.10` X1, kkt-26.11.18b U5 — "среди уже отрендеренн
 
 #### Scenario: The index lists what the file holds
 - **WHEN** a three-second H.264 project is exported with the cached render on, and one byte inside its second GOP is then changed
-- **THEN** the demuxed SEIs give the fingerprint, one entry per GOP with its frames, and one key per frame equal to `durable_hash` of that frame's plan at the export's quality, and nothing is written beside the file; after the change the second GOP does not verify and the others do
+- **THEN** the demuxed SEIs give the fingerprint, one entry per GOP with its frames, and one key per frame equal to `picture_key` of that frame's plan at the export's quality and its salt, and nothing is written beside the file; after the change the second GOP does not verify and the others do
 - **TEST** t3322 (`src/libs/kt-engine/tests/cached_render.rs`)
 
 #### Scenario: The fingerprint follows the settings
-- **WHEN** fingerprints are taken for one render's settings, then with another bitrate, encoder, size, build salt and device
-- **THEN** each change gives another fingerprint and the window's reason names it
+- **WHEN** fingerprints are taken for one render's settings, then with another bitrate, encoder, size, container and device class, and from another program build
+- **THEN** each change gives another fingerprint and the window's reason names its line; the other build gives the same one
 - **TEST** t3323 (`src/libs/kt-engine/tests/cached_render.rs`)
 
 #### Scenario: Without the option nothing changes
@@ -29,9 +29,10 @@ Why: `v26.10` X1, kkt-26.11.18b U5 — "среди уже отрендеренн
 - **TEST** t3324 (`src/libs/kt-engine/tests/cached_render.rs`)
 
 ### Requirement: A cached render places closed GOPs at edit points and carries its parameter sets
-An export with the cached render on SHALL start a closed GOP wherever the timeline's edit identity changes
-(the leaves or the layer set of the plan) and otherwise at the GOP rule's spacing counted from there, as a
-function of the timeline; it SHALL write the parameter sets before every IDR, in MKV, or in MP4 with
+An export with the cached render on SHALL start a closed GOP wherever the plan's shape changes (its layers, sources, reels, effects,
+wiring or running transition; not their values) and otherwise at the GOP rule's spacing counted from there, as a
+function of the timeline; an encoder that gives no key picture where one is asked SHALL end the mode for that file with its
+name, not the render; it SHALL write the parameter sets before every IDR, in MKV, or in MP4 with
 `avc3`/`hev1` sample entries.
 Why: cached-final-render D2, D4 — a small fix must invalidate only the GOPs it touches; X1: "не мешает
 pps/sps/vps/etc перед сегментами класть".
@@ -50,7 +51,8 @@ pps/sps/vps/etc перед сегментами класть".
 A cached render SHALL copy, re-stamped in decode order, every GOP of a verified earlier file with an equal
 fingerprint whose frames' keys equal, in order, the keys of the new timeline at that place, and SHALL
 compose and encode every other GOP; candidates SHALL be ordered by their index hash and the first match
-SHALL win. Its bytes SHALL be a function of the project, the settings and the set of verified files. The
+SHALL win. Its bytes SHALL be a function of the project, the settings and the set of verified files. A
+copied GOP's frames SHALL be counted written when the file took its packets; a GOP SHALL be verified by its hash before the first frame is composed. The
 preview's disk prerender SHALL NOT be a source of frames for any final render (the draft render is its
 own mode).
 Why: cached-final-render D1, D7, D8; found-defects 773 — the preview's tier is lossy, at the preview's size,
@@ -61,9 +63,19 @@ possibly in a run form the export never uses.
 - **THEN** the first and third shots' GOPs are copied byte for byte from the first file, the second shot's are encoded, the file decodes frame for frame to the first render's frames outside the second shot, and the summary names the seconds copied
 - **TEST** t3327 (`src/libs/kt-engine/tests/cached_render.rs`)
 
+#### Scenario: The bytes of a GOP
+- **WHEN** Annex B and length-prefixed H.264 and HEVC access units, with and without parameter sets, with emulation prevention in the SEI's payload and with the encoder's own SEI, go through the GOP writer, the reader and the strip
+- **THEN** the index read equals the index written, the hash does not depend on our SEI or the framing, the encoder's SEI stays, and the stripped units are the encoder's byte for byte
+- **TEST** t4140 (`src/libs/kt-ffmpeg/src/gop.rs`)
+
+#### Scenario: A render is found by its file, not by its place in memory
+- **WHEN** a cached render is listed in the project's cache folder, its table is evicted, the file is then moved, and looked for in its new folder
+- **THEN** the table is read again from the key frames' SEIs with no decode; the moved file is no candidate until looked for, then is one; a file changed since is named "file changed"
+- **TEST** t4141 (`src/libs/kt-engine/tests/cached_render.rs`)
+
 #### Scenario: Timestamps keep the GOP's reorder
-- **WHEN** GOPs with B-frames are copied to another position of the timeline
-- **THEN** their pts and dts are shifted by the same offset, the decode order is kept, and a decoder shows them at the new times
+- **WHEN** a shot before them is shortened and GOPs with B-frames are copied to another position of the timeline, between two encoded spans
+- **THEN** their pts and dts are shifted by the same offset, dts ascend through the three spans, the decode order is kept, a decoder shows them at the new times, and the frames written equal the frames announced
 - **TEST** t3328 (`src/libs/kt-engine/tests/cached_render.rs`)
 
 #### Scenario: A partial or foreign match is rendered

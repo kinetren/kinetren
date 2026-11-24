@@ -91,8 +91,10 @@ defect; the file list of the eligibility table gets a `(vendor, codec)` refusal 
 Not an entry of the cache folder: the proof is cheap and a driver update would need a re-check. A per-process memo keyed
 by (file, device name) is enough. **The file's key is the source's identity** of `durable-moment-key` D1 (name, size,
 mtime as opened), handed down by kt-media as a number; kt-ffmpeg stats nothing of its own. Not the content id of
-`project-cache-folder` (a whole-file hash the index lane learns later). Until that change is merged, section 1 takes the
-key as an argument (`open_hw(path, prebuilt, file_key)`) and its tests pass one.
+`project-cache-folder` (a whole-file hash the index lane learns later). `open_hw(path, prebuilt, file_key)` takes the key as an argument (kt-ffmpeg's tests pass one). **The proof is recorded after the identity
+check, not in the open**: a path may hold another file by the time it is opened (row 1065: `cursor_for` drops a decoder whose file is not the source's, after the
+open), and a proof written inside the open would stand under the former file's key. So `open_hw` returns its verdict, and `FfmpegSource` calls `kt_ffmpeg::remember_proof(file_key, verdict)` once
+`file_ident(path)` agreed; a cursor refused by the check records nothing.
 
 **Surfaces never meet the caches.** `download` carries a picture to host memory and frees its surface before the frame
 is converted; the burst cache, the stream's input and the moment key see host frames of the source's identity, whoever
@@ -165,15 +167,14 @@ would be a different filter and different bytes (rejected).
 
 ## D6. The export
 
-Today (orch `286c406c`) the sources open at these places, not one:
-- the preview: `util.rs:36` → `kt_media::factory::open_indexed` (kt-cli `preview` `main.rs:1130` and `pause-scan` `:1007` the same);
+Today (orch `229c694b`) the sources open at these places, not one:
+- the preview: `util.rs` `open_source` → `kt_media::factory::open_indexed` (kt-cli `preview` and `pause-scan` the same);
 - the render window: `render_dialog.rs` `open_all` → `FfmpegSource::open` (no index);
-- kt-cli export: `main.rs:2056` → `FfmpegSource::open_indexed`, inside `open_render_sources` (`:2275`, since row 1059 only the
-  scope of a render's decoder settings);
-- kt-cli's `render` and `probe --time`: `open_sources` (`main.rs:1344`, the open at `:1365`) → `FfmpegSource::open_indexed`.
+- kt-cli export: `FfmpegSource::open_indexed` inside `open_render_sources` (since row 1059 the scope of a render's decoder settings);
+- kt-cli's `render` and `probe --time`: `open_sources` → `FfmpegSource::open_indexed`.
 
-These ask facts or sound and stay software: kt-cli `main.rs:841`, `:861`, `gpushare.rs:44`, `showcase.rs:55`; what the
-audio-reactive generators hear (`listen::ensure`, `render_dialog.rs:866`, `main.rs:1554`); the peak pyramid (`util.rs:300`).
+These ask facts or sound and stay software: kt-cli's `media` facts (`open_indexed` and `FfmpegSource::open` at their own commands), `gpushare.rs`, `showcase.rs`; what the
+audio-reactive generators hear (`listen::ensure`); the peak pyramid (`util.rs`).
 
 This change routes them through one factory call, `factory::open_source(path, store, Purpose::{Preview, Export, Facts})`, so the device rule (D2) and the setting (D11) are decided in one place. The render window gains the index as a side effect (`MediaStore` of the cache folder, which its job already opens for
 `listen::ensure`): its sources stop rescanning a file the index holds.
@@ -190,7 +191,8 @@ decoder kind and the transfer time (`ExportStage` decode record's aux), so a slo
 
 A device decode error mid-stream (a driver faulting after the trial, D2 of hw-segment-decode) reopens
 that decoder on the processor at the same keyframe, marks the file processor-only for the process, and
-the picture is the same (D1). A render does not fail on it.
+the picture is the same (D1). A render does not fail on it, and its frames written equal its frames announced
+(render-result-check; t3306 and t3307 compare them).
 
 ## D7. The trace
 
@@ -202,13 +204,13 @@ the picture is the same (D1). A render does not fail on it.
   decode statistics; `kt-cli trace summary` prints "decode: N pictures on the device (transfer p50 X
   ms), M on the processor (why: …)".
 
-## D8. Rejected: the surface straight into wgpu
+## D8. Rejected for now: the surface straight into wgpu
 
 A VA surface exported as a dma-buf (`vaExportSurfaceHandle`) could be imported into Vulkan
 (`VK_EXT_external_memory_dma_buf`) and sampled by the composite without any host copy. Not now:
 
-- wgpu has no external-memory import; it would go through `create_texture_from_hal` with raw Vulkan
-  per platform (D3D11 shared handles on Windows), outside our one executor's discipline;
+- wgpu 30 does import a dma-buf (export-into-surface D2, whose `surface.rs` is the code this would need), but per platform (D3D11 shared
+  handles on Windows are another path);
 - the burst cache is the only truth about coverage (invariant 4) and holds host frames; a device-only
   frame would be a second cache with its own coverage and its own eviction;
 - the YUV → RGB conversion would move to the device and change the bytes against the stored frames'

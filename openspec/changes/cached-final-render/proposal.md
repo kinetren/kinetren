@@ -1,9 +1,7 @@
 # Proposal: cached-final-render
 
-> DESIGN (spec session). The owner answered Q1–Q3 (kkt-26.11.20 A16, lines 21–22): a draft render may take
-> the preview's prerender, the cached render is accepted, its index lives inside the video as SEI. An
-> executor builds it in stage 24 on the orchestrator's go. Tests reserved: t3322–t3335, t3870–t3876.
-> Revised on `orch-26-11-01` at `5e7a8ea9`.
+> IMPLEMENTATION-READY (spec-engine, revision 3, 2026-11-24, orch `229c694b`). The owner answered Q20–Q22 (kkt-26.11.20 A16,
+> lines 21–22). Tests: t3322–t3335, t3870–t3876, t4138–t4141.
 
 ## Why
 
@@ -21,21 +19,22 @@ Two claims, one mechanism:
   среди уже отрендеренных файлов искать как-то понимать по индексам каким-то что можем переиспользовать
   из них а что - нет."
 
-What the code holds today: `render_cache::durable_hash` keys a composite across processes (the plan's
-fields without content serials, the leaves' file identities, the build salt; the device is the store's
-folder); every prerender segment's manifest (`<id>.idx`) lists that key per frame (render-cache-codec
-D3, written for this purpose). The prerender's segments themselves are lossy H.264 at the PREVIEW's size
-and quality, so they cannot stand in an export at the project's size — and on a card the preview's frames
-may be in a run form the export never uses (video-plan "An export's frame runs the settled form").
+What the code holds today: the one key of a moment (`moment_key`) names a frame by its sources' identities, and the disk
+prerender keeps it per frame. It cannot serve X1: it holds the moment's PLACE (the timeline tick, the event's start and length, a reel's whole
+revision), so the fix he names (a crooked cut trimmed by two frames) would rename every frame of that event and every frame after it. And an
+export's frames have no names at all: its cache adopts no identity (found-defects 1068, which is a wrong picture by itself). The
+prerender's segments are lossy H.264 at the PREVIEW's size and quality: they cannot stand in an export.
 
 So the reusable thing is not the preview's tier: it is an earlier EXPORT.
 
 ## What Changes
 
-- **An export may write an index of what it holds, inside the video** (SEI, the owner's Q3 b): per frame
-  the durable key at the export's size and quality, per GOP a hash of its packets, and one fingerprint of everything that decides the
-  bitstream (codec, encoder and its version, profile, level, pixel format, size, rate, rate control,
-  bitrate/quality, GOP rule, colour tags, the device and the build).
+- **A picture key** names a frame by what its kernels are given, with no place in it: the sources' identities and times, the resolved chains,
+  masks and cameras; the timeline tick only where an effect reads time (a fact of the plugin, checked by a test). A shot that moved keeps its key.
+- **An export may write an index of what it holds, inside the video** (SEI, the owner's Q22 b): per frame the picture key at the export's size
+  and quality and what makes its pixels, per GOP a hash of its packets, and one fingerprint of everything that decides the bitstream (codec, encoder,
+  profile, level, pixel format, size, rate, rate control, bitrate/quality, GOP rule, colour tags, the device). Not the program's build: an update
+  that changed no pixel keeps its renders.
 - **A cached render looks up earlier renders' indexes** and, for every run of the new timeline whose keys
   equal a whole closed GOP of an earlier file with the same fingerprint, copies that GOP's packets
   (re-stamped, in decode order) instead of composing and encoding it; everything else is rendered.
@@ -44,6 +43,7 @@ So the reusable thing is not the preview's tier: it is an earlier EXPORT.
   timeline, so a small fix re-encodes only the GOPs it touches.
 - **Parameter sets in-band** (MKV, or MP4 with `avc3`/`hev1` sample entries), so a copied GOP carries
   its own SPS/PPS/VPS ("не мешает pps/sps/vps/etc перед сегментами класть").
+- **Every offline render names its sources** (found-defects 1068): two renders in one process never read each other's pictures.
 - **The render window shows what is already cached** and, as its own step, which files it reuses.
 - **A draft render** (the owner's Q1 b): an option that takes the frames the preview's prerender holds
   (preview size, lossy), composes the rest at the preview's quality, and writes a file marked as a draft.
@@ -57,18 +57,16 @@ So the reusable thing is not the preview's tier: it is an earlier EXPORT.
 ### Modified Capabilities
 - `export`: the render index, the cached render, the keyframe placement, the in-band parameter sets,
   the window's cached zone.
-- `video-plan`: the durable key's documented layout is the shared contract of the prerender and the
-  render index.
+- `video-plan`: the picture key; every cache of an offline render names its sources.
 
 ## Impact
 
-- kt-engine (`export.rs`, `export_pipeline.rs`: a copy path in the writer; `render_cache::durable_hash`
-  at the export's quality), kt-ffmpeg (`Muxer` packet input, in-band parameter sets, a packet reader of our
-  own outputs; the bitstream-filter functions as optional symbols), kt-app render window (a "Cached
-  render" step), kt-cli (`export --cached`, `trace export` reuse counts).
-- Invariant 11 is amended for a cached render only (Q2): its bytes are a function of the project AND the
-  indexed files it reuses. Invariant 9: in-process, no external binary. No project format change.
-- `docs/features/export/pipeline/smart-render-passthrough.md` (F-EXP-003) gains the owner's later word.
+- kt-engine: `moment_key.rs` (`picture_key`, `shape`), new `cached_render.rs` (GOP plan, matching, spans), `export_pipeline.rs` and `export.rs` (spans),
+  `adopt_sources` in every offline cache. kt-ffmpeg: new `nal.rs`, `gop.rs`; `muxer_impl.rs` (`open_encoder`, `copy_gop`, forced IDR); no new FFmpeg symbol. kt-plugin-api: two defaulted facts. kt-media:
+  `cache_folder::Tenant::Render`. kt-app render window (a "Cached render" section), kt-cli (`export --cached`, `--draft`, `strip-index`).
+- Invariant 11 is amended for a cached render only (Q21): its bytes are a function of the project AND the
+  files it reuses. Invariant 9: in-process, no external binary. No project format change.
+- F-EXP-003 gains the owner's later word.
 
 ## The owner's decisions (kkt-26.11.20, lines 21–22)
 

@@ -15,7 +15,9 @@ derives the device at the timeline moment the picture half reads. A stream devic
 pair on a track like any device: its sound half SHALL break the sound track's mix on the picture's
 schedule over the SAME track layout the picture's stream stage uses (`video-fx`, "A stream stage on a
 video track decodes the track's composite"), so a deleted keyframe, a bloom or a freeze falls at the same
-timeline moment in both; between the layout's segments the codec's predictors reset.
+timeline moment in both. A segment with nothing before it starts the codec afresh; between segments the sound is coded intact. A moved cut
+SHALL reach the live half without resetting its state (invariant 3), and SHALL forget the kept mix only where that segment or the next is
+heard.
 Why: kkt-26.11.18b line 29, "Дать звук отдельно"; CLAUDE.md — a simulated device that records
 picture and sound simulates both, driven by the same device state. Datamosh was kept out while its
 picture did nothing on a track (found-defects 820); track-stream-stage D6 gives it one.
@@ -44,3 +46,8 @@ picture did nothing on a track (found-defects 820); track-stream-stage D6 gives 
 - **WHEN** Datamosh is put on Video 1 linked to Audio 1, its `freeze` is edited, then it is removed
 - **THEN** Audio 1's chain holds `datamosh_sound` with the edit mirrored, and removal takes it, each in one undo step
 - **TEST** t3392 (`src/libs/kt-model/tests/sim_pairs.rs`)
+
+#### Scenario: A moved cut reaches the sound and forgets only its place
+- **WHEN** a track's Datamosh plays two minutes of twenty segments whose mix is kept, and the cut of segment ten is moved
+- **THEN** the half's state is not reset, the kept mix of segments one to nine and twelve on is handed out again, and what is rendered live equals a fresh render
+- **TEST** t4137 (`src/libs/kt-engine/tests/sim_pairs.rs`)
