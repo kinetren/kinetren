@@ -1703,7 +1703,7 @@ selected event (a solid colour on a video track, a tone on an audio track), at t
 With nothing selected it SHALL create a solid colour on video track 1. Its window SHALL open, and the
 kind SHALL be changed in the window's gallery. A kind change, from the gallery or from the bin card,
 SHALL keep the generator's sound pair in step in the same history step: a kind that sounds beside its
-picture SHALL have its linked sound event on audio track 1, and a kind with no sound SHALL have none.
+picture SHALL have its linked sound event on audio track 1, and a kind with no sound SHALL have none. A value edit that switches the generator's sound on or off (SMPTE's tone, Sync flash's beep) SHALL do the same in its own history step (found-defects 1000).
 Why: the owner, kkt-26.11.20 line 4 (A1): "Один пункт, по дорожке (Recommended)".
 
 #### Scenario: Edit and the bin by the selected track
@@ -1717,6 +1717,12 @@ Why: the owner, kkt-26.11.20 line 4 (A1): "Один пункт, по дорож�
 - **THEN** the flash has its beep event on A1, linked, under it; Safe areas leave the picture event alone; one Ctrl+Z gives both back; the card's change takes the beep again
 - **PATH** Edit → "Create a generator…" → Kind → Sync flash → a beep event on A1 under the flash → Kind → Safe areas → the beep is gone → Ctrl+Z → the flash and its beep → right click the bin card → Change kind → Signal check → Safe areas → the beep is gone
 - **TEST** t3713 (`src/apps/kt-app/src/gen_audio_tests.rs`), t3702 (`src/apps/kt-app/src/gen_audio_tests.rs`), live scenario `src/scripts/live/gen_technical.py`
+
+#### Scenario: Ticking a generator's tone brings its sound event
+- **WHEN** SMPTE bars are made without their tone, then "Tone" is ticked in their window, then unticked, then Ctrl+Z
+- **THEN** the bars stand alone; the tick brings a sound event on A1 under them, linked; the untick takes it; one Ctrl+Z gives it back
+- **PATH** Edit → "Create a generator…" → Kind → SMPTE bars → tick "Tone" → a sound event appears on A1 under the bars → untick → it goes → Ctrl+Z → it is back
+- **TEST** t3720 (`src/apps/kt-app/src/gen_audio_tests.rs`)
 
 ### Requirement: A form uses the width it is given
 Every form of parameter rows — effect, morpher, transition, camera, track, generator and title forms,

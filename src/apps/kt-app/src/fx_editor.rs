@@ -1420,9 +1420,20 @@ impl KtApp {
             // Generator values: the command ONLY on a really changed value (item 200) — otherwise the
             // revision would grow on every frame of the gesture.
             if let Some(kind) = e.r#gen
-                && self.model.clip(e.clip).is_some_and(|c| c.r#gen.as_ref() != Some(&kind))
+                && let Some(c) = self.model.clip(e.clip).filter(|c| c.r#gen.as_ref() != Some(&kind))
             {
-                self.apply_coalesced(Command::SetClipGen { id: e.clip, kind: Some(kind) }, gesture);
+                // a value that switches the generator's sound on or off (SMPTE's tone, Sync flash's
+                // beep) brings or takes its sound event in the same step (found-defects 1000)
+                let sounds = |k: &kt_model::GeneratorKind| kt_media::generator::GeneratorSource::info_for(k).has_audio;
+                let (media, was) = (c.media, c.r#gen.as_ref().is_some_and(sounds));
+                if sounds(&kind) != was {
+                    let set = Command::SetClipGen { id: e.clip, kind: Some(kind.clone()) };
+                    let (remove, add) = self.gen_pair_cmds(media, sounds(&kind));
+                    let cmds: Vec<Command> = remove.into_iter().chain(std::iter::once(set)).chain(add).collect();
+                    self.apply_batch(cmds);
+                } else {
+                    self.apply_coalesced(Command::SetClipGen { id: e.clip, kind: Some(kind) }, gesture);
+                }
             }
             if let Some(mut auto) = e.gen_auto {
                 for c in auto.iter_mut() {

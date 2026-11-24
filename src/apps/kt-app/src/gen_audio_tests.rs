@@ -626,3 +626,36 @@ fn t3718_the_reactive_kinds_are_created_and_captioned() {
     }
     crate::i18n::set_lang(crate::i18n::Lang::Ru);
 }
+
+/// Test 3720 (gen-sound-pair, found-defects 1000, `v26.10` G7): SMPTE bars made without their tone
+/// get the tone's sound event when the Tone box is ticked in their window — on audio track 1 under the
+/// bars, linked, one history step; unticked, the sound event goes; Ctrl+Z gives it back.
+/// - **PATH** Edit → "Create a generator…" → Kind → SMPTE bars (no sound event) → tick "Tone" → a sound
+///   event appears on A1 under the bars → untick → it goes → Ctrl+Z → it is back
+#[test]
+fn t3720_ticking_a_generators_tone_brings_its_sound_event() {
+    crate::plugins::install();
+    let mut h = crate::layout_tests::harness();
+    let before = h.state().model.project().clips.len();
+    create_from_edit(&mut h, "smpte");
+    let made = new_clips(&h, before);
+    assert_eq!(made.len(), 1, "SMPTE without its tone is a picture alone: {made:?}");
+    let tone = || tr(k::genp::TONE);
+    let click_tone = |h: &mut Harness<'_, KtApp>| {
+        h.get_by_label(tone()).click();
+        for _ in 0..3 {
+            h.step();
+        }
+    };
+    click_tone(&mut h);
+    let now = new_clips(&h, before);
+    assert_eq!(now.len(), 2, "the ticked tone brings its sound event: {now:?}");
+    let (v, a) = (now.iter().find(|c| c.kind == ClipKind::Video).unwrap(), now.iter().find(|c| c.kind == ClipKind::Audio).unwrap());
+    assert!(v.link_group.is_some() && v.link_group == a.link_group, "linked to the bars");
+    assert_eq!((a.lane, a.start, a.duration, a.media), (0, v.start, v.duration, v.media), "under the bars on A1");
+    click_tone(&mut h);
+    assert_eq!(new_clips(&h, before).len(), 1, "unticked: the sound event goes");
+    h.state_mut().undo();
+    h.step();
+    assert_eq!(new_clips(&h, before).len(), 2, "one Ctrl+Z gives it back");
+}
