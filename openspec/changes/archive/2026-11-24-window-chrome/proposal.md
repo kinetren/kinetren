@@ -1,6 +1,6 @@
 # Proposal: window-chrome
 
-> DESIGN ONLY (spec session, 2026-11-20), revision 2 (2026-11-22): the owner's B9 drops the drag by the preview. Registry `v26.10-index.md` U10, U11, T5, T7, T8, T9, W1, W3 (round R.76).
+> Built 2026-11-24 (features-slow); revision 2 (2026-11-22): the owner's B9 drops the drag by the preview. Registry `v26.10-index.md` U10, U11, T5, T7, T8, T9, W1, W3 (round R.76).
 > Tests reserved: t3935–t3942.
 
 ## Why

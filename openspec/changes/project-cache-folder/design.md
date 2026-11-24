@@ -89,8 +89,9 @@ change hosts it. Its kinds lie side by side in the cache folder:
 - `media/<content id>/copy-<quality>.mkv`: heavy sources' copies.
 
 **The keys.**
-- Frames are keyed by `render_cache::durable_hash`. It covers the plan's fields without content serials,
-  `Leaves::digest` of the files' identities and the generators' values. A frame's key covers its whole plan.
+- Frames are keyed by `kt_engine::moment_key`, the one key of a moment in memory and on disk (change
+  `durable-moment-key`, 2026-11-24, built before section 3: it replaces `durable_hash`, `Leaves` and `FileIds`, takes
+  each source's identity from the cache and never asks the disk). A frame's key covers its whole plan.
 - **No stage results** (the owner's D1, kkt-26.11.22 line 4: "делай кеш имменно финального превью а не на
   каком-то конкретном этапе цепочки fx"). The 2026-11-22 layout had a `layers/` kind (a layer's picture after
   a heavy node, a track stage's or a reel's output) keyed by the sub-plan; it is withdrawn. An edit anywhere
@@ -296,6 +297,37 @@ a moment whose final frame is held needs none, any other recomputes it from the 
 6. The trace and `kt-cli cache` (t3841); Preferences → "Persistent cache" (t3842); the live scenario
    (planned live scenario `cache_folder`) and the idle check: the program at rest after cyclic writing
    costs nothing (t3843).
+
+## D10. What the implementation settled (2026-11-24)
+
+- **`rusqlite` stays in kt-media, for the import alone** (`old_sidecar.rs`). D5's import reads the former
+  SQLite file, so the dependency cannot leave while the import stands; nothing else of the program uses it.
+  The task's line "`rusqlite` out" waits for the import's removal.
+- **`COMPOSITE_PATH_VERSION` is computed, not moved by hand** (`kt-engine/build.rs` over
+  `composite-path.txt`, comments and blank lines left out). A constant two branches both move from 5 to 6
+  names two codes by one number after the merge; a hash cannot. t3808 holds the list.
+- **A plugin's version is the hash of its crate's source** (`kt-plugins-builtin/build.rs`), for the same
+  reason; the WGSL text is hashed beside it. The granularity is the family crate.
+- **The salt lies beside the key** (`DiskKey`): the key names what the picture is of, the salt what makes
+  it. So a stale entry can be MET (the key is there, the salt is another) and removed, with no sweep.
+- **The durable hash takes the rows as the curves gave them**, so a change of the curves' arithmetic makes
+  another picture another key.
+- **Reel previews:** an entry is named by its whole key, and each project of the folder names its own
+  version of each reel under `reels/refs/`. A reel's id is per project: keyed by the id alone, one project's
+  prune took the other's previews.
+- **A thumbnail strip is appended**, a record a thumb with its own check, not rewritten: a filmstrip of 2000
+  thumbs rewrote its file 2000 times.
+- **One read is counted ahead in the value** (`reads + 1`): a result just written would be worth nothing until
+  its first lap, and the next write would take it.
+- **The last-minute stamp protects every tenant**, not the frames alone.
+- **A locked sidecar is left without counting a try**: deleting it under its holder is what t872's SIGBUS was
+  made of. Garbage goes at once, another error after three tries.
+- **The disk takes a segment's bytes before its commit**, so the prerender asks for room ahead of each frame.
+- **Where a folder lies and why is said in its row of Preferences**, not in Diagnostics: that window stands at
+  its height limit, and one more line made it grow by itself (t918).
+- **The folder carries a `.gitignore` of `*`**: a `.kt` project is made for git, the old sidecar was three
+  names a person had to ignore by hand.
+- **A project file inside the user's data folder** (an unnamed recovery) caches as an untitled one.
 
 ## Risks
 

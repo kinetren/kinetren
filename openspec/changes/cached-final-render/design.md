@@ -7,6 +7,10 @@
   `src_rev`, each file's `(media id, xxh3(path, size, mtime ns))`, the project's files for a stream stage) —
   plus the program build salt (with the FFmpeg version). The device is the store's folder, not the key.
   The plan's `out_w/out_h` and the quality are in it, so the same moment at the export's size has its own key.
+- After `durable-moment-key` (2026-11-24) the key is `kt_engine::moment_key` and there are no leaves: a frame is
+  named by its source's identity (a file's name, size and mtime as opened), held by the CACHE. An export's private
+  cache has no identities, so the cached render adopts them (`BurstCache::adopt` with each source's `identity()`)
+  before it asks a key; with none the key falls back to serials and matches nothing.
 - render-cache-codec D3 wrote that key per frame into each segment's manifest "so the cached final render
   (F-EXP-003) can match it later"; the preview's segments are lossy, at the preview's size: they are not
   the final render's index.

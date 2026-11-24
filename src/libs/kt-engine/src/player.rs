@@ -709,8 +709,8 @@ impl Player {
         self.wake.clone()
     }
 
-    /// The disk tier of preview composites (render-cache-disk): `Some` — its root, the build salt, the
-    /// project's folder and the cap; `None` — off (the default: tests, a CLI without the flag).
+    /// The disk tier of preview composites (render-cache-disk): `Some` — the project's cache folder and
+    /// what makes its pixels; `None` — off (the default: tests, a CLI without the flag).
     pub fn set_render_cache(&self, cfg: Option<crate::render_cache::Config>) {
         self.render_cache.set_config(cfg);
     }
@@ -737,7 +737,7 @@ impl Player {
         let files = self.render_cache.files(&built.project, (built.seq, versions.1), false);
         let t = built.video.grid.align_floor(t);
         let (plan, leaves) = built.video.probe_durable(&self.cache, t, parts.quality());
-        store.get(crate::render_cache::disk_key(&plan, &leaves, &files))
+        store.get(self.render_cache.key(&plan, &leaves, &files))
     }
 
     /// What the preview already holds for the moment `t` of the current version (poster-from-kept):
@@ -1778,7 +1778,7 @@ impl PreviewParts {
         let store = self.rc.store(display.info())?;
         let files = self.rc.files(&built.project, (built.seq, self.versions().1), false);
         let (plan, leaves) = built.video.probe_durable(&self.cache, t, q);
-        store.get(crate::render_cache::disk_key(&plan, &leaves, &files))
+        store.get(self.rc.key(&plan, &leaves, &files))
     }
 
     pub(crate) fn restore_from_disk(&self, display: &Arc<dyn VideoGpuExec>, video: &VideoRenderer, t: Tick, q: Quality) -> Option<u64> {
@@ -1792,7 +1792,7 @@ impl PreviewParts {
         let files = self.rc.files(&built.project, (built.seq, versions.1), false);
         let (plan, leaves) = video.probe_durable(&self.cache, t, q);
         let present = display.present_key(&plan)?;
-        let dk = crate::render_cache::disk_key(&plan, &leaves, &files);
+        let dk = self.rc.key(&plan, &leaves, &files);
         let key = crate::render_cache::restored_key(present, dk);
         let (w, h) = (plan.out_w, plan.out_h);
         drop(plan);
@@ -1814,7 +1814,7 @@ impl PreviewParts {
             span.cancel();
             return None;
         }
-        span.aux(k::RESTORE).a(t.0 as u64).b(pic.rgba.len() as u64).c(dk);
+        span.aux(k::RESTORE).a(t.0 as u64).b(pic.rgba.len() as u64).c(dk.id());
         drop(span);
         self.rc.restores.fetch_add(1, Ordering::Relaxed);
         self.rc.note_on_disk(t.0, dk, versions);

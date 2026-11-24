@@ -486,7 +486,7 @@ Why: a thumbnail per file is impossible (a reel has no file), but its content is
 
 #### Scenario: Frames survive to disk without peaks, cancellation is not a failure
 - **WHEN** the preview task is cancelled right after the frame stage (playback started); then pause; then the project is closed and opened again; separately — the project in the owner's file form (two reels stacked over each other with overrides, a missing still) is opened twice
-- **THEN** after the cancellation the frames are already in the sidecar (the band row exists, no peaks); at pause the request is placed again and the peaks are appended; the second opening — zero renders, frames and peaks from disk; on the owner's project the second opening — zero renders (on the previous code, a render at every opening); the key is the same for both openings
+- **THEN** after the cancellation the frames are already in the cache folder (the band row exists, no peaks); at pause the request is placed again and the peaks are appended; the second opening — zero renders, frames and peaks from disk; on the owner's project the second opening — zero renders (on the previous code, a render at every opening); the key is the same for both openings
 - **TEST** t795 (`src/apps/kt-app/src/layout_tests.rs`), t795b (`src/libs/kt-media/tests/index_db.rs`)
 
 ### Requirement: A reel is a bin object; dropping a project asks; a foreign project — as a composition
@@ -644,7 +644,7 @@ Why: otherwise the player takes the frame for ready and never asks again.
 ### Requirement: A composition's previews settle
 A release of a reel that an event of the current view shows SHALL NOT be evicted from the preview
 service: `MAX_REELS_READY` bounds only what no event shows. A key that needs no job answers
-`wants` with no copy of the document. Each set of overrides SHALL have its own row in the sidecar
+`wants` with no copy of the document. Each set of overrides SHALL have its own entry in the cache folder
 (`reel_row`); an instance with no overrides keeps the reel's row.
 Why: with more than six releases on the timeline the cap evicted the oldest, the frame asked for it,
 its job evicted the next, and so on for as long as the program stood on a pause: 2 to 4 jobs and up to
@@ -657,7 +657,7 @@ row per reel let the releases overwrite each other, so all but the last rendered
 - **THEN** all ten stay ready and none asks for a job; the cap still holds for keys nothing shows
 - **TEST** t1830 (`src/apps/kt-app/src/idle_tests.rs`)
 
-#### Scenario: Two releases in the sidecar
+#### Scenario: Two releases in the cache folder
 - **WHEN** two releases of one reel are written
 - **THEN** each reads back, an instance with no overrides keeps the reel's row, and a row nothing uses is pruned
 - **TEST** t1831 (`src/apps/kt-app/src/idle_tests.rs`)
@@ -683,7 +683,7 @@ The revision of a reel (`content_hash`) SHALL be computed once per reel within a
 (`kt_engine::revisions_scope`, which the audio and video builds and `gen_sources` open), and a
 nested reel SHALL enter its parent's revision by its own revision, computed once per reel, not by
 its text fed again per placement. A reel without nested reels keeps its former revision bit for
-bit; a reel holding reels gets a new one once (its sidecar previews are rendered again once).
+bit; a reel holding reels gets a new one once (its kept previews are rendered again once).
 Why: every placement hashed the Debug text of its whole reel — twice in the audio build, four times
 in the video one and once in the timeline's preview keys — and every level of nesting multiplied
 it: placements × reel events per edit.

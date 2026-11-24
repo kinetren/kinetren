@@ -114,12 +114,39 @@ fn window_button(ui: &mut egui::Ui, kind: u8, maximized: bool) -> egui::Response
 /// Reel name for the crumb: a long one is truncated, not breaking the row
 /// (checklist rule 7; one truncation helper for all places).
 fn crumb_label(name: &str) -> String {
-    const MAX: usize = 18;
-    if name.chars().count() <= MAX {
+    cut_name(name, 18)
+}
+
+/// A name of at most `max` characters, the rest an ellipsis.
+pub(crate) fn cut_name(name: &str, max: usize) -> String {
+    if name.chars().count() <= max {
         return name.to_string();
     }
-    let head: String = name.chars().take(MAX - 1).collect();
+    let head: String = name.chars().take(max - 1).collect();
     format!("{head}…")
+}
+
+/// The cut edges of a slid toolbar row fade into its ground: there is more on that side.
+fn tb_fade(ui: &egui::Ui, view: egui::Rect, off: f32, most: f32) {
+    const FADE: f32 = 12.0;
+    let ground = crate::theme::WINDOW;
+    let clear = egui::Color32::from_rgba_unmultiplied(ground.r(), ground.g(), ground.b(), 0);
+    let mut mesh = egui::Mesh::default();
+    let mut edge = |x: f32, inward: f32| {
+        let i = mesh.vertices.len() as u32;
+        for (px, col) in [(x, ground), (x + inward, clear)] {
+            mesh.colored_vertex(egui::pos2(px, view.top()), col);
+            mesh.colored_vertex(egui::pos2(px, view.bottom()), col);
+        }
+        mesh.indices.extend_from_slice(&[i, i + 1, i + 2, i + 1, i + 2, i + 3]);
+    };
+    if off > 0.0 {
+        edge(view.left(), FADE);
+    }
+    if off < most {
+        edge(view.right(), -FADE);
+    }
+    ui.painter().add(egui::Shape::mesh(mesh));
 }
 
 impl KtApp {
@@ -176,11 +203,9 @@ impl KtApp {
             egui::pos2(menu_end + 2.0, strip.bottom() + 2.0),
         ));
         ui.advance_cursor_after_rect(strip);
-        // project name + version — over everything, starting past the menu
-        let fg = ui.ctx().layer_painter(egui::LayerId::new(
-            egui::Order::Foreground,
-            egui::Id::new("project-title"),
-        ));
+        // project name + version — over the panels, under every window (`v26.10` T9), starting
+        // past the menu
+        let fg = ui.ctx().layer_painter(crate::app::under_windows());
         // a newer release (update-check): the translated word after the version, in the
         // bell's warning colour, on the row that is already there (rule 13); hovering it says
         // which version is out and where — in the status bar, not a window (rule 10)
@@ -198,6 +223,7 @@ impl KtApp {
             egui::FontId::proportional(11.5),
             egui::Color32::from_gray(125),
         );
+        crate::widgets::field_probe::note("title.project", title_at);
         let mut title_end = title_at.right();
         if base.len() < self.last_title.len() {
             let word_at = fg.text(
@@ -214,7 +240,7 @@ impl KtApp {
             crate::widgets::field_probe::note("title.outdated", zone);
             let ctx = ui.ctx();
             let over = ctx.pointer_hover_pos().is_some_and(|p| {
-                zone.contains(p) && ctx.layer_id_at(p).is_none_or(|l| l.order < egui::Order::Foreground)
+                zone.contains(p) && ctx.layer_id_at(p).is_none_or(|l| l.order < egui::Order::Middle)
             });
             if over && let Some(new) = self.update.as_ref().and_then(|u| u.outdated()) {
                 self.hover_hint = Some(crate::update_check::title_hint(&new));
@@ -235,11 +261,11 @@ impl KtApp {
         // and `ui.interact` clips a click area to the column: once the menu row grew a fourth
         // item (Help), the project name moved past the column's edge and stopped answering
         // (live `nestdead`). The clicks live where the text is drawn — on the title's own layer,
-        // with the screen as the clip; no new layer appears (`no_teaching_layer_over_the_ui`).
+        // with the screen as the clip.
         let screen = ui.ctx().content_rect();
         let mut over = ui.new_child(
             egui::UiBuilder::new()
-                .layer_id(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("project-title")))
+                .layer_id(crate::app::under_windows())
                 .max_rect(screen),
         );
         over.set_clip_rect(screen);
@@ -335,7 +361,7 @@ impl KtApp {
         let maxi = window_button(&mut row, 1, max);
         self.no_resize_rects.push(maxi.rect.expand(2.0));
         if self.hint(maxi, h).clicked() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
+            self.toggle_maximized(&ctx);
         }
         let mini = window_button(&mut row, 0, false);
         let mini_left = mini.rect.left();
@@ -357,16 +383,50 @@ impl KtApp {
     pub(crate) fn window_drag_from(&mut self, bg: &egui::Response, ctx: &egui::Context) {
         if bg.drag_started() {
             if ctx.input(|i| i.viewport().maximized.unwrap_or(false)) {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+                self.restore_window(ctx, bg.interact_pointer_pos());
                 self.pending_unmax_drag = true;
             } else {
                 ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 KtApp::release_pointer_after_wm_grab(ctx);
             }
         }
-        if crate::clicks::double(&bg) {
-            let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
+        if crate::clicks::double(bg) {
+            self.toggle_maximized(ctx);
+        }
+    }
+
+    fn toggle_maximized(&mut self, ctx: &egui::Context) {
+        if ctx.input(|i| i.viewport().maximized.unwrap_or(false)) {
+            self.restore_window(ctx, None);
+        } else {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+        }
+    }
+
+    /// Back from maximized. A window that STARTED maximized has no normal size in the window
+    /// manager (eframe saves the size it was closed with — the maximized one — so "restored" it kept
+    /// the whole screen, `v26.10` T5): it is given its remembered size, or 80 % of the screen. A drag
+    /// puts it under the pointer.
+    fn restore_window(&mut self, ctx: &egui::Context, grab: Option<egui::Pos2>) {
+        use egui::ViewportCommand as V;
+        ctx.send_viewport_cmd(V::Maximized(false));
+        let (monitor, outer, now) = ctx.input(|i| (i.viewport().monitor_size, i.viewport().outer_rect, i.content_rect()));
+        let remembered = crate::window_frame::normal_size(ctx);
+        let size = match monitor {
+            Some(m) => crate::window_frame::restored_size(remembered, m),
+            None => match remembered {
+                Some(s) => s,
+                None => return,
+            },
+        };
+        if !self.window_was_normal {
+            ctx.send_viewport_cmd(V::InnerSize(size));
+        }
+        if let (Some(p), Some(outer)) = (grab, outer) {
+            let across = (p.x / now.width().max(1.0)).clamp(0.0, 1.0);
+            ctx.send_viewport_cmd(V::OuterPosition(outer.min + egui::vec2(p.x - across * size.x, 0.0)));
+        } else if let (false, Some(m)) = (self.window_was_normal, monitor) {
+            ctx.send_viewport_cmd(V::OuterPosition(((m - size) * 0.5).to_pos2()));
         }
     }
 
@@ -649,14 +709,8 @@ impl KtApp {
         // borderless (item 22 round 6): window drag from the empty zones of the row,
         // double-click = maximise; strictly within the frame of drag_started
         let bg = ui.interact(strip, ui.id().with("titlebar-drag"), egui::Sense::click_and_drag());
-        if bg.drag_started() {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-            KtApp::release_pointer_after_wm_grab(ui.ctx());
-        }
-        if crate::clicks::double(&bg) {
-            let max = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
-        }
+        // (the strip had a drag of its own that moved a maximized window without restoring it, T5)
+        self.window_drag_from(&bg, ui.ctx());
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(strip.shrink2(egui::vec2(8.0, 2.0)))
@@ -679,13 +733,54 @@ impl KtApp {
         } else {
             (TB_KEEP..TB_GROUPS).rev().find(|k| need(0, *k, &w) + more_w <= avail).unwrap_or(TB_KEEP)
         };
-        for g in 0..keep {
+        // The wheel moves a row that does not fit sideways (`v26.10` U10): the transport stays, the
+        // groups after it slide under it, and the menu holds what is not wholly in view.
+        let slide = need(TB_KEEP, TB_GROUPS, &w) - (avail - need(0, TB_KEEP, &w) - more_w);
+        if keep == TB_GROUPS {
+            self.tb_scroll = 0.0;
+        } else if ui.rect_contains_pointer(strip) {
+            let d = ui.input_mut(|i| std::mem::take(&mut i.smooth_scroll_delta));
+            self.tb_scroll -= d.x + d.y;
+        }
+        self.tb_scroll = self.tb_scroll.clamp(0.0, slide.max(0.0));
+        let mut shown = [false; TB_GROUPS];
+        let in_row = if self.tb_scroll > 0.0 { TB_KEEP } else { keep };
+        for (g, shown) in shown.iter_mut().enumerate().take(in_row) {
             let x0 = ui.cursor().left();
             if g > 0 {
                 ui.separator();
             }
             self.tb_group(ui, g);
             self.tb_group_w[g] = ui.cursor().left() - x0;
+            *shown = true;
+        }
+        if self.tb_scroll > 0.0 {
+            let mut view = ui.max_rect();
+            view.min.x = ui.cursor().left();
+            view.max.x = (ui.max_rect().right() - more_w).max(view.min.x);
+            let row = egui::Rect::from_min_size(
+                egui::pos2(view.left() - self.tb_scroll, view.top()),
+                egui::vec2(need(TB_KEEP, TB_GROUPS, &w), view.height()),
+            );
+            let mut slid = ui.new_child(
+                egui::UiBuilder::new().max_rect(row).layout(egui::Layout::left_to_right(egui::Align::Center)),
+            );
+            slid.set_clip_rect(view.intersect(ui.clip_rect()));
+            let mut x = row.left();
+            for g in TB_KEEP..TB_GROUPS {
+                let end = x + w[g];
+                if end <= view.left() || x >= view.right() {
+                    slid.add_space(w[g]);
+                } else {
+                    slid.separator();
+                    self.tb_group(&mut slid, g);
+                    shown[g] = x >= view.left() - 0.5 && end <= view.right() + gap;
+                }
+                x = end;
+            }
+            tb_fade(ui, view, self.tb_scroll, slide);
+            crate::widgets::field_probe::note("tb.slid", view);
+            ui.advance_cursor_after_rect(view);
         }
         if keep < TB_GROUPS {
             ui.separator();
@@ -694,8 +789,8 @@ impl KtApp {
             )
             .ui(ui, |ui| {
                 ui.horizontal(|ui| {
-                    for g in keep..TB_GROUPS {
-                        if g > keep {
+                    for (n, g) in (0..TB_GROUPS).filter(|g| !shown[*g]).enumerate() {
+                        if n > 0 {
                             ui.separator();
                         }
                         self.tb_group(ui, g);

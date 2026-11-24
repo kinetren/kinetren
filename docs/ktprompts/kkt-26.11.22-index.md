@@ -13,3 +13,4 @@ as in [`v26.10-index.md`](v26.10-index.md).
 | D4 | 7 | OpenFX frames through shared memory (RAM shm or GPU shared memory), no copy per frame | no: feature, change `openfx-host` (Q1 a; Q2 own process with zero-copy shared memory) | spec-features | 25 |
 | D5 | 8 | ARM: Linux aarch64 first | no: feature, change `arm-build` (Q1 a) | executor | 25 |
 | D6 | 9 | the Datamosh history is not stored on disk: final frames only, the history recomputed from the cut on a miss (replaces A14's "build now" for the history half) | no: feature, change `durable-history-and-mix` drops the disk history (the kept mix stays as decided) | spec-engine | 23 |
+| D7 | 10 | decode sizes of R.46/R.62 stay; what he expects is the render cache: a held stretch is decoded as video and shown, nothing else | no: feature, changes `project-cache-folder` and `persistent-cache` (executor mosh-sharp, next) | executor mosh-sharp | 24 |

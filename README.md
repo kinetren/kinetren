@@ -1,7 +1,7 @@
 # <img src="src/packaging/com.kinetren.Kinetren.svg" width="40" height="40" align="top" alt=""> kinetren
 
 **A free, source-available video editor for Linux and Windows.**
-[kinetren.com](https://kinetren.com) · [Discord](https://discord.gg/w8enAWJSc) · [Download](https://github.com/kinetren/kinetren/releases)
+[kinetren.com](https://kinetren.com) · [Discord](https://discord.gg/gXdzZQYY4e) · [Download](https://github.com/kinetren/kinetren/releases)
 
 [![License: kinetren Non-Commercial 1.0](https://img.shields.io/badge/license-kinetren%20Non--Commercial%201.0-blue)](LICENSE)
 ![Platform: Linux and Windows x86-64](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20x86--64-informational)
@@ -9,7 +9,7 @@
 [![Latest release](https://img.shields.io/github/v/release/kinetren/kinetren?include_prereleases&label=release)](https://github.com/kinetren/kinetren/releases)
 [![Last commit](https://img.shields.io/github/last-commit/kinetren/kinetren)](https://github.com/kinetren/kinetren/commits)
 [![GitHub stars](https://img.shields.io/github/stars/kinetren/kinetren?style=flat)](https://github.com/kinetren/kinetren/stargazers)
-[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/w8enAWJSc)
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/gXdzZQYY4e)
 
 kinetren is free to download, use, study, modify and share. It gives you a multi-track
 timeline with real-time preview, nested reels, 33 transitions, 29 video and 18 audio
@@ -248,7 +248,7 @@ says so once, in the bell.
 
 ## Community
 
-Questions, ideas and bug reports: join the [Discord server](https://discord.gg/w8enAWJSc)
+Questions, ideas and bug reports: join the [Discord server](https://discord.gg/gXdzZQYY4e)
 or visit [kinetren.com](https://kinetren.com).
 
 ## License

@@ -123,6 +123,9 @@ event layer's do (`video.rs`), so no memo or kept composite returns another mosh
 **The probe key** (`show_kept`, structured-telemetry). The probe plan keys the track stage by
 `StreamKernel::key` over the `TrackStream` layout without running it. `key_only` gets a track twin.
 
+**After `durable-moment-key`** there are no leaves: the track stream's `ident` mixes the identities of the segment's
+sources (its D3), and the paragraph below is what the key must then cover.
+
 **The disk tier and the durable history.** `probe_durable` notes, as leaves of a moment whose layer is
 a track stream stage, every file the segment's history reads from `first` to the moment: the files of
 the events active over that range, found by the stage's `LayerIndex`. (The history itself is not stored on

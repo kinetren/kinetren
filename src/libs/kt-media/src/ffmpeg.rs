@@ -81,7 +81,7 @@ impl FfmpegSource {
     /// CACHE error: we silently fall back to the ordinary open with a scan.
     pub fn open_indexed(
         path: &str,
-        db: Option<&mut crate::index::MediaIndexDb>,
+        db: Option<&mut crate::index::MediaStore>,
     ) -> Result<FfmpegSource, MediaError> {
         let Some(db) = db else { return Self::open(path) };
         let Ok((mid, status)) = db.ensure_media(std::path::Path::new(path)) else {

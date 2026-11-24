@@ -522,16 +522,16 @@ fn t2884_a_forward_sweep_keeps_one_decoder() {
     assert_eq!(src.decoders(), 2, "a key behind the only decoder opens a second");
 }
 
-// ---- Packet index in the sidecar DB -------------------------------------------
+// ---- Packet index in the cache folder -------------------------------------------
 
 /// Test 34: persistence of the packet index.
 /// A second opening of the same file does NOT scan it again (the index comes
-/// from the DB), the index is byte-for-byte equal to a fresh scan and functionally working
+/// from the cache folder), the index is byte-for-byte equal to a fresh scan and functionally working
 /// (keyframe_before, sample-accurate audio). A change of the file invalidates the
 /// index — a full scan again.
 #[test]
 fn t34_packet_index_persisted_and_reused() {
-    use kt_media::index::MediaIndexDb;
+    use kt_media::index::MediaStore;
 
     // a copy of the fixture — the test changes the file at the invalidation step
     let dir = std::env::temp_dir().join(format!("kt_t34_{}", std::process::id()));
@@ -539,9 +539,9 @@ fn t34_packet_index_persisted_and_reused() {
     let media = dir.join("muxed_av.mp4");
     std::fs::copy(fixture("muxed_av.mp4"), &media).unwrap();
     let media_s = media.to_string_lossy().to_string();
-    let db_path = dir.join("t34.ktindex.db");
-    let _ = std::fs::remove_file(&db_path);
-    let mut db = MediaIndexDb::open(&db_path).unwrap();
+    let db_path = dir.join("kinetren-cache");
+    let _ = std::fs::remove_dir_all(&db_path);
+    let mut db = MediaStore::open(&db_path).unwrap();
 
     // 1st opening: scan + persist
     let s1 = FfmpegSource::open_indexed(&media_s, Some(&mut db)).unwrap();

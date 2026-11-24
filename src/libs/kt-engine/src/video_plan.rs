@@ -310,6 +310,9 @@ pub struct GpuBackendInfo {
     /// A software rasterizer (llvmpipe/lavapipe) is correct and counts as “GPU
     /// present” (R.29); the flag is for diagnostics only.
     pub software: bool,
+    /// The driver and its version: video is byte-equal on one device and one driver only
+    /// (invariant 11), so what is kept on disk names it.
+    pub driver: String,
 }
 
 /// The plan of one frame through a chain, with no timeline behind it (the effect thumbnails).

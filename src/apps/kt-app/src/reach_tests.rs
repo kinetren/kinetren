@@ -4658,9 +4658,9 @@ fn t819_the_import_door_takes_legacy_old_and_foreign_and_yields_a_project() {
     use egui_kittest::kittest::Queryable;
     let dir = r70_dir("t819");
 
-    // three entrances; the legacy fixture is COPIED: an import opens the sidecar
-    // `<source>.ktindex.db` next to the source, and in place it rewrote the committed
-    // fixtures/demo.ktindex.db* (tests do not write into the tree)
+    // three entrances; the legacy fixture is COPIED: an import opens the cache
+    // folder next to the source, and in place it would write into the committed fixtures
+    // (tests do not write into the tree)
     let legacy = dir.join("demo.ktproj");
     std::fs::write(&legacy, include_str!("../../../fixtures/demo.ktproj")).unwrap();
     let old = dir.join("old_v5.otio");
@@ -5268,7 +5268,7 @@ fn press_esc(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>) {
 }
 
 /// A click at a screen point (press and release in one frame batch).
-fn click_at(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>, pos: egui::Pos2) {
+pub(crate) fn click_at(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>, pos: egui::Pos2) {
     h.event(egui::Event::PointerMoved(pos));
     h.event(egui::Event::PointerButton {
         pos,
@@ -6808,10 +6808,12 @@ fn no_teaching_layer_over_the_ui() {
 
     // (2) the closed list of layers above the window layer, by the sources
     const LAYERS: &[&str] = &[
-        "ambient-overlay",
+        // a LIVE status line: the answer to the pointer or an action, which may be in the window
+        // covering the strip; the resting line is under the windows (window-chrome D1)
         "status-hint",
-        "project-title",
+        // the speed read-out beside the pointer while the playback speed is dragged
         "speed-drag-overlay",
+        // the inline fields typed in place, one at a time
         "bin-group-name",
         "marker-name-edit",
         // the marker's note typed at its flag (marker-notes), the same inline field as its name
@@ -6858,6 +6860,9 @@ fn no_teaching_layer_over_the_ui() {
         }
     }
     assert!(seen.len() >= 6, "the layer scan found too little — it is broken: {seen:?}");
+    for name in LAYERS {
+        assert!(seen.iter().any(|s| s == name), "“{name}” is in the list and in no source: a row that allows nothing");
+    }
 
     // (3) at run time, with the lessons panel open on every step of every lesson
     let mut h = crate::layout_tests::harness_sized(1440.0, 860.0);
@@ -8304,4 +8309,98 @@ fn t1637_a_track_is_reordered_by_its_header() {
     h.step();
     h.step();
     assert_eq!(names(&h), [c, a, b], "the drag from above the badges");
+}
+
+/// Test 3940 (window-chrome, `v26.10` W3): an event's windows are titled by the event, and its number is
+/// in the body — effects of one event, of a pair, of a title; a transition; a morpher.
+/// - **PATH** double-click the interview event → the window's title reads "interview.mp4 — Effects" →
+///   "#1" in grey beside "Video" at the head of its chain → hover the copy icon → the status bar says "Copy the chain"
+#[test]
+fn t3940_an_event_window_says_which_event_it_edits() {
+    use crate::i18n::k;
+    use kt_model::{ClipId, ClipKind};
+    let mut h = crate::layout_tests::harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(kt_model::MediaRef::new(kt_model::MediaId(1), "/footage/interview.mp4"));
+        let text = kt_model::parse_gen_path(&kt_model::gen_kind_path(&kt_model::GeneratorKind::default_text())).unwrap();
+        p.media.push(kt_model::MediaRef::new(kt_model::MediaId(2), kt_model::gen_kind_path(&text)));
+        let mut v = crate::layout_tests::sample_clip(ClipId(1));
+        (v.media, v.kind, v.lane, v.link_group) = (kt_model::MediaId(1), ClipKind::Video, 0, Some(kt_model::GroupId(1)));
+        let mut a = v.clone();
+        (a.id, a.kind) = (ClipId(2), ClipKind::Audio);
+        let mut alone = v.clone();
+        (alone.id, alone.link_group, alone.start) = (ClipId(3), None, v.start + v.duration);
+        let mut t = alone.clone();
+        (t.id, t.media, t.start) = (ClipId(4), kt_model::MediaId(2), alone.start + alone.duration);
+        t.r#gen = Some(match text {
+            kt_model::GeneratorKind::Text { .. } => {
+                let mut k = text;
+                if let kt_model::GeneratorKind::Text { text, .. } = &mut k {
+                    *text = "Chapter one:\nthe river and the far bank".into();
+                }
+                k
+            }
+            k => k,
+        });
+        p.clips.extend([v, a, alone, t]);
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+    }
+    h.step();
+    let title_of = |h: &mut AppHarness, id: u64| {
+        h.state_mut().fx_editors.clear();
+        h.step();
+        h.state_mut().open_fx_editor(ClipId(id));
+        for _ in 0..3 {
+            h.step();
+        }
+        let texts: Vec<String> = painted_texts(h).into_iter().map(|t| t.src).collect();
+        assert!(texts.iter().any(|t| t.contains(&format!("#{id}"))), "the event's number is in the body: {texts:?}");
+        texts
+    };
+    let has = |texts: &[String], want: String| assert!(texts.contains(&want), "no “{want}” in {texts:?}");
+    has(&title_of(&mut h, 3), crate::tf!(k::fx::TITLE, "interview.mp4"));
+    has(&title_of(&mut h, 1), crate::tf!(k::fx::TITLE_PAIR, "interview.mp4"));
+    has(&title_of(&mut h, 4), crate::tf!(k::fx::TITLE, "Chapter one: the river …"));
+    for lang in crate::i18n::Lang::ALL {
+        crate::i18n::set_lang(lang);
+        for t in [crate::tf!(k::fx::TITLE, "n"), crate::tf!(k::fx::TITLE_PAIR, "n"), crate::tf!(k::trn::TITLE_EDGE, "n")] {
+            assert!(t.starts_with("n "), "{lang:?}: the name leads the title: {t}");
+        }
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+}
+
+/// Test 3941 (window-chrome, `v26.10` T7, T8): copy and paste of a chain are icons that say their name
+/// in the status bar; the chain's fold has no indent strip.
+/// - **PATH** double-click the event → hover the copy icon → the status bar says "Copy the chain…"
+#[test]
+fn t3941_copy_and_paste_are_icons_that_say_their_name() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    let mut h = crate::layout_tests::r72_transport_scene();
+    let id = h.state().model.project().clips[0].id;
+    assert!(h.state_mut().apply(kt_model::Command::SetFx { id, fx: vec![kt_model::FxInstance::all()[0].clone()] }));
+    h.state_mut().open_fx_editor(id);
+    for _ in 0..3 {
+        h.step();
+    }
+    // the scene's synthetic file is refused once, in the status line
+    h.state_mut().status = None;
+    let on = h.get_by_label(tr(k::fx::CHAIN_ON)).rect().left();
+    let done = h.get_by_label(tr(k::fx::DONE)).rect().left();
+    assert!((on - done).abs() < 4.0, "the chain starts at the body's left edge, with no strip: {on} against {done}");
+    for (name, icon) in [(k::fx::COPY_CHAIN, crate::icons::COPY), (k::fx::PASTE_CHAIN, crate::icons::CLIPBOARD)] {
+        let name = tr(name);
+        let at = h.get_by_label(name).rect();
+        let drawn = painted_texts(&h);
+        assert!(drawn.iter().any(|t| t.src == icon && at.contains_rect(t.rect)), "{name}: drawn as its icon");
+        assert!(drawn.iter().all(|t| t.src != name), "{name}: no text button");
+        h.hover_at(at.center());
+        h.step();
+        h.step();
+        assert!(h.state().status_line_shown.0.starts_with(name), "{name}: {:?}", h.state().status_line_shown);
+    }
 }

@@ -2,7 +2,7 @@
 
 > The crate's contracts and mandatory tests — `openspec/specs/{media-index,generators}/spec.md`; the reasons for the decisions — `design.md` next to it.
 
-Media sources: the trait `MediaSource`, `SyntheticSource` (tests), `FfmpegSource` (a bridge to kt-ffmpeg, feature `ffmpeg`), `PlaceholderSource` (a missing file), `GeneratorSource` (generators of R.52), a single factory of pseudo-paths (`factory`), the sidecar index DB (schema — docs/media-index.md).
+Media sources: the trait `MediaSource`, `SyntheticSource` (tests), `FfmpegSource` (a bridge to kt-ffmpeg, feature `ffmpeg`), `PlaceholderSource` (a missing file), `GeneratorSource` (generators of R.52), a single factory of pseudo-paths (`factory`), the project's cache folder with the media index and the reel previews.
 
 ## Invariants
 - All audio going out — **48 kHz stereo f32 interleaved**, exactly 1024 frames per burst. Format conversion (swr) happens INSIDE the source. No consumer sees the sample rate of the file (defect a — the hiccups of slowed&reverb in the old code).
@@ -57,44 +57,39 @@ Media sources: the trait `MediaSource`, `SyntheticSource` (tests), `FfmpegSource
     with the same strict contract; the predicate `factory::can_retune_gen`
     MUST match it exactly (the guard t660). A separate method, and not
     "`retune` via a string": curves do not fit into a path.
-- **The `reel_*` tables in the sidecar are keyed by CONTENT, not by a file (R.58,
-  item 463).** A nested reel has no file, and `media(path, size, mtime,
-  xxhash)` is not its home: the key is `(seq, hash, media_fp)` — the id of the reel, the revision
-  (`kt_engine::content_hash`) and the fingerprint of the files of its tree. Consequences:
-  `purge_media` does NOT touch these tables (and must not — a substitution of a file is caught by
-  `media_fp`, not by `media_id`); the identity of the media travels IN THE KEY, not as an
-  external key; any discrepancy — `None`, and the reel is rendered anew;
-  one version per reel (`put_reel_preview` displaces the previous one entirely);
-  the cleanup — `prune_reels(keep)`. The format of the peak blob is the same as that of
-  `audio_peaks` (`peaks_blob`/`peaks_from_blob` are one pair for both tables). Test 639.
-- **The sidecar is deleted ONLY when it is broken** (`MediaIndexDb::open`, t872): not a
-  database / corrupt / a foreign schema — then together with its `-wal` and `-shm`. A busy,
-  locked or I/O error is a cache miss returned to the caller: several threads of one process
-  hold the sidecar at once, and deleting it under them made SQLite truncate a `-shm` another
-  connection still had mapped — SIGBUS (t640 under load; media-index design).
-- **The SETUP of an opening is taken in turn per sidecar path** (`open_gate`, t1171): the threads
-  of a project opening open the sidecar at the same moment, and an opening that WRITES (the WAL
-  switch, the schema) collided — `PRAGMA journal_mode=WAL` returns `SQLITE_BUSY` in 0.2 ms without the
-  busy handler, and a new file's openers outwaited the timeout (t640 red on a quiet machine). WAL is
-  read before it is set, the schema is created under `BEGIN IMMEDIATE`; an opening of a ready sidecar
-  writes nothing. A new step of `try_open` that writes stays inside the gate and runs only when the
-  file needs it. The returned connection is still the thread's own — no shared connection.
-- **No lock of the sidecar is held across an fsync** (t1460): every opening sets
-  `synchronous=NORMAL` and `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE`. On a loaded spinning disk one fsync
-  took 137 s; a commit synced the WAL under the write lock (FULL) and the last close checkpointed and
-  synced under the EXCLUSIVE lock every opening needs — the others outwaited the busy timeout, and the
-  cache missed (t1171/t640/t411 red only in the whole-workspace run). The `-wal`/`-shm` files stay
-  after the last close; the passive auto-checkpoint folds the WAL in. A new setting or statement that
-  syncs under a lock brings the stall back — t1460 stalls every fsync to catch it.
+- **The cache folder (`cache_folder.rs`, project-cache-folder)**: `<project folder>/kinetren-cache/`,
+  one per project folder, everything in it recomputable. One `Folder` per place and process
+  (`Folder::open` memoizes), shared by the lanes; it never touches the user's data folder until a binary
+  said where it is (`set_data_root`), so a test writes nothing of his.
+  - **An entry is a file that appears by a rename**, under a 32-byte header (kind, the kind's version,
+    length, checksum): what does not verify is a miss and is removed, its neighbours untouched. A kind's
+    version replaces the schema bump, which wiped every media's index.
+  - **No lock stands between a lane and an entry** (t1460, t1171). The folder's one lock is for the
+    cycle's drops and the map's compaction, and it is only TRIED.
+  - **Room is asked before the bytes** (`ask_room`, or `with_room` inside `write`/`append`); an owner that
+    writes its own files (segments, copies) asks, then tells `wrote`/`used`/`gone` and reads
+    `take_dropped`. The drop order is one function (`drop_for`): value per byte for frames, mix and
+    copies, then the reels, then the media; nothing this process used in the last minute.
+  - **Nothing scans at rest**: the tree is walked at the first ask for room, and again only when the
+    cycle drops on a count older than a minute, or the system contradicted it.
+- **A media is its content** (`ContentId`, the xxh3-128 of the file); `media/paths.tsv` (path, size, mtime
+  → id) spares the hash. A path inside the project's folder is kept relative, so a renamed folder hashes
+  nothing (t3829). Invalidation needs no delete: a changed file is another id.
+- **Reel previews are keyed by CONTENT, not by a file (R.58)**: `(seq, hash, media_fp)` — the id of the
+  reel, the revision (`kt_engine::content_hash`) and the fingerprint of the files of its tree; any
+  discrepancy — `None`. The folder is shared by projects whose reel ids collide, so each project names its
+  version of a reel under `reels/refs/`, and only a version nobody names goes (t639).
+- **SQLite is only the import door** (`old_sidecar.rs`): a former build's `<project>.ktindex.db` is read
+  once on the index lane and deleted; a locked one is left alone (t3832). No new code uses `rusqlite`.
 - **A peak pass reads what has an end and stops when told** (t1740–t1742): a still and a placeholder say `placeholder::NO_END`, 1000 hours, and answer every read at once. A new "practically infinite" source uses that constant, or the pass spins for hours on it and starves the queue.
 - The pixel font 3×5 and `Canvas` — the common module `pixfont` (a placeholder + a future timecode generator). This is NOT the rasterization of the user's title text: that lives in kt-text with its own determinism discipline.
 
 ## FfmpegSource (src/ffmpeg.rs) — how it is built
 - Two INDEPENDENT demuxers per file (audio and video do not fight over the seek) + a third scan pass on opening: a packet index (positions/pts of the audio packets, pts of the video keyframes) without decoding.
 - Audio: swr → 48k stereo FLT inside; a FIFO with an absolute anchor by the pts of the first decoded frame after a seek. Seek = a container BACKWARD seek to the indexed packet (with a margin of 3 packets) + a FULL re-creation of the decoder and swr. Sample accuracy is confirmed by the conformance test: FLAC — exact, AAC — zero phase shift (lossy values are compared by correlation).
-- Video: `threads=1` for VP9/AV1 (a legacy of C++: MT decoding of these codecs is unstable under frequent seeks); a backward seek = seek + re-creation of the decoder ALWAYS (it covers MT H.264, and is cheaper than catching artifacts); forward ≤4 s — a continuous decode without seek. sws → RGBA with the source's own colour matrix and range (source-colour-matrix), the context cache by (size, source format, matrix, range). Sidecar thumbs carry a pixel version (`THUMB_PIXELS_VERSION`, additive table `thumb_pixels`): move it whenever the decode's pixels change for the same file; `put_thumb_size` goes BEFORE `put_thumbnail` and drops the older ones (t2894).
+- Video: `threads=1` for VP9/AV1 (a legacy of C++: MT decoding of these codecs is unstable under frequent seeks); a backward seek = seek + re-creation of the decoder ALWAYS (it covers MT H.264, and is cheaper than catching artifacts); forward ≤4 s — a continuous decode without seek. sws → RGBA with the source's own colour matrix and range (source-colour-matrix), the context cache by (size, source format, matrix, range). Kept thumbs carry a pixel version (`THUMB_PIXELS_VERSION`, the version of their kinds; the preview's frames on disk carry it too): move it whenever the decode's pixels change for the same file; `put_thumb_size` goes BEFORE `put_thumbnail` and drops the older ones (t2894).
 - `unsafe impl Send` is correct, because an instance is owned by exactly one MediaWorker (&mut self); Sync is deliberately not implemented.
-- The packet index is persisted in the sidecar DB (`packet_index`, schema v2): `FfmpegSource::open_indexed(path, db)` takes the index from the DB when the file is unchanged (identity of size/mtime/xxhash via `ensure_media`) and skips the full scan pass; after a fresh scan — it saves it. DB errors = cache errors: a silent fallback to the ordinary open. Test 34.
+- The packet index is kept in the media index: `FfmpegSource::open_indexed(path, store)` takes it from there when the file is unchanged (`ensure_media`) and skips the full scan pass; after a fresh scan — it saves it. Its errors = cache errors: a silent fallback to the ordinary open. Test 34.
 - The decoding layer implementation — the crate kt-ffmpeg (dlopen of the system FFmpeg 6/7/8/9, without linking); rsmpeg is removed.
 
 ## Decoders of one file (export-throughput D9, preview-throughput D1)

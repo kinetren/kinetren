@@ -129,7 +129,7 @@ pub fn run(args: &[String]) -> i32 {
 /// and why it stopped or abandoned a moment.
 pub fn cache(run: &Run) -> String {
     use kt_time::trace::render_cache as k;
-    let mut o = String::new();
+    let mut o = cache_folders(run);
     let recs: Vec<&Rec> = run.recs.iter().filter(|r| is(r, Ev::RenderCache)).collect();
     if recs.is_empty() {
         o.push_str("no render cache records: the tier was off, or nothing was measured slow\n");
@@ -180,6 +180,43 @@ pub fn cache(run: &Run) -> String {
     for (i, (a, b, _, _)) in laps.iter().enumerate() {
         let n = recs.iter().filter(|r| r.aux == k::RESTORE && r.t >= *a && r.t < *b).count();
         let _ = writeln!(o, "  lap {i} {}: {n} restored", s(*a));
+    }
+    o
+}
+
+/// The project's cache folder (project-cache-folder D8): where it lies and why, per cache the bytes at
+/// the last count with the hits and misses, what was dropped and why, the writes that found no room.
+fn cache_folders(run: &Run) -> String {
+    use kt_time::trace::cache_folder as k;
+    let mut o = String::new();
+    let recs: Vec<&Rec> = run.recs.iter().filter(|r| is(r, Ev::CacheFolder)).collect();
+    for r in &recs {
+        let place = match r.aux {
+            k::PLACE_PROJECT => "beside the project",
+            k::PLACE_UNTITLED => "in the user's folder, the project is untitled",
+            k::PLACE_NO_FILES => "in the user's folder, the project's folder takes no files",
+            _ => continue,
+        };
+        let _ = writeln!(o, "cache folder {} ({place}), the cap {:.1} GB", run.name_of(r.id as u32), r.b as f64 / 1e9);
+    }
+    let mut last: BTreeMap<u64, &Rec> = BTreeMap::new();
+    for r in recs.iter().filter(|r| r.aux == k::SIZE) {
+        last.insert(r.a, r);
+    }
+    let mut drops: BTreeMap<(u64, u64), (usize, u64)> = BTreeMap::new();
+    for r in recs.iter().filter(|r| r.aux == k::DROP) {
+        let d = drops.entry((r.a, r.c)).or_default();
+        *d = (d.0 + 1, d.1 + r.b);
+    }
+    for (t, r) in &last {
+        let _ = writeln!(o, "  {:<7} {} bytes, {} hits, {} misses", k::tenant_name(*t), r.b, r.c, r.id);
+    }
+    for ((t, why), (n, bytes)) in &drops {
+        let _ = writeln!(o, "  dropped {n} of {} ({bytes} bytes): {}", k::tenant_name(*t), k::why::name(*why));
+    }
+    let skipped = recs.iter().filter(|r| r.aux == k::SKIPPED).count();
+    if skipped > 0 {
+        let _ = writeln!(o, "  {skipped} writes skipped: no room could be made");
     }
     o
 }

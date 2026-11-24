@@ -77,9 +77,12 @@ Export: the same RenderGraph, clock = "as ready", Quality = project resolution; 
 
 Prefetch: an idempotent cycle — wanted keys (playhead lookahead ~2 s, visible range, head of the loop region pinned in the cache) minus coverage() → submit. There is no state between ticks.
 
-## Sidecar index DB (`<project>.ktindex.db`, SQLite)
+## The cache folder (`<project folder>/kinetren-cache/`)
 
-Keyed by media_id (identity key: path + size + mtime + xxhash + index_version): probe data; audio seek index (packet position → index of first sample) for sample-accurate seek; video keyframe index; audio peak pyramid (min/max, block of 256 samples, mip levels); thumbnail strip (~1–2 s, keyframes, ~160px JPEG). Rebuilding touches only the affected file: a size/mtime mismatch → xxhash check → rebuild; a bump of index_version → full rebuild; a corrupted DB → recreated without crashing. Schema — `media-index.md`.
+One folder per project folder holds everything that can be computed again: the media index by content,
+the reel previews by content, the preview's final frames as video segments. Entries are single files under
+a checked header, written in a cycle inside the folder's room; layout and rules — `docs/media-index.md`,
+capability `media-index`. Deleting it costs time, never work.
 
 ## Audio FX
 

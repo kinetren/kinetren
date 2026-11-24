@@ -572,6 +572,13 @@ impl crate::app::KtApp {
                 if r.clicked() {
                     self.ffmpeg_ui.open = true;
                 }
+
+                // ---- Persistent cache ----
+                let r = section(ui, tr(k::prefs::SECTION_CACHE));
+                if std::mem::take(&mut self.start.caches.show) {
+                    r.scroll_to_me(Some(egui::Align::TOP));
+                }
+                self.draw_cache_section(ui);
             });
             crate::widgets::window_actions(ui, |ui| {
                 let r = ui.button(tr(k::prefs::CLOSE));
@@ -583,6 +590,7 @@ impl crate::app::KtApp {
         });
         if close || win.closed() {
             self.start.prefs_open = false;
+            self.caches_closed();
         }
     }
 }
@@ -618,8 +626,9 @@ fn layout_picture(p: &egui::Painter, r: egui::Rect, a: Arrangement) {
 }
 
 /// A section title: a gap above, the title in strong text, a thin rule under it.
-fn section(ui: &mut egui::Ui, title: &str) {
+fn section(ui: &mut egui::Ui, title: &str) -> egui::Response {
     ui.add_space(6.0);
-    ui.label(egui::RichText::new(title).strong());
+    let r = ui.label(egui::RichText::new(title).strong());
     ui.separator();
+    r
 }

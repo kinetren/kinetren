@@ -55,7 +55,7 @@ fn t2127_the_player_prewarms_what_the_project_reaches_when_it_changes() {
     let src = SyntheticSource::new(Tick(600_000), AudioPattern::Silence);
     let mut p = project();
     let (player, _ring) = Player::new(p.clone(), vec![(MediaId(1), Box::new(src))]);
-    let exec = Arc::new(Recorder { info: GpuBackendInfo { name: "rec".into(), backend: "Test".into(), software: true }, asked: Mutex::default(), runs: Mutex::default() });
+    let exec = Arc::new(Recorder { info: GpuBackendInfo { name: "rec".into(), backend: "Test".into(), software: true, driver: String::new() }, asked: Mutex::default(), runs: Mutex::default() });
     player.set_video_gpu(Some(exec.clone()));
     let asked = || exec.asked.lock().unwrap().clone();
     assert_eq!(asked(), [vec!["glow".to_string()]], "the executor is told the project's effects when it arrives");
@@ -87,7 +87,7 @@ fn t2196_the_player_prewarms_the_run_shapes() {
     p.tracks[0].fx = vec![FxInstance::plugin("color_grade").unwrap(), FxInstance::plugin("posterize").unwrap(), FxInstance::plugin("vignette").unwrap()];
     let (player, _ring) = Player::new(p.clone(), vec![(MediaId(1), Box::new(src))]);
     let exec = Arc::new(Recorder {
-        info: GpuBackendInfo { name: "rec".into(), backend: "Test".into(), software: true },
+        info: GpuBackendInfo { name: "rec".into(), backend: "Test".into(), software: true, driver: String::new() },
         asked: Mutex::default(),
         runs: Mutex::default(),
     });

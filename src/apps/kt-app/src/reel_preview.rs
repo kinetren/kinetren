@@ -21,19 +21,18 @@
 //! an edit inside the reel changes the hash, and the old strip simply stops
 //! being requested. In memory — LRU by this key.
 //!
-//! **Disk tier — in the sidecar `<project>.ktindex.db` (R.58, item 463).**
+//! **Disk tier — in the project's cache folder, `reels/` (R.58, item 463).**
 //! Owner's claim: “Composition previews on the timeline, it seems, are not
 //! cached, and every project open rebuilds them anew.” The R.56 note “not in the
 //! sidecar — it is keyed by file identity” was a property of the
-//! `ensure_media` API, not of the schema: there are no foreign keys in the DB, and the `reel_*`
-//! tables are keyed by CONTENT — (reel, edit, media fingerprint). The edit
+//! `ensure_media` API: a preview is keyed by CONTENT — (reel, edit, media fingerprint). The edit
 //! does not see a file swap (`content_hash` hashes events, not source
 //! bytes), so the third part of the key is `media_fingerprint`: path,
 //! size and mtime of each file in the reel's tree. It is computed ON THE TASK THREAD
-//! (where the DB is opened too); the UI thread touches neither `fs::metadata` nor sqlite
+//! (where the folder is opened too); the UI thread touches neither `fs::metadata` nor the folder
 //! (invariants 8/12). A hit — the strip and peaks come from disk without
-//! a single decode; a miss — render and write in one transaction. A DB error —
-//! a cache error: the preview still arrives. A project without a path — RAM only.
+//! a single decode; a miss — render and write. An error of the folder —
+//! a cache error: the preview still arrives.
 //!
 //! **Invariant 5 is respected by the shape of the offline path:** its own short-lived
 //! sources, not shared with anyone; the job is finite and cancelable; and no one
@@ -153,6 +152,8 @@ pub struct ReelPreviews {
     live: HashMap<ReelKey, i64>,
     /// Every row the document still uses, for `prune_reels`.
     keep_rows: Arc<Vec<i64>>,
+    /// The project file, which names its reels' versions in the folder it shares.
+    project: Option<std::path::PathBuf>,
 }
 
 type ReelBody = dyn FnOnce(crate::bg::BgCtl, crate::bg::BgSend<ReelPartial>) -> ReelDone + Send;
@@ -230,6 +231,11 @@ impl ReelPreviews {
         self.keep_rows = keep_rows;
     }
 
+    /// The project file the next requests are of (`None` — an untitled one).
+    pub fn set_project(&mut self, project: Option<std::path::PathBuf>) {
+        self.project = project;
+    }
+
     /// Does this key still need a job? Asked per frame, BEFORE a request has to clone the
     /// document for its body: a reel being rendered or a reel that failed answers here, for free.
     pub fn wants(&self, key: &ReelKey) -> bool {
@@ -259,8 +265,9 @@ impl ReelPreviews {
         }
         let row = self.live.get(&key).copied().unwrap_or(key.seq.0 as i64);
         let keep_rows = self.keep_rows.clone();
+        let file = self.project.clone();
         let body = move |ctl: crate::bg::BgCtl, send: crate::bg::BgSend<ReelPartial>| {
-            let disk = ReelRow { row, keep: &keep_rows };
+            let disk = ReelRow { row, keep: &keep_rows, project: file.as_deref() };
             render_reel_preview(ctl, send, key, &project, base.as_deref(), index_db.as_deref(), disk)
         };
         self.queue.push_back((key, Box::new(body)));
@@ -417,10 +424,12 @@ pub fn reel_row(seq: MediaId, overrides: &[kt_model::Override]) -> i64 {
     -((h >> 1) as i64) - 1
 }
 
-/// Where a job's preview lives in the sidecar, and what the sidecar keeps.
+/// Where a job's preview lives in the cache folder, and what its project keeps there.
 pub struct ReelRow<'a> {
     pub row: i64,
     pub keep: &'a [i64],
+    /// The project file (`None` — an untitled one).
+    pub project: Option<&'a std::path::Path>,
 }
 
 /// Media the reel reads — including the reels nested within it.
@@ -520,7 +529,7 @@ pub fn render_reel_preview(
     // an opening that fails is a cache miss (the reel renders anew) — but not a SILENT one:
     // a lost disk tier must be visible in the log (t640/t795 under load showed a re-render
     // with no word on why)
-    let mut db = index_db.and_then(|d| match kt_media::index::MediaIndexDb::open(d) {
+    let mut db = index_db.and_then(|d| match kt_media::index::ReelStore::open(d, disk.project) {
         Ok(db) => Some(db),
         Err(e) => {
             warn_db_once("open", &e);
@@ -915,7 +924,7 @@ mod tests {
         let key = super::ReelKey { seq: MediaId(77), hash: 1 };
         let mut job: crate::bg::BgJob<super::ReelPartial, super::ReelDone> =
             crate::bg::BgJob::spawn("t2455", move |ctl, send| {
-                super::render_reel_preview(ctl, send, key, &p, None, None, super::ReelRow { row: 77, keep: &[] })
+                super::render_reel_preview(ctl, send, key, &p, None, None, super::ReelRow { row: 77, keep: &[], project: None })
             });
         let deadline = kt_time::test_deadline();
         while job.done.is_none() {
@@ -1046,7 +1055,7 @@ mod strip_key_tests {
         let dir = std::env::temp_dir().join(format!("kt-t2519-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let mut db = kt_media::index::MediaIndexDb::open(&dir.join("index.db")).unwrap();
+        let mut db = kt_media::index::ReelStore::open(&dir.join("kinetren-cache"), None).unwrap();
         let old = super::media_fingerprint(&p, None);
         let now = super::strip_key(&p, None);
         assert_ne!(old, now, "the row version is part of the key");

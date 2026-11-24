@@ -3,7 +3,7 @@
 //! Does NOT touch the playback decoders (a correction to invariant No. 8: paint
 //! may only ENQUEUE requests to this dedicated worker). Its own
 //! short-lived FfmpegSource per media; the jpeg is persisted to the sidecar
-//! index DB (table thumbnails) — reopening the project draws
+//! media index (its `thumbs`) — reopening the project draws
 //! the strip without decode.
 
 use crate::util::{open_source, resolve_media_path};
@@ -279,6 +279,8 @@ struct Shared {
     /// item 412): after reconfiguring the generator's parameters its `SourceLru`
     /// would keep the source with the old parameters and draw old thumbs.
     drop_sources: Mutex<HashSet<MediaId>>,
+    /// The cache folder of the project, as it lies now.
+    cache: Mutex<Option<PathBuf>>,
     /// How many NEW requests were queued over the whole time — for the guard
     /// “scroll/zoom does not request decode” (invariant 8, t719): the queue
     /// is emptied by the worker itself, so its length proves nothing.
@@ -311,6 +313,7 @@ impl ThumbService {
             kinds: Mutex::new(HashMap::new()),
             media: Mutex::new(HashMap::new()),
             drop_sources: Mutex::new(HashSet::new()),
+            cache: Mutex::new(None),
             requests: std::sync::atomic::AtomicUsize::new(0),
             request_log: Mutex::new(Vec::new()),
         });
@@ -326,14 +329,20 @@ impl ThumbService {
                 .collect()
         };
         *shared.media.lock().unwrap() = media;
-        let db_path = project_path.map(|p| p.with_extension("ktindex.db"));
+        let db_path = crate::app::cache_folder_of(project_path.as_deref());
         let sh = shared.clone();
-        let state = Mutex::new(WorkerState { db_path, db: None, db_ids: HashMap::new() });
+        *shared.cache.lock().unwrap() = db_path;
+        let state = Mutex::new(WorkerState { db_path: None, db: None, db_ids: HashMap::new() });
         let lane = kt_time::sched::Lane::service("thumbs", kt_time::sched::Class::Visible, move |ctx| {
             let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
             pump(&sh, &mut st, ctx)
         });
         ThumbService { shared, lane }
+    }
+
+    /// The project's cache lies in `folder` from now on.
+    pub fn set_cache(&self, folder: Option<PathBuf>) {
+        *self.shared.cache.lock().unwrap() = folder;
     }
 
     /// Wait until the service has nothing to do (tests and live probes).
@@ -470,14 +479,14 @@ impl ThumbService {
     }
 }
 
-/// What the pump keeps between its runs: the sidecar (opened at the first run) and its media ids.
+/// What the pump keeps between its runs: the media index (opened at the first run) and its ids.
 /// The open SOURCES are not kept: a run may land on another worker of the pool, and a decoder
 /// instance lives on the one thread that opened it (invariant 5) — a run opens what it needs and
 /// drops it when it ends.
 struct WorkerState {
     db_path: Option<PathBuf>,
-    db: Option<Option<kt_media::index::MediaIndexDb>>,
-    db_ids: HashMap<MediaId, i64>,
+    db: Option<Option<kt_media::index::MediaStore>>,
+    db_ids: HashMap<MediaId, Option<kt_media::index::ContentId>>,
 }
 
 /// One run of the service: drain the queue (thumbs LIFO, then probes and posters), stop at a pause
@@ -485,7 +494,12 @@ struct WorkerState {
 fn pump(shared: &Shared, st: &mut WorkerState, ctx: &kt_time::sched::Ctx) -> kt_time::sched::Pump {
     use kt_time::sched::Pump;
     let WorkerState { db_path, db, db_ids } = st;
-    let mut db = db.get_or_insert_with(|| db_path.as_ref().and_then(|p| kt_media::index::MediaIndexDb::open(p).ok()));
+    let cache = shared.cache.lock().unwrap().clone();
+    if *db_path != cache {
+        (*db_path, *db) = (cache, None);
+        db_ids.clear();
+    }
+    let mut db = db.get_or_insert_with(|| db_path.as_ref().and_then(|p| kt_media::index::MediaStore::open(p).ok()));
     // LRU of open sources (item 1 round 7: previously clear() at >2), for this run only
     let mut sources: SourceLru<Box<dyn kt_media::MediaSource>> = SourceLru::new(MAX_OPEN_SOURCES);
     loop {
@@ -584,18 +598,19 @@ fn pump(shared: &Shared, st: &mut WorkerState, ctx: &kt_time::sched::Ctx) -> kt_
         // 1) try the DB: exact key, then the nearest within tolerance (item 14 round 7).
         // Pseudo-sources (`gen:`, `synth:`) do not go to the DB at all (R.53,
         // item 413): its key is the FILE's size and mtime, which they do not have, and
-        // `ensure_media` on every thumb would needlessly hit sqlite.
+        // `ensure_media` on every thumb would needlessly hit the disk.
         let mut jpeg: Option<Vec<u8>> = None;
         let use_db = !kt_model::is_pseudo_path(path);
         if let Some(db) = &mut db
             && use_db
         {
             let db_id = *db_ids.entry(key.media).or_insert_with(|| {
-                db.ensure_media(std::path::Path::new(path)).map(|(id, _)| id).unwrap_or(-1)
+                db.ensure_media(std::path::Path::new(path)).map(|(id, _)| id).ok()
             });
-            // thumbs written BEFORE the conform to the source's look are squashed:
-            // without a thumb_meta row the sidecar is not read, but rebuilt
-            if db_id >= 0 && db.thumb_size(db_id).ok().flatten().is_some() {
+            // thumbs without their size, or of older pixels, are not read, but rebuilt
+            if let Some(db_id) = db_id
+                && db.thumb_size(db_id).ok().flatten().is_some()
+            {
                 jpeg = db.thumbnail(db_id, key.t).ok().flatten();
                 if jpeg.is_none() && near_tol > 0 {
                     // the nearest ready thumb instead of decoding; published under the
@@ -649,9 +664,7 @@ fn pump(shared: &Shared, st: &mut WorkerState, ctx: &kt_time::sched::Ctx) -> kt_
             if let Ok(frame) = src.read_video_frame(Tick(key.t), Some(tq))
                 && let Some(buf) = encode_thumb_jpeg(frame.width, frame.height, frame.rgba.into())
             {
-                if let (Some(db), Some(&db_id)) = (&mut db, db_ids.get(&key.media))
-                    && db_id >= 0
-                {
+                if let (Some(db), Some(&Some(db_id))) = (&mut db, db_ids.get(&key.media)) {
                     // the size first: it drops thumbs of an older pixel version (t2894)
                     let _ = db.put_thumb_size(db_id, frame.width, frame.height);
                     let _ = db.put_thumbnail(db_id, key.t, &buf);
@@ -765,7 +778,7 @@ pub const GEN_POSTER_T: i64 = 90_000 * 5 / 2;
 
 fn find_poster(
     shared: &Shared,
-    db: &mut Option<kt_media::index::MediaIndexDb>,
+    db: &mut Option<kt_media::index::MediaStore>,
     sources: &mut SourceLru<Box<dyn kt_media::MediaSource>>,
     media: MediaId,
 ) -> Option<i64> {
@@ -1091,7 +1104,7 @@ mod key_tests {
                 "thumbnail color did not match the generator parameters: {c:?} (db={with_db})"
             );
         }
-        let _ = std::fs::remove_file(db_project.with_extension("ktindex.db"));
+        let _ = std::fs::remove_dir_all(kt_media::cache_folder::beside(&db_project));
     }
 
     /// Test 71 (item 1 round 7): LRU of sources — eviction of the oldest, without a
