@@ -506,9 +506,19 @@ fn t2144_a_frame_is_joined_to_the_decode_it_waited_for() {
     // the plain event before the mosh: one layer, one decode
     let t = Tick(SEC);
     // the playhead stands past it, so the prefetch's window (which starts at the frame on screen)
-    // never orders that key first: since one-scheduler the quality set by `mosh_player` wakes the
-    // prefetch at once, and the test had relied on its first pass coming 100 ms later
+    // never orders that key from here on
     player.seek(Tick(7 * SEC));
+    // but its first pass, at 0, may have: the seek withdrew what was queued, not a span in a decoder's
+    // hands, and what was decoded lies in the cache. The frame would then wait for a decode it did not
+    // ask for, or for none (found-defects 836)
+    let deadline = kt_time::test_deadline();
+    while !player.decoders_idle() {
+        assert!(std::time::Instant::now() < deadline, "the decoders never rested");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    for m in [1, 2] {
+        player.cache.invalidate_source(kt_engine::source_id(MediaId(m)));
+    }
     let mut seq = 0;
     let items = trace::testing::capture(|| {
         seq = player.ask_preview(t, Some(SHOW));
@@ -587,14 +597,20 @@ fn t2978_a_kept_moment_is_read_back_without_its_history() {
     }
     let read = player.kept_picture_reader(t);
     let mut pic = None;
-    let items = trace::testing::capture(|| pic = read());
+    // the reader's own records: the prefetch works beside it, at its own time (found-defects 836)
+    let reader = trace::next_id();
+    let items = trace::testing::capture(|| {
+        let _cause = trace::with_cause(reader);
+        pic = read();
+    });
+    let own = |e: Ev| of(&items, e).into_iter().filter(|r| r.cause == reader).count();
     let pic = pic.expect("the kept composite is read back");
     let q = player.preview_quality();
     assert_eq!((pic.w, pic.h), (q.width, q.height), "at the preview's size");
     assert_eq!(pic.rgba.len(), (q.width * q.height * 4) as usize);
     assert!(pic.rgba.chunks_exact(4).any(|p| p[..3] != [0, 0, 0]), "a picture, not an empty buffer");
-    assert!(of(&items, Ev::StreamRun).is_empty() && of(&items, Ev::StreamWalk).is_empty(), "no history walked");
-    assert!(of(&items, Ev::DecReq).is_empty(), "no decode asked");
+    assert!(own(Ev::StreamRun) == 0 && own(Ev::StreamWalk) == 0, "no history walked");
+    assert_eq!(own(Ev::DecReq), 0, "no decode asked");
     // a moment the preview never composed: nothing — the poster composes it offline
     assert!(player.kept_picture_reader(Tick(3 * SEC))().is_none(), "an unkept moment gives nothing");
 }
@@ -1226,14 +1242,14 @@ fn t3357_a_kept_moment_on_the_bytes_path_needs_no_history() {
     for m in [1, 2] {
         player.cache.invalidate_source(kt_engine::source_id(MediaId(m)));
     }
-    let walked = kt_plugin_api::stream::positions_walked();
     let mut complete = false;
     let items = trace::testing::capture(|| complete = player.compose_preview_into(t, &mut buf).1);
     assert!(complete, "the kept moment is complete at once");
     assert_eq!(buf, first, "the kept composite's bytes");
     let execs = of(&items, Ev::FrameExec);
-    assert!(execs.iter().any(|e| e.aux & trace::exec::MEMO_HIT != 0), "shown from the kept composite: {execs:?}");
-    assert!(of(&items, Ev::StreamRun).is_empty(), "no stream stage ran");
-    assert!(of(&items, Ev::DecReq).is_empty(), "no decode was asked");
-    assert_eq!(kt_plugin_api::stream::positions_walked(), walked, "the history did not walk");
+    let frame = execs.iter().find(|e| e.aux & trace::exec::MEMO_HIT != 0).unwrap_or_else(|| panic!("shown from the kept composite: {execs:?}")).id;
+    // the frame's own records: the prefetch works beside it, at its own time (found-defects 836)
+    let own = |e: Ev| of(&items, e).into_iter().filter(|r| r.cause == frame).count();
+    assert_eq!((own(Ev::StreamRun), own(Ev::StreamWalk)), (0, 0), "no stream stage ran and the history did not walk");
+    assert_eq!(own(Ev::DecReq), 0, "no decode was asked");
 }
