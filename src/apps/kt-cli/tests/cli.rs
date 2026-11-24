@@ -1598,6 +1598,7 @@ fn mosh_case(src: &std::path::Path) -> kt_model::Project {
         reversed: false,
         fx,
         fx_bypass: vec![],
+        fx_in: vec![],
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
