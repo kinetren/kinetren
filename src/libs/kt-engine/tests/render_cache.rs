@@ -2,7 +2,7 @@
 //! from it. t2981, t2982, t2984, t2985 (t2980 and t2983 are unit tests of `render_cache.rs`). The
 //! player tests skip without a wgpu adapter.
 
-use kt_engine::render_cache::{Config, DiskKey, DiskStore, FileIds, Made, disk_key};
+use kt_engine::render_cache::{Config, DiskKey, DiskStore, Made, disk_key};
 use kt_media::cache_folder::{self, Folder};
 use kt_engine::{Player, PresentOptions, VideoRenderer};
 use kt_media::{MediaSource, Quality};
@@ -98,10 +98,20 @@ fn key(p: &Project, cache: &kt_cache::BurstCache, t: Tick, q: Quality) -> DiskKe
 }
 
 fn key_made(p: &Project, cache: &kt_cache::BurstCache, t: Tick, q: Quality, made: &Made) -> DiskKey {
-    let video = renderer(p);
-    let files = FileIds::read(&p.media, None);
-    let (plan, leaves) = video.probe_durable(cache, t, q);
-    disk_key(&plan, &leaves, &files, made)
+    disk_key(&renderer(p).probe_plan(cache, t, q), made).expect("every source has a durable name")
+}
+
+/// What the player's workers tell its cache when the project opens: a file by what it is on disk, a
+/// generator by its values.
+fn adopt(p: &Project, cache: &kt_cache::BurstCache) {
+    for m in &p.media {
+        let Ok(md) = std::fs::metadata(&m.path) else { continue };
+        let text = format!("{}|{:?}", md.len(), md.modified().unwrap());
+        cache.adopt(kt_engine::source_id(m.id), kt_cache::SourceIdent::of(&text));
+    }
+    for (addr, st) in kt_engine::gen_sources(p) {
+        cache.adopt(kt_engine::source_id(addr), kt_media::factory::open_gen(&st).identity().unwrap());
+    }
 }
 
 /// Test t2981 (render-cache-disk D1): the durable key is the same from two renderers over two frames
@@ -119,6 +129,8 @@ fn t2981_the_durable_key_survives_a_process_and_follows_the_picture() {
     let t = Tick(30_000);
     let fresh = || kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let (c1, c2) = (fresh(), fresh());
+    adopt(&p, &c1);
+    adopt(&p, &c2);
     // the second cache's serials move: frames of another source inserted first
     let video = renderer(&p);
     for i in 0..5 {
@@ -142,12 +154,24 @@ fn t2981_the_durable_key_survives_a_process_and_follows_the_picture() {
     assert_eq!(key(&p, &c2, t, Q), k, "a decoded frame does not move the key");
     // what the picture is made of
     assert_ne!(key(&scene(&file, "AAAA", 1.2), &c1, t, Q), k, "an effect parameter");
-    assert_ne!(key(&scene(&file, "AAAB", 1.1), &c1, t, Q), k, "a generator's value");
+    let retitled = scene(&file, "AAAB", 1.1);
+    // the renderer is ahead of the source: while the retune waits, the picture is the old values'
+    assert_eq!(key(&retitled, &c1, t, Q).key, k.key, "the old frames' name until the source is retuned");
+    let c3 = fresh();
+    adopt(&retitled, &c3);
+    assert_ne!(key(&retitled, &c3, t, Q), k, "a generator's value");
     assert_ne!(key(&p, &c1, t, Quality { width: 192, height: 108 }), k, "the quality");
     let f = std::fs::File::options().write(true).open(&file).unwrap();
     f.set_modified(std::time::SystemTime::now() - Duration::from_secs(3600)).unwrap();
     drop(f);
-    assert_ne!(key(&p, &c1, t, Q), k, "the file's modification time");
+    assert_eq!(key(&p, &c1, t, Q), k, "the decoder still has the file it opened");
+    adopt(&p, &c1);
+    assert_ne!(key(&p, &c1, t, Q), k, "the file's modification time, once it is opened again");
+    // a source whose name dies with the process, and one nothing is known of: no key on disk
+    let probe = |c: &kt_cache::BurstCache| disk_key(&renderer(&p).probe_plan(c, t, Q), &made());
+    c2.adopt(kt_engine::source_id(MediaId(2)), kt_cache::SourceIdent::once());
+    assert_eq!(probe(&c2), None, "a placeholder's picture is never on disk");
+    assert_eq!(probe(&fresh()), None);
     // what makes it: the plan's key stays, the salt moves, and the frame is a miss
     let k = key(&p, &c1, t, Q);
     for (what, m) in [
@@ -350,7 +374,6 @@ fn player(root: &std::path::Path, opacity: f32) -> Option<(Player, Vec<Tick>)> {
         codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
         root: root.to_path_buf(),
         made: kt_engine::render_cache::Made::of(60),
-        base: None,
         cap: None,
     }));
     let grid = player.video_grid();
@@ -509,7 +532,6 @@ fn t2989_no_encoder_composes_nothing() {
         codec: std::sync::Arc::new(NoEncoder),
         root: root.path().to_path_buf(),
         made: kt_engine::render_cache::Made::of(60),
-        base: None,
         cap: None,
     }));
     let rc = p.render_cache();
@@ -580,7 +602,6 @@ fn t3201_a_heavy_run_is_one_segment_from_its_start() {
         codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
         root: root.path().to_path_buf(),
         made: kt_engine::render_cache::Made::of(60),
-        base: None,
         cap: None,
     }));
     let items = kt_time::trace::testing::capture(|| prerender(&p, &moments));
@@ -702,7 +723,6 @@ fn t3317_a_segment_is_written_from_planes() {
         codec: std::sync::Arc::new(Nv12Segments { planes: planes.clone(), rgba: rgba.clone() }),
         root: root.path().join("nv12"),
         made: kt_engine::render_cache::Made::of(60),
-        base: None,
         cap: None,
     }));
     prerender(&p, &moments);
@@ -746,7 +766,6 @@ fn t3600_a_run_known_by_one_moment_is_one_segment() {
         codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
         root: root.path().to_path_buf(),
         made: kt_engine::render_cache::Made::of(60),
-        base: None,
         cap: None,
     }));
     let items = kt_time::trace::testing::capture(|| {
@@ -769,4 +788,74 @@ fn t3600_a_run_known_by_one_moment_is_one_segment() {
         .collect();
     assert_eq!(holding.len(), 1, "the run is one segment; written (first tick, moments): {stores:?}");
     assert!((holding[0].0 as i64) < moments[0].0, "it starts before the run's first moment: {stores:?}");
+}
+
+/// A source whose name dies with the process, as a placeholder's.
+struct Unnamed(Box<dyn MediaSource>);
+
+impl MediaSource for Unnamed {
+    fn info(&self) -> &kt_media::MediaInfo {
+        self.0.info()
+    }
+    fn read_audio_burst(&mut self, idx: i64) -> Result<kt_media::AudioBurst, kt_media::MediaError> {
+        self.0.read_audio_burst(idx)
+    }
+    fn read_video_frame(&mut self, p: Tick, q: Option<Quality>) -> Result<kt_media::VideoFrame, kt_media::MediaError> {
+        self.0.read_video_frame(p, q)
+    }
+    fn keyframe_before(&self, p: Tick) -> Option<Tick> {
+        self.0.keyframe_before(p)
+    }
+}
+
+/// Test t4115 (durable-moment-key D2, found-defects 1062): memory and disk name a moment alike. A moment is
+/// prerendered; a restart shows it from disk under the moment's own present key; its file replaced by
+/// another under the same media id, the old picture is not shown; a moment with a frame whose name dies
+/// with the process (a placeholder's) is neither written nor asked of the store.
+#[test]
+fn t4115_memory_and_disk_name_a_moment_alike() {
+    let root = tempfile::tempdir().unwrap();
+    let Some((a, moments)) = player(root.path(), 0.71) else { return };
+    prerender(&a, &moments);
+    drop(a);
+    let Some((b, _)) = player(root.path(), 0.71) else { return };
+    let t = moments[3];
+    b.seek(moments[0]);
+    b.play();
+    assert!(matches!(b.present_preview(t, PresentOptions::default()), Some((_, true))), "from disk on the first ask");
+    b.pause();
+    assert!(b.render_cache().counts().1 >= 1, "restored");
+    // the next ask finds it in the memo by the key every plan of the moment has (the producer may restore
+    // other moments meanwhile)
+    let items = kt_time::trace::testing::capture(|| {
+        assert!(matches!(b.present_preview(t, PresentOptions::default()), Some((_, true))));
+    });
+    let again = kt_time::trace::testing::recs(&items)
+        .iter()
+        .filter(|r| r.ev == kt_time::trace::Ev::RenderCache as u16 && r.aux == kt_time::trace::render_cache::RESTORE && r.a == t.0 as u64)
+        .count();
+    assert_eq!(again, 0, "read from disk again: it was kept under another key");
+
+    // every source replaced by one that decodes something else under the same ids
+    let p = demo_project(DemoSources::Synth);
+    for m in &p.media {
+        b.replace_media(m.id, kt_media::factory::open_pseudo("synth:dc:0.5").unwrap().unwrap());
+    }
+    assert!(b.disk_picture(t).is_none(), "the old picture answers for the replaced file");
+    // and one that has no name outside this process
+    for m in &p.media {
+        b.replace_media(m.id, Box::new(Unnamed(kt_media::factory::open_pseudo("synth:ramp").unwrap().unwrap())));
+    }
+    let written = b.render_cache().counts().0;
+    for t in &moments {
+        b.note_preview_cost(*t, 1_000_000_000, (160, 90));
+    }
+    b.render_cache().kick();
+    let deadline = kt_time::test_deadline();
+    while !b.render_cache().settled() {
+        assert!(Instant::now() < deadline, "the prerender never settled");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(moments.iter().all(|t| b.disk_picture(*t).is_none()), "an unnamed source's picture is on disk");
+    assert_eq!(b.render_cache().counts().0, written);
 }

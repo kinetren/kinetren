@@ -75,6 +75,11 @@ Media sources: the trait `MediaSource`, `SyntheticSource` (tests), `FfmpegSource
 - **A media is its content** (`ContentId`, the xxh3-128 of the file); `media/paths.tsv` (path, size, mtime
   → id) spares the hash. A path inside the project's folder is kept relative, so a renamed folder hashes
   nothing (t3829). Invalidation needs no delete: a changed file is another id.
+- **A source says what it decodes** (`MediaSource::identity`, durable-moment-key D1, t4111): a file — its
+  name, size and mtime read ONCE at the open (a file removed or replaced under an open decoder keeps its
+  answer), a generator — its values and what it hears, after a retune too. `None` gets an identity of this
+  process (`SourceIdent::once`): its frames are never written to disk. A new source kind whose picture
+  depends on more than that answers `None` or says all of it.
 - **Reel previews are keyed by CONTENT, not by a file (R.58)**: `(seq, hash, media_fp)` — the id of the
   reel, the revision (`kt_engine::content_hash`) and the fingerprint of the files of its tree; any
   discrepancy — `None`. The folder is shared by projects whose reel ids collide, so each project names its

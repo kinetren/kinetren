@@ -100,6 +100,7 @@ pub fn run(args: &[String]) -> i32 {
             source: SourceId(7),
             cache_idx: 0,
             content: 7,
+            leaf: Default::default(),
             src_scale: 1,
             input: kt_engine::video_plan::LayerInput::Frame(Some(frame.clone())),
             fx: kt_engine::LayerChain::Borrowed(fx),

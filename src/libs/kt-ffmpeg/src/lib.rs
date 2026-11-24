@@ -82,13 +82,11 @@ pub fn opening_settings() -> DecodeSettings {
     })
 }
 
-#[cfg_attr(not(feature = "ffmpeg"), allow(dead_code))]
 pub(crate) fn rgba_threads() -> usize {
     opening_settings().rgba_threads.max(1) as usize
 }
 
 /// What the `threads` option of a video decoder says.
-#[cfg_attr(not(feature = "ffmpeg"), allow(dead_code))]
 pub(crate) fn decode_threads() -> String {
     match opening_settings().decode_threads {
         0 => "auto".to_string(),

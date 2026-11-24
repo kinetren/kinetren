@@ -34,5 +34,5 @@ decoded, so a kept composite was found only while its sources were decoded too; 
 
 #### Scenario: A relinked file starts a new history
 - **WHEN** a Datamosh moment is composed, its event's media is replaced by another file under the same media id with the same timing, and the moment is composed again, also through a slot in front of the stage and through a second input
-- **THEN** each time the stage reads the new file: the picture equals a fresh renderer's over a fresh memo
+- **THEN** each time the stage reads the new file, its compiled schedule included (the renderer is not rebuilt): the picture equals a fresh renderer's over a fresh memo
 - **TEST** t4116 (`src/libs/kt-engine/tests/moment_key.rs`)

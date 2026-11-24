@@ -996,8 +996,11 @@ mod tests {
         }
     }
 
-    /// Does the output thread stand still over `d` (a pause parks it with no clock)?
+    /// Does the output thread stand still over `d` (a pause parks it with no clock)? From where its
+    /// designed passes ended: the flags a test waits for are set inside a pass that has one more behind it
+    /// (a close, a pause's check), and under load that one landed in the window (found-defects 782, 967).
     fn parked(out: &AudioOutput, d: Duration) -> bool {
+        settled(out);
         let p0 = out.ctl().passes.load(Ordering::Relaxed);
         std::thread::sleep(d);
         out.ctl().passes.load(Ordering::Relaxed) == p0
@@ -1013,7 +1016,6 @@ mod tests {
         // the thread has STARTED (its first pass), not "50 ms have passed": under load it had not,
         // and its first pass landed inside the quiet window (found-defects 782)
         wait("the output thread started", || ctl.passes.load(Ordering::Relaxed) > 0);
-        settled(&out);
         assert!(!ctl.open.load(Ordering::Acquire), "a device open before Play");
         assert!(parked(&out, Duration::from_millis(300)), "the output thread wakes on a pause");
         player.play();
@@ -1028,7 +1030,6 @@ mod tests {
         // the close has its designed passes after the flag (a device that pauses checks, `PAUSE_CHECK`
         // later, that no callback lands; one that cannot pause is closed and passes once more): the
         // quiet is measured once they are done (found-defects 782)
-        settled(&out);
         assert!(parked(&out, Duration::from_millis(300)), "the output thread wakes on a pause after a play");
         assert_eq!(ctl.opens.load(Ordering::Relaxed), 1);
     }
