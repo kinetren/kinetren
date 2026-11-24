@@ -280,7 +280,15 @@ fn t3833_each_projects_frames_lie_in_its_own_folder() {
     std::fs::create_dir_all(dir.path().join("b")).unwrap();
     let Some((a, moments)) = player(&folder("a"), 0.57) else { return };
     prerender(&a, &moments);
-    // its open segment is committed by then
+    // it comes to rest, its open segment committed: a drop leaves a thread that is still busy behind
+    // (found-defects 980)
+    a.render_cache().set_heavy_for_tests(Some(u64::MAX));
+    a.render_cache().kick();
+    let deadline = kt_time::test_deadline();
+    while !a.render_cache().settled() {
+        assert!(Instant::now() < deadline, "the first player's prerender never came to rest");
+        std::thread::sleep(Duration::from_millis(5));
+    }
     drop(a);
     let files = |root: &std::path::Path| -> Vec<String> {
         let mut v = Vec::new();
@@ -881,6 +889,143 @@ fn t3600_a_run_known_by_one_moment_is_one_segment() {
         .collect();
     assert_eq!(holding.len(), 1, "the run is one segment; written (first tick, moments): {stores:?}");
     assert!((holding[0].0 as i64) < moments[0].0, "it starts before the run's first moment: {stores:?}");
+}
+
+/// Where a test stops a disk, or a decoder.
+#[derive(Default)]
+struct Gate(std::sync::Mutex<bool>, std::sync::Condvar, std::sync::atomic::AtomicUsize);
+
+impl Gate {
+    fn pass(&self) {
+        self.2.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        let mut open = self.0.lock().unwrap();
+        while !*open {
+            open = self.1.wait(open).unwrap();
+        }
+    }
+    fn open(&self) {
+        *self.0.lock().unwrap() = true;
+        self.1.notify_all();
+    }
+    fn met(&self) -> usize {
+        self.2.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+/// Raw segments whose reads wait for the gate.
+struct GatedSegments(std::sync::Arc<Gate>);
+struct GatedReader(std::sync::Arc<Gate>, Box<dyn kt_media::segment::SegmentReader>);
+
+impl kt_media::segment::SegmentReader for GatedReader {
+    fn frame(&mut self, index: u32, w: u32, h: u32, out: &mut Vec<u8>) -> Result<(), String> {
+        self.0.pass();
+        self.1.frame(index, w, h, out)
+    }
+}
+
+impl kt_media::segment::SegmentCodec for GatedSegments {
+    fn codec(&self) -> &str {
+        "raw"
+    }
+    fn writer(&self, path: &std::path::Path, w: u32, h: u32, fps: u32) -> Result<Box<dyn kt_media::segment::SegmentWriter>, String> {
+        kt_engine::render_cache::RawSegments.writer(path, w, h, fps)
+    }
+    fn reader(&self, path: &std::path::Path) -> Result<Box<dyn kt_media::segment::SegmentReader>, String> {
+        Ok(Box::new(GatedReader(self.0.clone(), kt_engine::render_cache::RawSegments.reader(path)?)))
+    }
+    fn extension(&self) -> &str {
+        "rgba"
+    }
+}
+
+/// A source that never gives a frame: what it shows comes from the disk or not at all.
+struct Stuck(Box<dyn MediaSource>, std::sync::Arc<Gate>);
+
+impl MediaSource for Stuck {
+    fn info(&self) -> &kt_media::MediaInfo {
+        self.0.info()
+    }
+    fn identity(&self) -> Option<kt_media::SourceIdent> {
+        self.0.identity()
+    }
+    fn read_audio_burst(&mut self, idx: i64) -> Result<kt_media::AudioBurst, kt_media::MediaError> {
+        self.0.read_audio_burst(idx)
+    }
+    fn read_video_frame(&mut self, p: Tick, q: Option<Quality>) -> Result<kt_media::VideoFrame, kt_media::MediaError> {
+        self.1.pass();
+        self.0.read_video_frame(p, q)
+    }
+    fn keyframe_before(&self, p: Tick) -> Option<Tick> {
+        self.0.keyframe_before(p)
+    }
+}
+
+/// Test t3614 (render-cache-disk D3, found-defects 979): the disk answers a displayed frame late, after an
+/// edit elsewhere and after the new state's moments were looked up: the moment stays bright. The answer wrote
+/// the state it was ASKED at over the newer one, and nothing looked it up again.
+#[test]
+fn t3614_a_late_read_does_not_dim_the_moment() {
+    let root = tempfile::tempdir().unwrap();
+    let Some((a, moments)) = player(root.path(), 0.43) else { return };
+    prerender(&a, &moments);
+    a.render_cache().set_heavy_for_tests(Some(u64::MAX));
+    a.render_cache().kick();
+    let deadline = kt_time::test_deadline();
+    let wait = |what: &str, ok: &dyn Fn() -> bool| {
+        while !ok() {
+            assert!(Instant::now() < deadline, "{what}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
+    wait("the first player never rested", &|| a.render_cache().settled());
+    let p = (*a.project()).clone();
+    drop(a);
+
+    // the same project again: nothing in memory, the decoders stand, and so does the disk
+    let (disk, decoders) = (std::sync::Arc::new(Gate::default()), std::sync::Arc::new(Gate::default()));
+    let sources: Vec<(MediaId, Box<dyn MediaSource>)> = p
+        .media
+        .iter()
+        .map(|m| {
+            let s = kt_media::factory::open_pseudo(&m.path).unwrap().unwrap();
+            (m.id, Box::new(Stuck(s, decoders.clone())) as Box<dyn MediaSource>)
+        })
+        .collect();
+    let (b, _ring) = Player::new(p.clone(), sources);
+    b.set_preview_quality(Quality { width: 160, height: 90 });
+    b.set_video_gpu(Some(kt_gpu::test_engine().unwrap()));
+    b.render_cache().set_heavy_for_tests(Some(u64::MAX));
+    b.render_cache().set_read_wait_for_tests(Some(Duration::from_millis(50)));
+    b.set_render_cache(Some(Config {
+        codec: std::sync::Arc::new(GatedSegments(disk.clone())),
+        root: root.path().to_path_buf(),
+        made: kt_engine::render_cache::Made::of(60),
+        cap: None,
+    }));
+    b.seek(moments[0]);
+    b.render_cache().kick();
+    wait("the bars never drew the disk's moments", &|| bright(&b, &moments) == moments.len());
+    // the displayed frame asks the disk, and goes on without it
+    let _ = b.present_preview(moments[0], PresentOptions { glow: false });
+    wait("the displayed frame asked nothing of the disk", &|| disk.met() > 0);
+
+    // an event far from the moments is edited: the new state's moments are looked up
+    let mut q = p;
+    let end = moments[moments.len() - 1];
+    let far = q.clips.iter_mut().find(|c| c.kind == ClipKind::Video && (c.start > end || c.start + c.duration <= moments[0])).expect("scene guard: an event elsewhere");
+    far.opacity = 0.11;
+    b.set_project(q);
+    b.wait_built();
+    wait("the edit elsewhere dimmed the moments", &|| bright(&b, &moments) == moments.len());
+
+    disk.open();
+    wait("the late read never came", &|| b.render_cache().counts().1 > 0);
+    // what it wrote is written before its count is seen by a second look
+    for _ in 0..10 {
+        assert_eq!(bright(&b, &moments), moments.len(), "the late answer dimmed its moment");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    decoders.open();
 }
 
 /// A source whose name dies with the process, as a placeholder's.

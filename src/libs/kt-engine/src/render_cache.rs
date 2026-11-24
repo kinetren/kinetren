@@ -1295,16 +1295,18 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
             rc.wake.wait_since(seen);
             continue;
         };
+        // the versions before the build, and the build of them: what is looked up with an older build is
+        // not known of a newer version (found-defects 979)
+        let q = parts.quality();
+        let versions = parts.kept_state(q);
         let built = parts.builds.latest();
-        if built.seq < parts.builds.want_seq() {
+        if built.seq < parts.builds.want_seq() || built.version != versions.0 {
             // a build in flight: its version's moments are the ones to make (it lands within a quiet)
             commit(&rc, &mut seg);
             rc.wake.wait_timeout(QUIET);
             continue;
         }
         let video = built.video.clone();
-        let q = parts.quality();
-        let versions = parts.kept_state(q);
         let region = parts
             .loop_region
             .lock()

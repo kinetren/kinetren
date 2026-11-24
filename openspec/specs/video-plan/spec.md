@@ -1760,6 +1760,12 @@ so one heavy project no longer evicts another's loop (project-cache-folder D3).
 - **THEN** after the scan at rest the bars draw the loop as playing without work, with no device work and no decode; after the edit they do not
 - **TEST** t2985 (`src/libs/kt-engine/tests/render_cache.rs`)
 
+#### Scenario: A late read does not dim the moment
+- **PATH** play a prepared range on a disk that stands → on the pause change the opacity of an event elsewhere → the bars over the range are bright again → the disk answers → they stay bright
+- **WHEN** the disk answers a displayed frame after an edit elsewhere, the new state's moments looked up in between
+- **THEN** the moments stay bright: the answer is kept under its key and writes nothing over the newer state
+- **TEST** t3614 (`src/libs/kt-engine/tests/render_cache.rs`)
+
 #### Scenario: The editor prerenders a slow loop by itself and plays it from disk after a restart
 - **PATH** open the heavy project with a one-second loop → Play: the loop plays slowly → Pause and leave the mouse: the program writes the loop's moments to its render cache, then rests → close and open the project again, Play → the loop plays from the disk from its first lap
 - **WHEN** the editor plays a loop under Slowed, VHS Tape and Camera ISP on a software rasterizer, pauses with no input, and is started again on the same project (the encoder forced to the export's software H.264: the virtual screen has no hardware encoder)

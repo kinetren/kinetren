@@ -1904,9 +1904,10 @@ impl PreviewParts {
         span.aux(k::RESTORE).a(r.t.0 as u64).b(pic.rgba.len() as u64).c(r.disk.id());
         drop(span);
         self.rc.restores.fetch_add(1, Ordering::Relaxed);
-        self.rc.note_on_disk(r.t.0, r.disk, r.state);
-        // read late, after an edit: kept under its key all the same, shown only if a plan asks for it
+        // read late, after an edit: kept under its key all the same, shown only if a plan asks for it; and
+        // the moment's newer state, already looked up, is not written over (found-defects 979)
         if self.kept_state(r.q) == r.state {
+            self.rc.note_on_disk(r.t.0, r.disk, r.state);
             self.note_kept(r.t, r.key, r.q);
         }
         Some(r.key)
