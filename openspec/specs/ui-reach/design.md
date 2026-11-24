@@ -782,3 +782,10 @@ Transition", at an edge "<name> — Edge transition" (it was "Transition 12", an
 "Morpher M1, 00:00:03:00" — it has no name of its own: the row and the start are what the timeline shows. The number
 ("#2149") is weak and small: in the chain's fold head after "Video"/"Audio", and in the action row of the transition and
 morpher windows.
+
+## gen-sound-reels (2026-11-24, found-defects 1001)
+
+The sound pairs are the MODEL's command (`SetGenSound`), not a list of `AddClip` the window computes from the open timeline:
+values ("apply to all", a kind change) reach every reel, a command built from one timeline cannot, and an event of a reel
+expanded in place got its pair by the root's track number. The model takes whether the kind sounds as an argument: it does
+not know the generators' sources.

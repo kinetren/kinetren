@@ -52,6 +52,89 @@ fn sync_gen_to_link_group(p: &mut Project, id: ClipId) {
     }
 }
 
+/// The sound events paired with a generator's picture event: the same media and link group.
+fn gen_sound_of(clips: &[ClipEvent], v: &ClipEvent) -> Vec<ClipId> {
+    if v.kind != ClipKind::Video || v.link_group.is_none() {
+        return Vec::new();
+    }
+    clips
+        .iter()
+        .filter(|c| c.kind == ClipKind::Audio && c.media == v.media && c.link_group == v.link_group)
+        .map(|c| c.id)
+        .collect()
+}
+
+/// The next free ids of `Command::SetGenSound`.
+struct GenSoundIds {
+    clip: u64,
+    group: u64,
+}
+
+/// `Command::SetGenSound` in one reel.
+fn set_gen_sound(
+    clips: &mut Vec<ClipEvent>,
+    morphers: &mut [MorpherEvent],
+    transitions: &mut Vec<TransitionEvent>,
+    media: MediaId,
+    only: Option<ClipId>,
+    sounds: bool,
+    ids: &mut GenSoundIds,
+) {
+    let pictures: Vec<ClipId> = clips
+        .iter()
+        .filter(|c| c.media == media && c.kind == ClipKind::Video && only.is_none_or(|id| id == c.id))
+        .map(|c| c.id)
+        .collect();
+    let mut gone: Vec<ClipId> = Vec::new();
+    for id in pictures {
+        let Some(v) = clips.iter().find(|c| c.id == id).cloned() else { continue };
+        let pair = gen_sound_of(clips, &v);
+        if !sounds {
+            gone.extend(pair);
+            continue;
+        }
+        if !pair.is_empty() {
+            continue;
+        }
+        let group = v.link_group.unwrap_or_else(|| {
+            ids.group += 1;
+            GroupId(ids.group - 1)
+        });
+        if let Some(c) = clips.iter_mut().find(|c| c.id == id) {
+            c.link_group = Some(group);
+        }
+        ids.clip += 1;
+        clips.push(ClipEvent {
+            id: ClipId(ids.clip - 1),
+            kind: ClipKind::Audio,
+            lane: 0,
+            link_group: Some(group),
+            fx: Vec::new(),
+            fx_auto: Vec::new(),
+            fx_bypass: Vec::new(),
+            fx_in: Vec::new(),
+            fx_off: false,
+            opacity: 1.0,
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
+            masks: Default::default(),
+            overrides: Vec::new(),
+            ..v
+        });
+    }
+    if gone.is_empty() {
+        return;
+    }
+    clips.retain(|c| !gone.contains(&c.id));
+    transitions.retain(|t| ![t.a, t.b].into_iter().flatten().any(|id| gone.contains(&id)));
+    for m in morphers {
+        if let Some(t) = m.targets.clip_ids_mut() {
+            t.retain(|id| !gone.contains(id));
+        }
+    }
+}
+
 /// Bring the generator's values into agreement with the event's MEDIA (R.59).
 ///
 /// The only place where values appear or vanish on their own: a clip has landed on
@@ -548,6 +631,17 @@ pub enum Command {
         kind: GeneratorKind,
         auto: Vec<ParamCurve>,
     },
+    /// The sound events of a generator's picture events in EVERY reel kept in step with whether it
+    /// sounds (found-defects 1000, 1001): a sounding one gets its linked sound event on audio track 1 of
+    /// its reel, with the picture's values; a silent one loses it. `only` — one picture event, else all
+    /// of the media. New ids go up from `first_id`, new link groups from `first_group`.
+    SetGenSound {
+        media: MediaId,
+        only: Option<ClipId>,
+        sounds: bool,
+        first_id: u64,
+        first_group: u64,
+    },
     LinkClips {
         ids: Vec<ClipId>,
         group: GroupId,
@@ -870,6 +964,17 @@ impl Command {
                     add(Some((lane_key_of(c.kind), c.lane)));
                 }
             }
+            Command::SetGenSound { media, only, sounds, .. } => {
+                for c in p.clips.iter().filter(|c| c.media == *media && only.is_none_or(|id| id == c.id)) {
+                    add(Some((lane_key_of(c.kind), c.lane)));
+                    if *sounds && gen_sound_of(&p.clips, c).is_empty() {
+                        add(Some((LaneKind::Audio, 0)));
+                    }
+                    for s in gen_sound_of(&p.clips, c) {
+                        add(of_clip(s));
+                    }
+                }
+            }
             // transitions live AT the joint of two events; locking either of the rows locks it
             Command::AddTransition(t) | Command::SetTransition(t) => {
                 add(t.a.and_then(of_clip));
@@ -959,6 +1064,7 @@ impl Command {
             | Command::SetMasks { .. }
             | Command::SetFxIn { .. }
             | Command::ApplyGenToAll { .. }
+            | Command::SetGenSound { .. }
             | Command::LinkClips { .. }
             | Command::UnlinkClip { .. }
             | Command::AddTransition(_)
@@ -1216,6 +1322,7 @@ impl Band {
                 | Command::SetClipGen { .. }
                 | Command::SetClipGenAuto { .. }
                 | Command::ApplyGenToAll { .. }
+                | Command::SetGenSound { .. }
                 | Command::LinkClips { .. }
                 | Command::UnlinkClip { .. }
                 | Command::AddTransition(_)
@@ -2268,6 +2375,14 @@ impl TimelineModel {
                 probe.media = *media;
                 kt_check(p, &probe)?;
             }
+            Command::SetGenSound { media, first_id, first_group, .. } => {
+                if p.gen_media_path(*media).is_none() {
+                    return Err(CommandError::MediaNotFound(*media));
+                }
+                if *first_id <= p.max_clip_id() || *first_group <= p.max_group_id() {
+                    return Err(CommandError::IdInUse(*first_id));
+                }
+            }
             Command::SetSettings { settings } => {
                 if settings.fps == 0 || kt_time::TICK_HZ % settings.fps as i64 != 0 {
                     return Err(CommandError::InvalidClip(ProjectError::BadFps));
@@ -2674,6 +2789,17 @@ impl TimelineModel {
                 for s in &mut p.sequences {
                     apply(&mut s.clips);
                 }
+            }
+            Command::SetGenSound { media, only, sounds, first_id, first_group } => {
+                let mut ids = GenSoundIds { clip: first_id, group: first_group };
+                set_gen_sound(&mut p.clips, &mut p.morphers, &mut p.transitions, media, only, sounds, &mut ids);
+                let lanes = u32::from(p.clips.iter().any(|c| c.kind == ClipKind::Audio));
+                p.ensure_tracks(LaneKind::Audio, lanes);
+                for s in &mut p.sequences {
+                    set_gen_sound(&mut s.clips, &mut s.morphers, &mut s.transitions, media, only, sounds, &mut ids);
+                    s.ensure_tracks(LaneKind::Audio, u32::from(s.clips.iter().any(|c| c.kind == ClipKind::Audio)));
+                }
+                p.assign_track_ids();
             }
             Command::LinkClips { ids, group } => {
                 for c in &mut p.clips {

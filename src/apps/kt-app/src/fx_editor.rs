@@ -1453,9 +1453,9 @@ impl KtApp {
                 && let Some(kind) = c.r#gen.clone()
             {
                 // every event of the generator takes the values, and the sound that goes with them
-                let (remove, add) = self.gen_pair_cmds(c.media, None, &kind);
-                let set = Command::ApplyGenToAll { media: c.media, kind, auto: c.gen_auto.clone() };
-                self.apply_batch(remove.into_iter().chain(std::iter::once(set)).chain(add).collect());
+                let set = Command::ApplyGenToAll { media: c.media, kind: kind.clone(), auto: c.gen_auto.clone() };
+                let cmds = self.with_gen_sound(c.media, None, &kind, set);
+                self.apply_batch(cmds);
             }
         }
         // the slot masks moved with their slots (after `SetFx`, which trimmed them)

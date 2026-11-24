@@ -1709,7 +1709,7 @@ selected event (a solid colour on a video track, a tone on an audio track), at t
 With nothing selected it SHALL create a solid colour on video track 1. Its window SHALL open, and the
 kind SHALL be changed in the window's gallery. A kind change, from the gallery or from the bin card,
 SHALL keep the generator's sound pair in step in the same history step: a kind that sounds beside its
-picture SHALL have its linked sound event on audio track 1, and a kind with no sound SHALL have none. A value edit that switches the generator's sound on or off (SMPTE's tone, Sync flash's beep) SHALL do the same in its own history step for the edited event alone, whose new sound event SHALL carry the edited values (found-defects 1000); "apply to all" SHALL do it for every event of the generator, and the window's Cancel SHALL take it back.
+picture SHALL have its linked sound event on audio track 1, and a kind with no sound SHALL have none. A value edit that switches the generator's sound on or off (SMPTE's tone, Sync flash's beep) SHALL do the same in its own history step for the edited event alone, whose new sound event SHALL carry the edited values (found-defects 1000); "apply to all" and a kind change SHALL do it for every event of the generator in every reel (found-defects 1001), and the window's Cancel SHALL take it back.
 Why: the owner, kkt-26.11.20 line 4 (A1): "Один пункт, по дорожке (Recommended)".
 
 #### Scenario: Edit and the bin by the selected track
@@ -1729,6 +1729,12 @@ Why: the owner, kkt-26.11.20 line 4 (A1): "Один пункт, по дорож�
 - **THEN** the bars stand alone; the tick brings a sound event on A1 under them, linked, with the ticked values (the meters move when it plays), and leaves another event of the same bars silent; the untick, through either half, takes it; one Ctrl+Z gives it back
 - **PATH** Edit → "Create a generator…" → Kind → SMPTE bars → tick "Tone" → a sound event appears on A1 under the bars → untick → it goes → Ctrl+Z → it is back
 - **TEST** t3720 (`src/apps/kt-app/src/gen_audio_tests.rs`), live `gen_technical`
+
+#### Scenario: Apply to all reaches the sound in every reel
+- **WHEN** SMPTE bars stand in the edit and twice inside a reel, one of them linked already; "Tone" is ticked on the edit's and "Apply to all" pressed; then the kind is changed to a solid colour and undone
+- **THEN** each picture event of the reel gets its sound event on its audio track 1, linked to it alone, with the ticked values, in one history step; the solid colour takes them from every reel; undo gives them back
+- **PATH** SMPTE bars in the edit and the same bars inside a reel → in the edit's event window tick "Tone" → "Apply to all" → enter the reel: a sound event stands under its bars → Ctrl+Z: it is gone
+- **TEST** t3724 (`src/apps/kt-app/src/gen_audio_tests.rs`)
 
 ### Requirement: A form uses the width it is given
 Every form of parameter rows — effect, morpher, transition, camera, track, generator and title forms,
