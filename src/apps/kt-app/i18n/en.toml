@@ -2103,7 +2103,7 @@ differs_duration = "The camera's copy is another length: {0} s here, {1} s there
 differs_frames = "The camera's copy has another count of frames: {0} here, {1} there"
 differs_sound = "The sound of the camera's copy is another length: {0} s here, {1} s there"
 unreadable = "The camera's copy cannot be read: {0}"
-frames = "Frames: {0}, read {1}, written {2}"
+frames = "Frames on disk: {0}, read {1}, written {2}"
 copies = "Source copies: {0}, read {1}, written {2}"
 
 # The deck face of the VHS tape simulation (vhs-tape-simulation, D11).

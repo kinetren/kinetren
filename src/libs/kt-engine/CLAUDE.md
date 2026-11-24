@@ -209,7 +209,9 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   `Thumbnail`, its device work at class `background`. No export reads it. With no `Config` (tests,
   the CLI without `--render-cache`) nothing changes. t2980–t2985, t2988. A thread stopped by the PROCESS's end
   (`shutdown::ending`) leaves its open segment (and an unfinished source copy) with no call to the disk; a player
-  dropped in a running program commits it (t3611).
+  dropped in a running program commits it (t3611). What changes the state it looks up notifies its wake: a
+  composite's cost, Play, pause, a published build, a quality (found-defects 974); a look-up the person broke off is
+  made again at their rest, and `set_notify` tells the interface when the bars may be brighter.
 - **The preview's source copies** (`copies.rs`, persistent-cache D3, t3443, t3444, t3446, t3449): the player's
   `source-copies` thread alone picks each file's copy for the preview's decode size, swaps it in and makes a missing
   one at rest (class background, a short-lived source: invariant 5). A swap is `MediaParts::swap_picture`, never

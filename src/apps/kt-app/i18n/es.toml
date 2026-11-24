@@ -2098,7 +2098,7 @@ differs_duration = "La copia de la cámara dura otra cosa: {0} s aquí, {1} s al
 differs_frames = "La copia de la cámara tiene otro número de fotogramas: {0} aquí, {1} allí"
 differs_sound = "El sonido de la copia de la cámara dura otra cosa: {0} s aquí, {1} s allí"
 unreadable = "No se puede leer la copia de la cámara: {0}"
-frames = "Fotogramas: {0}, leídos {1}, escritos {2}"
+frames = "Fotogramas en disco: {0}, leídos {1}, escritos {2}"
 copies = "Copias de archivos: {0}, leídas {1}, escritas {2}"
 
 # The deck face of the VHS tape simulation (vhs-tape-simulation, D11).

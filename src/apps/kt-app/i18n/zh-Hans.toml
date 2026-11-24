@@ -2098,7 +2098,7 @@ differs_duration = "相机副本的长度不同：此处 {0} 秒，彼处 {1} �
 differs_frames = "相机副本的帧数不同：此处 {0}，彼处 {1}"
 differs_sound = "相机副本的声音长度不同：此处 {0} 秒，彼处 {1} 秒"
 unreadable = "无法读取相机副本：{0}"
-frames = "帧：{0}，已读 {1}，已写 {2}"
+frames = "磁盘上的帧：{0}，已读 {1}，已写 {2}"
 copies = "文件副本：{0}，已读 {1}，已写 {2}"
 
 # The deck face of the VHS tape simulation (vhs-tape-simulation, D11).

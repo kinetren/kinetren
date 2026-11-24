@@ -110,6 +110,21 @@ per moment; nothing runs at rest once the heavy moments are written. A quality c
 - **A host with no hardware encoder makes no copy** (the owner's rule, row 775); the reason is shown.
 - **The copies' decoder** is opened by `FfmpegCopies::copy` alone, so `device-decode-sources` takes over one call.
 
+## Found while building (section 4)
+
+- **The disk tier was not told of an edit** (found-defects 974). Its thread woke on a composite's cost, Play and pause;
+  an edit beside the range, with the playhead on a kept moment, costs nothing. The class — a thread that parks on a wake
+  nobody gives for a change its answer depends on — walked over every parked thread of the player: `prefetch` and the
+  render thread are woken by every published build and quality (`wait_since`'s list), `preview-compose` by its asks,
+  `source-copies` by builds, qualities, raises, play and pause (section 3), `render-ahead` by play and by each shown
+  moment. Only `render-cache` missed the build and the quality. A look-up the person breaks off is made again at their
+  rest, and the interface is told when the bars may be brighter.
+- **One row in the Diagnostics window, not a section.** The window's floors leave no height: three rows pushed the
+  journal off a 720-point window (t1968) and made it grow (t918). The two kinds stand side by side in one row, shown with
+  a store to speak of; the mode and the encoder are in its hint.
+- **The switch shows the disk and the value; its list is headed "Persistent cache".** Its width may not follow the
+  window (t790), and the whole name does not fit the row at 900 points.
+
 ## Rejected
 
 - **Layer results at heavy cut points (revision 3)** — rejected by the owner (D1): a second store of pictures that are

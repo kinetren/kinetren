@@ -94,6 +94,14 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
   decoders) after dropping its lock in place. `KtApp::open` stays synchronous for the start and tests.
   `set_media_grace`/`hold_loads_for_tests` are the tests' seams for a load in flight.
 
+## The persistent cache (persistent-cache)
+
+- **One place sets it: `KtApp::set_persistent_cache`** (`copies_ui.rs`): the disk tier of frames and the source copies,
+  by the mode in the start record (`cache_mode`; it outlives File → New, so `replace_with` and `run` set it again after
+  the store comes). "Off" drops the frames' store and gives a playing copy's place back to the original; the files stay.
+- A card's mark is laid out once per `Copies::stamp`, never per frame; its state reaches the interface by
+  `Copies::set_notify` (`wake::soon`), the bars by `RenderCache::set_notify`. No text says "proxy" (t3450).
+
 ## Closing the program (close-while-busy, kkt-26.11.18 T1)
 
 - **A disk call of the close runs through `close_write`** (found-defects 831, 971, t3609): on a thread, bounded, named
