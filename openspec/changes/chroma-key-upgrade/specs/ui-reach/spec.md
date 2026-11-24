@@ -22,4 +22,5 @@ Why: F-MSK-004 trick 1 — a key cannot be tuned without seeing its matte; UI ru
 #### Scenario: The internal view stage is nowhere to be picked
 - **WHEN** the effect picker, the library and the guides' list are read, and a project file holding a `matte_view` slot is opened
 - **THEN** none of them names it; the file is refused naming the slot
+- **PATH** effects window → "+" → search "matte" → no such effect → File → Open a file that holds the stage → an error naming the slot, the open project stays
 - **TEST** t3566 (`src/apps/kt-app/src/reach_tests.rs`)
