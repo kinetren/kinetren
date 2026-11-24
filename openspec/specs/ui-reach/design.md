@@ -787,5 +787,6 @@ morpher windows.
 
 The sound pairs are the MODEL's command (`SetGenSound`), not a list of `AddClip` the window computes from the open timeline:
 values ("apply to all", a kind change) reach every reel, a command built from one timeline cannot, and an event of a reel
-expanded in place got its pair by the root's track number. The model takes whether the kind sounds as an argument: it does
+expanded in place got its pair by the root's track number (the command runs in the working view, so it carries the strips'
+rows). The model takes whether the kind sounds as an argument: it does
 not know the generators' sources.

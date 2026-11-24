@@ -5262,6 +5262,12 @@ impl KtApp {
             sounds,
             first_id: self.next_clip_id(),
             first_group: self.next_group_id(),
+            strips: self
+                .model
+                .bands()
+                .iter()
+                .map(|b| (b.base.get(LaneKind::Video), b.len.get(LaneKind::Video), b.base.get(LaneKind::Audio)))
+                .collect(),
         };
         // a sound half goes before the values that silence it, and comes after the ones it copies
         if sounds { vec![set, sound] } else { vec![sound, set] }

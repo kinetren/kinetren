@@ -64,6 +64,11 @@ fn gen_sound_of(clips: &[ClipEvent], v: &ClipEvent) -> Vec<ClipId> {
         .collect()
 }
 
+/// The audio row of a picture event's sound: track 1 of its reel.
+fn gen_sound_lane(strips: &[(u32, u32, u32)], v: &ClipEvent) -> u32 {
+    strips.iter().find(|(from, n, _)| (*from..*from + *n).contains(&v.lane)).map_or(0, |(_, _, audio)| *audio)
+}
+
 /// The next free ids of `Command::SetGenSound`.
 struct GenSoundIds {
     clip: u64,
@@ -75,9 +80,7 @@ fn set_gen_sound(
     clips: &mut Vec<ClipEvent>,
     morphers: &mut [MorpherEvent],
     transitions: &mut Vec<TransitionEvent>,
-    media: MediaId,
-    only: Option<ClipId>,
-    sounds: bool,
+    (media, only, sounds, strips): (MediaId, Option<ClipId>, bool, &[(u32, u32, u32)]),
     ids: &mut GenSoundIds,
 ) {
     let pictures: Vec<ClipId> = clips
@@ -107,7 +110,7 @@ fn set_gen_sound(
         clips.push(ClipEvent {
             id: ClipId(ids.clip - 1),
             kind: ClipKind::Audio,
-            lane: 0,
+            lane: gen_sound_lane(strips, &v),
             link_group: Some(group),
             fx: Vec::new(),
             fx_auto: Vec::new(),
@@ -634,13 +637,16 @@ pub enum Command {
     /// The sound events of a generator's picture events in EVERY reel kept in step with whether it
     /// sounds (found-defects 1000, 1001): a sounding one gets its linked sound event on audio track 1 of
     /// its reel, with the picture's values; a silent one loses it. `only` — one picture event, else all
-    /// of the media. New ids go up from `first_id`, new link groups from `first_group`.
+    /// of the media. New ids go up from `first_id`, new link groups from `first_group`. `strips` — the
+    /// reels expanded in place (video rows from, how many, their first audio row): the command runs in
+    /// the working view, where such a reel's track 1 is a row of the root.
     SetGenSound {
         media: MediaId,
         only: Option<ClipId>,
         sounds: bool,
         first_id: u64,
         first_group: u64,
+        strips: Vec<(u32, u32, u32)>,
     },
     LinkClips {
         ids: Vec<ClipId>,
@@ -964,11 +970,11 @@ impl Command {
                     add(Some((lane_key_of(c.kind), c.lane)));
                 }
             }
-            Command::SetGenSound { media, only, sounds, .. } => {
+            Command::SetGenSound { media, only, sounds, strips, .. } => {
                 for c in p.clips.iter().filter(|c| c.media == *media && only.is_none_or(|id| id == c.id)) {
                     add(Some((lane_key_of(c.kind), c.lane)));
                     if *sounds && gen_sound_of(&p.clips, c).is_empty() {
-                        add(Some((LaneKind::Audio, 0)));
+                        add(Some((LaneKind::Audio, gen_sound_lane(strips, c))));
                     }
                     for s in gen_sound_of(&p.clips, c) {
                         add(of_clip(s));
@@ -2790,13 +2796,13 @@ impl TimelineModel {
                     apply(&mut s.clips);
                 }
             }
-            Command::SetGenSound { media, only, sounds, first_id, first_group } => {
+            Command::SetGenSound { media, only, sounds, first_id, first_group, strips } => {
                 let mut ids = GenSoundIds { clip: first_id, group: first_group };
-                set_gen_sound(&mut p.clips, &mut p.morphers, &mut p.transitions, media, only, sounds, &mut ids);
+                set_gen_sound(&mut p.clips, &mut p.morphers, &mut p.transitions, (media, only, sounds, &strips), &mut ids);
                 let lanes = u32::from(p.clips.iter().any(|c| c.kind == ClipKind::Audio));
                 p.ensure_tracks(LaneKind::Audio, lanes);
                 for s in &mut p.sequences {
-                    set_gen_sound(&mut s.clips, &mut s.morphers, &mut s.transitions, media, only, sounds, &mut ids);
+                    set_gen_sound(&mut s.clips, &mut s.morphers, &mut s.transitions, (media, only, sounds, &[]), &mut ids);
                     s.ensure_tracks(LaneKind::Audio, u32::from(s.clips.iter().any(|c| c.kind == ClipKind::Audio)));
                 }
                 p.assign_track_ids();

@@ -756,4 +756,37 @@ fn t3724_apply_to_all_brings_the_sound_to_every_reel() {
     h.state_mut().undo();
     h.step();
     assert_eq!(reel(&h).clips.len(), 2, "one Ctrl+Z takes the whole “apply to all”");
+    // the reel expanded in place: the sound stands on ITS track 1, a row of the working view
+    {
+        let app = h.state_mut();
+        let mut p = app.model.document();
+        p.clips.push(ClipEvent {
+            id: ClipId(950),
+            media: MediaId(900),
+            r#gen: None,
+            link_group: None,
+            start: kt_time::Tick(90_000 * 20),
+            duration: kt_time::Tick(90_000 * 5),
+            ..p.clips[0].clone()
+        });
+        p.validate().unwrap();
+        app.fx_editors.clear();
+        app.model = kt_model::TimelineModel::new(p);
+        app.model_rev += 1;
+        app.expand_in_place(ClipId(950));
+    }
+    h.step();
+    assert_eq!(h.state().model.bands().len(), 1, "the reel is expanded");
+    let on = h.state().model.clip(ClipId(901)).unwrap().r#gen.clone().map(|mut g| {
+        kt_model::HasParams::set_flag(&mut g, "tone", true);
+        g
+    });
+    let cmds = h.state().gen_value_cmds(ClipId(901), &on.unwrap()).expect("the sound flips");
+    let root = h.state().model.document().clips.len();
+    assert!(h.state_mut().apply_batch(cmds), "the batch is accepted");
+    let r = reel(&h);
+    assert_eq!((r.clips.len(), h.state().model.document().clips.len()), (3, root), "the sound is the reel's");
+    let a = r.clips.iter().find(|c| c.kind == ClipKind::Audio).unwrap();
+    let v = r.clips.iter().find(|c| c.id == ClipId(901)).unwrap();
+    assert_eq!((a.lane, a.start, a.link_group), (0, v.start, v.link_group));
 }
