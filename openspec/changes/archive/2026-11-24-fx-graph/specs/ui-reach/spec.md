@@ -84,5 +84,5 @@ rule 17 — one widget. U8 — "2-3 ползунка, но … как умест
 #### Scenario: The node editor costs nothing at rest
 - **PATH** open the FX window and the morpher window on the heavy showcase project carrying VHS Tape, Datamosh and Camera ISP → move the mouse over a node and leave it still → only the hover tint changes → wait → no frame is asked
 - **WHEN** the editor is open and nothing moves
-- **THEN** the work counters show no layout of the editor on a hover frame and no frame at rest; the live idle run with both windows open stays at its rest load
-- **TEST** t3003 (`src/apps/kt-app/src/idle_tests.rs`), t3006 live `idle` (`src/scripts/live/idle.py`)
+- **THEN** the work counters show no layout of the editor on a hover frame and no frame at rest, with one window open or with both; the live idle run with an effects window, then a track's, stays at its rest load
+- **TEST** t3003, t3006 (`src/apps/kt-app/src/idle_tests.rs`), live `idle` (`src/scripts/live/idle.py`)

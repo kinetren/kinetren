@@ -232,6 +232,33 @@ pub enum Ev {
     StreamHeld = 124,
     /// A project's cache folder (project-cache-folder D8): `aux` the [`cache_folder`] kind.
     CacheFolder = 125,
+    /// A wait inside a frame's device part past [`GPU_WAIT_NOTED`] (gpu-waits-named; a span): `aux` what
+    /// was waited for (a [`name`]: a lock, a turn, one device call, a file), `a` 1 — one call into the
+    /// device, 2 — a lock or a turn somebody else held, 3 — a file, `b` the device's role (a [`name`]; 0 —
+    /// not a device's).
+    GpuWait = 126,
+}
+
+/// The shortest wait a [`Ev::GpuWait`] is written for: shorter ones are the call itself.
+pub const GPU_WAIT_NOTED: std::time::Duration = std::time::Duration::from_micros(500);
+
+/// What kind of wait ([`Ev::GpuWait`] `a`).
+pub mod gpu_wait {
+    /// One call into the device (a submission, a poll, a pipeline's creation, an upload).
+    pub const CALL: u64 = 1;
+    /// A lock or a turn somebody else held.
+    pub const LOCK: u64 = 2;
+    /// A file read or written.
+    pub const FILE: u64 = 3;
+
+    pub fn name(a: u64) -> &'static str {
+        match a {
+            CALL => "call",
+            LOCK => "lock",
+            FILE => "file",
+            _ => "?",
+        }
+    }
 }
 
 /// Where a stream picture crossed ([`Ev::StreamCross`] `aux`).
@@ -243,7 +270,7 @@ pub mod cross {
 }
 
 impl Ev {
-    pub const ALL: [Ev; 60] = [
+    pub const ALL: [Ev; 61] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -304,6 +331,7 @@ impl Ev {
         Ev::StreamCross,
         Ev::StreamHeld,
         Ev::CacheFolder,
+        Ev::GpuWait,
     ];
 
     pub fn from_u16(v: u16) -> Option<Ev> {
@@ -372,6 +400,7 @@ impl Ev {
             Ev::StreamCross => "stream_cross",
             Ev::StreamHeld => "stream_held",
             Ev::CacheFolder => "cache_folder",
+            Ev::GpuWait => "gpu_wait",
         }
     }
 }
@@ -450,6 +479,9 @@ pub mod wait {
     pub const NEST: u32 = 7;
     /// The shared build of the state asked for (`dur`): the compose thread waited for it.
     pub const BUILD: u32 = 8;
+    /// The disk tier's read of this moment (`dur`), `a` 1 — it came in time, 0 — the frame went on
+    /// without it (gpu-waits-named).
+    pub const DISK: u32 = 9;
 }
 
 /// `FrameExec.aux` bits.

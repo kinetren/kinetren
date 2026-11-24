@@ -1174,11 +1174,13 @@ impl Player {
     /// Injection of the video GPU executor (R.29). None — no picture.
     /// Clears the “poisoning” (a new engine = a new attempt).
     pub fn set_video_gpu(&self, exec: Option<Arc<dyn VideoGpuExec>>) {
-        {
+        // the old engine goes with the lock free: its drop waits its device's gate (gpu-waits-named)
+        let old = {
             let mut g = self.video_gpu.lock().unwrap();
-            g.exec = exec;
             g.poisoned = None;
-        }
+            std::mem::replace(&mut g.exec, exec)
+        };
+        drop(old);
         // a new executor has warmed nothing of this project yet
         self.prewarm_now();
         // and has not been told the loop to keep (the prefetch thread tells it)
@@ -1434,6 +1436,16 @@ fn locked<'a, T>(m: &'a Mutex<T>, frame: u64, what: &'static str) -> std::sync::
 
 /// A job that reads what the preview holds for one moment (`Player::kept_picture_reader`).
 pub type KeptReader = Box<dyn FnOnce() -> Option<crate::render_cache::Picture> + Send>;
+
+/// One moment the disk tier may hold: the display's key, the durable one, the size, the quality and the state asked at.
+struct Restorable {
+    t: Tick,
+    key: u64,
+    disk: crate::render_cache::DiskKey,
+    size: (u32, u32),
+    q: Quality,
+    state: KeptState,
+}
 
 /// What a composite needs of the player, shared with its thread.
 #[derive(Clone)]
@@ -1802,9 +1814,6 @@ impl PreviewParts {
         }
     }
 
-    /// The moment `t` from disk into the display's memo (render-cache-disk D3): `Some(key)` — the key the
-    /// display now holds it under (already held, or restored now); `None` — the tier is off, the
-    /// moment has no key or the store does not hold it. Asks no decode and runs no stage.
     /// `Player::kept_picture_reader`'s body: the kept composite of `t`, read back, or the disk tier's.
     pub(crate) fn kept_picture(&self, t: Tick, want: u64) -> Option<crate::render_cache::Picture> {
         let built = self.builds.latest();
@@ -1826,43 +1835,73 @@ impl PreviewParts {
         self.rc.store(display.info())?.get(self.rc.key(&plan)?)
     }
 
+    /// The moment `t` from disk into the display's memo (render-cache-disk D3): `Some(key)` — the key the
+    /// display now holds it under (already held, or restored now); `None` — the tier is off, the
+    /// moment has no key or the store does not hold it. Asks no decode and runs no stage. It stands on
+    /// the disk as long as the disk does: the displayed frame asks `restore_in_time`.
     pub(crate) fn restore_from_disk(&self, display: &Arc<dyn VideoGpuExec>, video: &VideoRenderer, t: Tick, q: Quality) -> Option<u64> {
-        use kt_time::trace::{self, render_cache as k, Ev};
+        let r = self.restorable(display, video, t, q)?;
+        if display.holds(r.key) {
+            self.note_kept(t, r.key, q);
+            return Some(r.key);
+        }
+        self.restore(display, r)
+    }
+
+    /// `restore_from_disk` for the displayed frame: its thread waits for the read at most a bound, and
+    /// asks none while an earlier one still stands on the disk (gpu-waits-named).
+    fn restore_in_time(&self, display: &Arc<dyn VideoGpuExec>, video: &VideoRenderer, t: Tick, q: Quality) -> Option<u64> {
+        let r = self.restorable(display, video, t, q)?;
+        if display.holds(r.key) {
+            self.note_kept(t, r.key, q);
+            return Some(r.key);
+        }
+        if !self.rc.may_hold(display.info(), r.disk) {
+            return None;
+        }
+        let (parts, exec) = (self.clone(), display.clone());
+        let bound = self.rc.read_wait(self.transport.is_playing());
+        self.rc.read_within(bound, move || parts.restore(&exec, r))
+    }
+
+    /// What a restore of `t` needs of the plan; `None` — the tier is off or the moment has no key.
+    fn restorable(&self, display: &Arc<dyn VideoGpuExec>, video: &VideoRenderer, t: Tick, q: Quality) -> Option<Restorable> {
         if !self.rc.is_on() {
             return None;
         }
-        let store = self.rc.store(display.info())?;
         let state = self.kept_state(q);
         let plan = video.probe_plan(&self.cache, t, q);
         // kept under the moment's own key: a composed one replaces it
-        let key = display.present_key(&plan)?;
-        let dk = self.rc.key(&plan)?;
-        let (w, h) = (plan.out_w, plan.out_h);
-        drop(plan);
-        if display.holds(key) {
-            self.note_kept(t, key, q);
-            return Some(key);
-        }
-        if !store.contains(dk) {
+        Some(Restorable { t, key: display.present_key(&plan)?, disk: self.rc.key(&plan)?, size: (plan.out_w, plan.out_h), q, state })
+    }
+
+    /// The store's picture of `r` into the display's memo: opens the store and reads the disk.
+    fn restore(&self, display: &Arc<dyn VideoGpuExec>, r: Restorable) -> Option<u64> {
+        use kt_time::trace::{self, render_cache as k, Ev};
+        let store = self.rc.store(display.info())?;
+        if !store.contains(r.disk) {
             return None;
         }
         let mut span = trace::span(Ev::RenderCache);
-        let pic = store.get(dk);
-        let Some(pic) = pic.filter(|p| (p.w, p.h) == (w, h)) else {
+        let pic = store.get(r.disk);
+        let Some(pic) = pic.filter(|p| (p.w, p.h) == r.size) else {
             span.cancel();
             return None;
         };
-        display.keep(key, pic.w, pic.h, &pic.rgba);
-        if !display.holds(key) {
+        display.keep(r.key, pic.w, pic.h, &pic.rgba);
+        if !display.holds(r.key) {
             span.cancel();
             return None;
         }
-        span.aux(k::RESTORE).a(t.0 as u64).b(pic.rgba.len() as u64).c(dk.id());
+        span.aux(k::RESTORE).a(r.t.0 as u64).b(pic.rgba.len() as u64).c(r.disk.id());
         drop(span);
         self.rc.restores.fetch_add(1, Ordering::Relaxed);
-        self.rc.note_on_disk(t.0, dk, state);
-        self.note_kept(t, key, q);
-        Some(key)
+        self.rc.note_on_disk(r.t.0, r.disk, r.state);
+        // read late, after an edit: kept under its key all the same, shown only if a plan asks for it
+        if self.kept_state(r.q) == r.state {
+            self.note_kept(r.t, r.key, r.q);
+        }
+        Some(r.key)
     }
 
     /// Ask the layers of the moment `t` the cache lacks of the player's workers at `prio`; how many.
@@ -1924,7 +1963,7 @@ impl PreviewParts {
         plan_span.id(frame).a(key).c(trace::route::DISPLAY);
         drop(plan_span);
         // not held: the disk tier may have it (render-cache-disk D3)
-        let key = if exec.holds(key) { key } else { self.restore_from_disk(&exec, video, t, q)? };
+        let key = if exec.holds(key) { key } else { self.restore_in_time(&exec, video, t, q)? };
         let mut exec_span = trace::span(Ev::FrameExec);
         let shown = match to {
             Kept::Display(o) => exec.present_kept(key, o),

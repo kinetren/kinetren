@@ -230,7 +230,9 @@ impl UploadCache {
             },
             wgpu::Extent3d { width: frame.width, height: frame.height, depth_or_array_layers: 1 },
         );
-        self.spent_ns += mark.elapsed().as_nanos() as u64;
+        let took = mark.elapsed();
+        crate::holds::note_wait("upload", kt_time::trace::gpu_wait::CALL, None, took);
+        self.spent_ns += took.as_nanos() as u64;
         self.spent_bytes += frame.rgba.len() as u64;
         let view = tex.view.clone();
         self.bytes += tex_bytes(frame.width, frame.height);

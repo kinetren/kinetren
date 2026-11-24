@@ -418,12 +418,12 @@ impl Compiled {
     /// call of ours stalled under the lock — a 10 s variant compile on an empty Mesa cache, a disk
     /// stall — makes the others wait instead of killing them. Elsewhere `None`: no lock to share.
     pub(crate) fn gl_gate(&self) -> Option<std::sync::MutexGuard<'_, ()>> {
-        self.gl_gate.as_ref().map(|g| g.lock().unwrap_or_else(|e| e.into_inner()))
+        self.gl_gate.as_ref().map(|g| crate::holds::lock(g, "gl gate", Some(self.role)))
     }
 
     /// A frame starts composing on the device; it ends when the guard drops.
     pub(crate) fn frame(&self) -> FrameGuard<'_> {
-        *self.frames.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+        *crate::holds::lock(&self.frames, "frame count", Some(self.role)) += 1;
         FrameGuard(self)
     }
 
@@ -497,7 +497,7 @@ impl Compiled {
     /// The warm pipeline of a geometry shape, or `None` while the interpreter runs it: a shape seen
     /// for the first time goes to the worker (D4).
     pub(crate) fn shape(self: &Arc<Self>, h: [u32; 4]) -> Option<wgpu::RenderPipeline> {
-        let mut shapes = self.shapes.lock().unwrap_or_else(|e| e.into_inner());
+        let mut shapes = crate::holds::lock(&self.shapes, "shapes", Some(self.role));
         match shapes.get(&h) {
             Some(Shape::Ready(p)) => p.clone(),
             Some(Shape::Pending) => None,
@@ -515,7 +515,7 @@ impl Compiled {
     /// split, or — while its trial lasts — alternately fused and as its parts, each timed. `trial`
     /// false: a warm shape runs fused with no trial (an engine whose fusion is forced on).
     pub(crate) fn run_use(self: &Arc<Self>, key: &[u16], trial: bool) -> RunUse {
-        let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+        let mut runs = crate::holds::lock(&self.runs, "runs", Some(self.role));
         let (map, ids) = &mut *runs;
         if let Some(r) = map.get_mut(key) {
             return match &r.pipe {
@@ -552,14 +552,14 @@ impl Compiled {
     /// the text. No trial and no timing: an export's frame is a function of its plan and its device.
     pub(crate) fn run_settled(&self, key: &[u16]) -> Option<wgpu::RenderPipeline> {
         {
-            let runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+            let runs = crate::holds::lock(&self.runs, "runs", Some(self.role));
             if let Some(RunShape { pipe: Shape::Ready(p), .. }) = runs.0.get(key) {
                 return p.clone();
             }
         }
         crate::compiled::in_frame();
         let pipe = self.run_pipe(key);
-        let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+        let mut runs = crate::holds::lock(&self.runs, "runs", Some(self.role));
         let (map, ids) = &mut *runs;
         match map.get_mut(key) {
             Some(r) => match &r.pipe {
@@ -578,7 +578,7 @@ impl Compiled {
 
     /// A timed piece of a trying shape: device ns over its pixels.
     pub(crate) fn note_run(&self, (p, ns): crate::runs::Sample) {
-        let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+        let mut runs = crate::holds::lock(&self.runs, "runs", Some(self.role));
         let (map, ids) = &mut *runs;
         let Some(key) = ids.get(p.shape as usize) else { return };
         let Some(r) = map.get_mut(key) else { return };
@@ -604,7 +604,7 @@ impl Compiled {
 
     /// Compile and warm, on the worker, the run shapes `keys` no frame or prewarm asked before.
     pub(crate) fn prewarm_runs(self: &Arc<Self>, keys: Vec<Vec<u16>>) {
-        let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+        let mut runs = crate::holds::lock(&self.runs, "runs", Some(self.role));
         let mut fresh = Vec::new();
         for key in keys {
             let (map, ids) = &mut *runs;
@@ -624,7 +624,7 @@ impl Compiled {
 
     /// Run shapes with a warm pipeline of their own, and their verdicts (fused, split).
     pub(crate) fn runs_ready(&self) -> (usize, usize, usize) {
-        let runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+        let runs = crate::holds::lock(&self.runs, "runs", Some(self.role));
         let ready = runs.0.values().filter(|r| matches!(r.pipe, Shape::Ready(Some(_)))).count();
         let verdict = |v| runs.0.values().filter(|r| r.trial.as_ref().is_some_and(|t| t.verdict == v)).count();
         (ready, verdict(crate::runs::Verdict::Fused), verdict(crate::runs::Verdict::Split))
@@ -632,12 +632,12 @@ impl Compiled {
 
     /// How many shapes have a warm pipeline of their own.
     pub(crate) fn shapes_ready(&self) -> usize {
-        self.shapes.lock().unwrap_or_else(|e| e.into_inner()).values().filter(|s| matches!(s, Shape::Ready(Some(_)))).count()
+        crate::holds::lock(&self.shapes, "shapes", Some(self.role)).values().filter(|s| matches!(s, Shape::Ready(Some(_)))).count()
     }
 
     /// Warm what the effects `ids` reach, and the core the first time (D5). Returns at once.
     pub(crate) fn prewarm(self: &Arc<Self>, ids: &[String]) {
-        let mut asked = self.asked.lock().unwrap_or_else(|e| e.into_inner());
+        let mut asked = crate::holds::lock(&self.asked, "asked", Some(self.role));
         let mut slots = Vec::new();
         if !asked.core {
             asked.core = true;
@@ -804,7 +804,7 @@ impl Compiled {
             self.kit.draw(&self.device, &self.queue, &[(p.clone(), Layout::Geom, FORMAT)]);
         }
         drop(hold);
-        let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+        let mut runs = crate::holds::lock(&self.runs, "runs", Some(self.role));
         let (map, ids) = &mut *runs;
         match map.get_mut(key) {
             // a settled frame compiled it first: that pipeline stands
@@ -837,6 +837,6 @@ impl Compiled {
             self.kit.draw(&self.device, &self.queue, &[(p.clone(), Layout::Geom, FORMAT)]);
         }
         drop(hold);
-        self.shapes.lock().unwrap_or_else(|e| e.into_inner()).insert(h, Shape::Ready(pipe));
+        crate::holds::lock(&self.shapes, "shapes", Some(self.role)).insert(h, Shape::Ready(pipe));
     }
 }

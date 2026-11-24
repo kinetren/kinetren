@@ -14,6 +14,8 @@ serde = { workspace = true }
 # (plugin-api-stage1, D3) — kt-otio turns it on for the whole build anyway
 serde_json = { workspace = true, features = ["preserve_order"] }
 thiserror = { workspace = true }
+# the Debug-text fingerprint of a shared event (shared-events D1); the builders' own hash
+xxhash-rust = { workspace = true }
 
 [dev-dependencies]
 # the built-in plugin set for the format tests (plugin-api-stage1; a dev-dependency only — t975)

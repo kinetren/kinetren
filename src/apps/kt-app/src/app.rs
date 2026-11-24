@@ -2390,12 +2390,7 @@ impl KtApp {
                         ui.heading(tr(k::render::OVERWRITE_TITLE));
                         ui.add_space(6.0);
                         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                        let meta = std::fs::metadata(path).ok();
-                        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-                        let date = meta
-                            .and_then(|m| m.modified().ok())
-                            .map(|t| crate::journal::stamp_of(t)[..16].to_string())
-                            .unwrap_or_default();
+                        let (size, date) = self.render_setup.replaces.clone().unwrap_or_default();
                         ui.label(crate::tf!(
                             k::render::OVERWRITE_BODY,
                             name,
@@ -4801,19 +4796,41 @@ impl KtApp {
     /// We do not show an error: the path is live, the command is sent every drag frame, and
     /// a badge on every frame would be noise — the gesture simply does not move further.
     pub fn apply_coalesced(&mut self, cmd: Command, gesture: u64) -> bool {
+        self.coalesced(vec![cmd], gesture).is_ok()
+    }
+
+    /// `apply_coalesced` of commands that only make sense together (a chain edit that moves slots, their
+    /// lists and their addresses); a refusal is said: it is one press, not a drag's frame.
+    pub fn apply_batch_coalesced(&mut self, cmds: Vec<Command>, gesture: u64) -> bool {
+        self.warn_shared_band(&cmds);
+        match self.coalesced(cmds, gesture) {
+            Err(e) => {
+                self.refuse_command(&e);
+                false
+            }
+            Ok(edited) => {
+                if edited {
+                    self.bump_clip_hw();
+                }
+                true
+            }
+        }
+    }
+
+    fn coalesced(&mut self, cmds: Vec<Command>, gesture: u64) -> Result<bool, kt_model::CommandError> {
         // Law P (R.53, item 412): a command that does not touch the plan has no
         // right to clone the project and rebuild the graphs. An edit of
         // generator parameters is `SetMediaPath`, whose addressee is the worker
         // of this media, not the renderers (otherwise every keypress in the
         // title field would stop the audio-render thread).
-        let touches_plan = cmd.touches_render_plan();
-        crate::telemetry::signal(crate::telemetry::Signal::Gesture(&cmd, gesture, &self.model));
-        match self.model.apply_coalesced(cmd, gesture) {
-            Err(_) => return false,
-            // an equal value written again (a window's frame re-sending what the model holds)
-            // is no edit: no revision, no project swap, no dirty mark (input-without-work)
-            Ok(false) => return true,
-            Ok(true) => {}
+        let touches_plan = cmds.iter().any(|c| c.touches_render_plan());
+        for cmd in &cmds {
+            crate::telemetry::signal(crate::telemetry::Signal::Gesture(cmd, gesture, &self.model));
+        }
+        // an equal value written again (a window's frame re-sending what the model holds)
+        // is no edit: no revision, no project swap, no dirty mark (input-without-work)
+        if !self.model.apply_batch_coalesced(cmds, gesture)? {
+            return Ok(false);
         }
         self.model_rev += 1;
         kt_time::work::bump(kt_time::work::Work::ModelEdit);
@@ -4822,7 +4839,7 @@ impl KtApp {
         }
         self.sync_media_sources();
         self.dirty_content = true;
-        true
+        Ok(true)
     }
 
     /// A command batch + restoration of the crossfade “handles” that this gesture kills

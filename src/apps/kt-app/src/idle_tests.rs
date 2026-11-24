@@ -449,6 +449,78 @@ fn t3003_an_open_node_editor_costs_nothing_at_rest() {
     assert!(next_repaint(&h) > Duration::from_secs(3600), "after a hover the node editor asks for a frame in {:?}", next_repaint(&h));
 }
 
+/// Test t3006 (fx-graph v1c): the event's effects window and the morpher's window open TOGETHER over
+/// heavy chains (Datamosh, VHS Tape and Camera ISP in the one, VHS Tape and Datamosh with their sound
+/// halves in the other) cost nothing at rest: still, or with the pointer moving over both graphs, no
+/// frame is asked, nothing is composed again and neither graph is laid out again.
+/// - **PATH** open the effects window of an event carrying Datamosh, VHS Tape and Camera ISP and the
+///   window of the morpher layer over it → both graphs stand open; the mouse rests, then moves over
+///   the nodes of one and of the other: nothing redraws by itself
+#[test]
+fn t3006_the_event_s_and_the_morpher_s_windows_together_cost_nothing_at_rest() {
+    use kt_model::*;
+    crate::plugins::install();
+    let mut h = rest_harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    let fx = |ids: &[&str]| ids.iter().map(|id| FxInstance::plugin(id).expect(id)).collect::<Vec<_>>();
+    let mut c = kt_model::demo::demo_project(kt_model::demo::DemoSources::Synth).clips.into_iter().find(|c| c.kind == ClipKind::Video).expect("a video event");
+    (c.id, c.lane, c.start, c.duration, c.source_in, c.media, c.link_group) = (ClipId(1), 0, kt_time::Tick(0), kt_time::Tick(90_000), kt_time::Tick(0), MediaId(1), None);
+    c.fx = fx(&["datamosh", "vhs_tape", "camera_isp"]);
+    (c.fx_bypass, c.fx_auto, c.geometry_pos) = (vec![false; 3], vec![], 0);
+    p.clips.push(c);
+    p.ensure_tracks(LaneKind::Morph, 1);
+    p.morphers.push(MorpherEvent {
+        id: MorphId(1),
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        targets: MorphTargets::Clips { ids: vec![ClipId(1)] },
+        patch: MorphPatch { video_fx: fx(&["vhs_tape", "datamosh"]), audio_fx: fx(&["vhs_tape_sound", "datamosh_sound"]), ..Default::default() },
+        timed: true,
+        strength: 1.0,
+        fade_in: kt_time::Tick::ZERO,
+        fade_out: kt_time::Tick::ZERO,
+        enabled: true,
+    });
+    p.validate().unwrap();
+    app.model = TimelineModel::new(p);
+    app.open_fx_editor(ClipId(1));
+    h.step();
+    h.state_mut().open_morph_editor(MorphId(1));
+    // past the windows' misclick guards, which ask for the frame that ends them
+    let guard = crate::fx_thumbs::DECODE_GUARD * 2;
+    let app = h.state_mut();
+    app.fx_editors.iter_mut().for_each(|e| e.opened_at -= guard);
+    app.morph_editors.iter_mut().for_each(|e| e.opened_at -= guard);
+    for _ in 0..8 {
+        h.step();
+    }
+    let rects: Vec<egui::Rect> = [egui::Id::new(("fx", ClipId(1))), egui::Id::new(("morph", 1u64))]
+        .iter()
+        .filter_map(|id| h.ctx.memory(|m| m.area_rect(*id)))
+        .collect();
+    assert_eq!(rects.len(), 2, "scene: both windows have a place");
+    let (fx_open, morph_open) = (h.state().fx_editors.iter().any(|e| e.open), h.state().morph_editors.iter().any(|e| e.open));
+    assert!(fx_open && morph_open, "scene: both windows are open");
+    assert!(next_repaint(&h) > Duration::from_secs(3600), "two open node editors ask for a frame in {:?}", next_repaint(&h));
+    let laid = crate::graph_layout::LAID.with(|c| c.get());
+    let composites = h.state().composites;
+    for r in &rects {
+        for i in 0..30 {
+            h.input_mut().events.push(egui::Event::PointerMoved(r.left_top() + egui::vec2(20.0 + i as f32 * 12.0, 70.0)));
+            h.step();
+        }
+    }
+    for _ in 0..6 {
+        h.step();
+    }
+    assert!(next_repaint(&h) > Duration::from_secs(3600), "after a hover over both graphs a frame is asked in {:?}", next_repaint(&h));
+    assert_eq!(crate::graph_layout::LAID.with(|c| c.get()), laid, "a hover laid a graph out again");
+    assert!(h.state().composites - composites <= 1, "a hover recomposed the preview");
+}
+
 /// Test t3221 (fx-graph-dag D8): a graph that branches (Datamosh on the trunk, VHS Tape and Slowed in
 /// arms, Camera ISP after the merges) costs nothing at rest: still, or with the pointer moving over
 /// it, it asks for no frame of its own, lays nothing out and recomposes nothing.

@@ -358,6 +358,10 @@ const MOMENTS: i64 = 6;
 
 /// A player over the demo project with the tier at `root`, its loop of `MOMENTS` moments.
 fn player(root: &std::path::Path, opacity: f32) -> Option<(Player, Vec<Tick>)> {
+    player_by(root, opacity, std::sync::Arc::new(kt_engine::render_cache::RawSegments))
+}
+
+fn player_by(root: &std::path::Path, opacity: f32, codec: std::sync::Arc<dyn kt_media::segment::SegmentCodec>) -> Option<(Player, Vec<Tick>)> {
     kt_plugins_builtin::install();
     let gpu = kt_gpu::test_engine()?;
     let mut p = demo_project(DemoSources::Synth);
@@ -370,8 +374,9 @@ fn player(root: &std::path::Path, opacity: f32) -> Option<(Player, Vec<Tick>)> {
     player.set_preview_quality(Quality { width: 160, height: 90 });
     player.set_video_gpu(Some(gpu));
     player.render_cache().set_heavy_for_tests(Some(1));
+    player.render_cache().set_read_wait_for_tests(Some(kt_time::TEST_WAIT));
     player.set_render_cache(Some(Config {
-        codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
+        codec,
         root: root.to_path_buf(),
         made: kt_engine::render_cache::Made::of(60),
         cap: None,
@@ -447,6 +452,80 @@ fn t2982_a_prerendered_moment_plays_from_disk_after_a_restart() {
         .count();
     assert!(restores >= 1, "the moment came from disk");
     assert!(b.render_cache().counts().1 >= 1);
+}
+
+/// A disk that stands: a segment opens only once `free` says so.
+struct Standing {
+    free: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    stood: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl kt_media::segment::SegmentCodec for Standing {
+    fn codec(&self) -> &str {
+        "raw"
+    }
+    fn writer(&self, path: &std::path::Path, w: u32, h: u32, fps: u32) -> Result<Box<dyn kt_media::segment::SegmentWriter>, String> {
+        kt_engine::render_cache::RawSegments.writer(path, w, h, fps)
+    }
+    fn reader(&self, path: &std::path::Path) -> Result<Box<dyn kt_media::segment::SegmentReader>, String> {
+        self.stood.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut g = self.free.0.lock().unwrap();
+        while !*g {
+            g = self.free.1.wait(g).unwrap();
+        }
+        drop(g);
+        kt_engine::render_cache::RawSegments.reader(path)
+    }
+    fn extension(&self) -> &str {
+        "rgba"
+    }
+}
+
+/// Test t3252 (gpu-waits-named, found-defects 835): a preview does not stand on a disk call. The segment
+/// of a moment on disk opens only when the test lets it: the frame goes on without it and is composed,
+/// the frames after it ask the disk nothing while that read stands, and once the disk answers the late
+/// picture is kept and the next moment comes from disk again.
+#[test]
+fn t3252_a_standing_disk_holds_no_displayed_frame() {
+    let root = tempfile::tempdir().unwrap();
+    let Some((a, moments)) = player(root.path(), 0.62) else { return };
+    prerender(&a, &moments);
+    drop(a);
+    let free = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let stood = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let codec = std::sync::Arc::new(Standing { free: free.clone(), stood: stood.clone() });
+    let Some((b, _)) = player_by(root.path(), 0.62, codec) else { return };
+    let rc = b.render_cache();
+    rc.set_read_wait_for_tests(Some(Duration::from_millis(1)));
+    let deadline = kt_time::test_deadline();
+    let compose = |t: Tick| {
+        while !matches!(b.present_preview(t, PresentOptions::default()), Some((_, true))) {
+            assert!(Instant::now() < deadline, "the moment never came complete on a standing disk");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    b.seek(moments[0]);
+    compose(moments[0]);
+    while stood.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+        assert!(Instant::now() < deadline, "the disk was never asked");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // asked with no bound now: a frame that still asked would stand for good
+    rc.set_read_wait_for_tests(Some(kt_time::TEST_WAIT));
+    compose(moments[1]);
+    compose(moments[2]);
+    assert_eq!(rc.counts().1, 0, "a picture came off a disk that stands");
+    *free.0.lock().unwrap() = true;
+    free.1.notify_all();
+    while rc.counts().1 == 0 {
+        assert!(Instant::now() < deadline, "the late picture was not kept");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    while rc.counts().1 < 2 {
+        assert!(Instant::now() < deadline, "the disk answers and nothing comes from it");
+        assert!(matches!(b.present_preview(moments[4], PresentOptions::default()), Some((_, true))) || rc.counts().1 < 2);
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 /// Test t2984 (render-cache-disk D4): the prerender composes nothing while input keeps coming, writes

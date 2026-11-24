@@ -185,6 +185,10 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   (ahead-kept D1, t2931). A new walk of a stream history calls `kt_plugin_api::stream::walked`, or a
   moment waiting on it is tried again only next lap. `KT_RENDER_AHEAD=off`
   for an A/B. t2334–t2336, t2920, t2921, t2925.
+- **The displayed frame never stands on the disk tier** (gpu-waits-named, found-defects 835, t3252):
+  `restore_in_time` reads on a lane and waits a bound (`RenderCache::read_wait`), then the moment is
+  composed; `restore_from_disk` is for threads that may stand (the producer). A new use of the store on the
+  compose thread goes through `read_within`.
 - **Slow moments are prerendered to disk at rest and played from it** (render-cache-disk,
   `render_cache.rs`; the owner's "Сам в фоне", kkt-26.11.17 S5). Its key is the moment's ONE
   key (`moment_key`, durable-moment-key), the memory's too: it names each frame by its LEAF — the identity

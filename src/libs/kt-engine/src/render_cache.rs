@@ -22,11 +22,12 @@ use crate::video_plan::{FramePlan, LayerInput, LayerSrc, PlanLayer};
 use kt_media::cache_folder::{Folder, Tenant};
 pub use kt_media::segment::{RawSegments, SegmentCodec, SegmentReader, SegmentWriter};
 use kt_plugin_api::Family;
+use kt_time::sched::{Class, Lane, LaneRef};
 use kt_time::trace::{self, render_cache as rc, Ev};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use xxhash_rust::xxh3::Xxh3;
 
@@ -374,6 +375,13 @@ impl DiskStore {
 
     fn manifest_path(&self, id: u64) -> PathBuf {
         self.dir.join(format!("{}.{MANIFEST}", hex(id)))
+    }
+
+    /// Is the picture's plan in the store at all (made by these sources or by others)? The index alone:
+    /// no file is touched.
+    fn indexed(&self, key: DiskKey) -> bool {
+        self.sync();
+        self.ix.lock().unwrap().keys.contains_key(&key.key)
     }
 
     /// Does the store hold the picture? A frame that others made than what makes it now is a miss, and
@@ -903,6 +911,9 @@ pub struct RenderCache {
     /// The quiet a test sets (ns, 0 — `QUIET`): a stimulus of input a test thread paces with its own
     /// sleeps, which a loaded machine stretches past 1.5 s (found-defects 828).
     quiet_for_tests: AtomicU64,
+    /// The wait for a read a test sets (ns, 0 — `read_wait`): a moment it expects from disk while the
+    /// machine is loaded, or a disk that stands.
+    read_wait_for_tests: AtomicU64,
     heavy_for_tests: AtomicU64,
     /// The prerender parked with nothing left to do (or the cap full) since it last looked.
     settled: AtomicBool,
@@ -912,12 +923,42 @@ pub struct RenderCache {
     lost: Mutex<Vec<i64>>,
     /// The encoder the last segment was written with.
     encoder: Mutex<Option<String>>,
+    /// The displayed frame's reads (gpu-waits-named): its thread waits for an answer, never for the disk.
+    reads: OnceLock<LaneRef>,
+    /// Reads asked, ended, and the newest one its frame went on without.
+    read_asked: AtomicU64,
+    read_done: Arc<AtomicU64>,
+    read_left: AtomicU64,
+    /// A store that goes joins its reader, which may stand on the disk: never on the UI thread.
+    closes: OnceLock<LaneRef>,
 }
 
+/// The device class a store is of.
+fn device_id(device: &crate::video_plan::GpuBackendInfo) -> String {
+    format!("{}|{}|{}", device.name, device.backend, device.driver)
+}
+
+/// How long the displayed frame waits for the disk tier's picture instead of composing it: a read and
+/// its decode, and no more while playing (gpu-waits-named, found-defects 835). At rest a late picture is
+/// still sooner than a composite whose sources come off the same disk.
+const READ_WAIT_PLAYING: Duration = Duration::from_millis(250);
+const READ_WAIT_AT_REST: Duration = Duration::from_secs(2);
+
 impl RenderCache {
+    pub(crate) fn read_wait(&self, playing: bool) -> Duration {
+        match self.read_wait_for_tests.load(Ordering::Acquire) {
+            0 if playing => READ_WAIT_PLAYING,
+            0 => READ_WAIT_AT_REST,
+            ns => Duration::from_nanos(ns),
+        }
+    }
+
     pub fn set_config(&self, cfg: Option<Config>) {
         *self.cfg.lock().unwrap() = cfg.filter(|_| enabled());
-        *self.store.lock().unwrap() = None;
+        let old = self.store.lock().unwrap().take();
+        if let Some(old) = old {
+            self.closes.get_or_init(|| Lane::open("render-cache-close", Class::Answer)).post(move |_| drop(old));
+        }
         *self.unavailable.lock().unwrap() = None;
         self.on_disk.lock().unwrap().clear();
         self.disk_gen.fetch_add(1, Ordering::Relaxed);
@@ -933,7 +974,7 @@ impl RenderCache {
     pub fn store(&self, device: &crate::video_plan::GpuBackendInfo) -> Option<Arc<DiskStore>> {
         let cfg = self.cfg.lock().unwrap().clone()?;
         // the device class: video is byte-equal on one device and one driver only
-        let id = format!("{}|{}|{}", device.name, device.backend, device.driver);
+        let id = device_id(device);
         let open = || self.store.lock().unwrap().as_ref().filter(|(d, _)| *d == id).map(|(_, s)| s.clone());
         if let Some(s) = open() {
             return Some(s);
@@ -948,6 +989,45 @@ impl RenderCache {
         let s = Arc::new(s);
         *self.store.lock().unwrap() = Some((id, s.clone()));
         Some(s)
+    }
+
+    /// `false` — the store is open and knows no such picture, or a read given up on has not come back yet
+    /// (a disk that stands): the displayed frame asks nothing. No file is touched.
+    pub(crate) fn may_hold(&self, device: &crate::video_plan::GpuBackendInfo, key: DiskKey) -> bool {
+        if self.read_done.load(Ordering::Acquire) < self.read_left.load(Ordering::Acquire) {
+            return false;
+        }
+        let id = device_id(device);
+        let store = self.store.lock().unwrap().as_ref().filter(|(d, _)| *d == id).map(|(_, s)| s.clone());
+        store.is_none_or(|s| s.indexed(key))
+    }
+
+    /// Run `read` on the reads' lane and wait for it at most `bound`; a read that takes longer ends by
+    /// itself and keeps what it brought.
+    pub(crate) fn read_within<T: Send + 'static>(&self, bound: Duration, read: impl FnOnce() -> Option<T> + Send + 'static) -> Option<T> {
+        let lane = self.reads.get_or_init(|| Lane::open("render-cache-restore", Class::Now));
+        let (answer, reply) = kt_time::sched::Answer::new();
+        struct Done(Arc<AtomicU64>);
+        impl Drop for Done {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::AcqRel);
+            }
+        }
+        let done = Done(self.read_done.clone());
+        let n = self.read_asked.fetch_add(1, Ordering::AcqRel) + 1;
+        lane.post(move |_| {
+            let got = read();
+            drop(done);
+            reply.send(got);
+        });
+        let mut span = trace::span(Ev::FrameWait);
+        let taken = answer.take_within(bound);
+        if taken.is_none() {
+            self.read_left.fetch_max(n, Ordering::AcqRel);
+        }
+        let got = taken.flatten();
+        span.id(trace::cause()).aux(trace::wait::DISK).a(got.is_some() as u64);
+        got
     }
 
     /// The key of a plan's picture as the tier keeps it.
@@ -1057,6 +1137,11 @@ impl RenderCache {
         self.settled.store(false, Ordering::Release);
         self.news.store(true, Ordering::Release);
         self.wake.notify();
+    }
+
+    /// Set the wait for a read (`None` — `read_wait`), for tests.
+    pub fn set_read_wait_for_tests(&self, wait: Option<Duration>) {
+        self.read_wait_for_tests.store(wait.map_or(0, |w| (w.as_nanos() as u64).max(1)), Ordering::Release);
     }
 
     /// Tests: "heavy" is `ns` and more instead of half a frame period (`None` — the rule). A software

@@ -339,6 +339,8 @@ impl KtApp {
             bypass: Option<Vec<bool>>,
             /// The chain's wiring (fx-graph-dag): its slots go with it as one step of their own.
             fx_in: Option<Vec<kt_model::SlotInputs>>,
+            /// The slots moved: where each of the model's slots went (found-defects 906).
+            to: Option<kt_model::slot_addr::SlotMap>,
             off: Option<bool>,
             /// Generator values of the event (R.59, stage 2) — `SetClipGen`.
             r#gen: Option<GeneratorKind>,
@@ -610,6 +612,7 @@ impl KtApp {
                     let mut lead_rule = clip.geometry.rule;
                     let mut chain_on = !clip.fx_off;
                     let mut wiring = clip.fx_in.clone();
+                    let mut slots_to: Option<kt_model::slot_addr::SlotMap> = None;
                     // HEAD of the strip (R.59, stage 2): for an event-generator
                     // it is its SOURCE, the first crumb before the effects —
                     // exactly as the owner asked. The values are edited right here,
@@ -784,6 +787,23 @@ impl KtApp {
                                 Some(Some(i)) => viewer_req = Some(Some(viewer_of(&clip, i, lead_pos0))),
                                 Some(None) => viewer_req = Some(None),
                                 None => {}
+                            }
+                            // the slots' ADDRESSES follow them (found-defects 906): the strip's move in the
+                            // model's numbers (the lead is no slot there), and the views kept per slot
+                            slots_to = ch.from.as_ref().map(|from| {
+                                let li = fx_s.iter().position(|f| f.is_lead_geometry());
+                                let raw = |o: usize| match lead_pos0 {
+                                    Some(lp) if o == lp => None,
+                                    Some(lp) if o > lp => Some(o - 1),
+                                    _ => Some(o),
+                                };
+                                let was: Vec<Option<usize>> =
+                                    from.iter().enumerate().filter(|(k, _)| Some(*k) != li).map(|(_, f)| f.and_then(raw)).collect();
+                                kt_model::slot_addr::map_of(&was, fx.len())
+                            });
+                            if let Some(to) = &slots_to {
+                                move_views(&mut ed.auto_views, *id, to);
+                                move_views(&mut ed.mask_views, *id, to);
                             }
                             // the SLOT MASKS follow their slots (shape-masks): the same move /
                             // removal in the strip's own indices (the lead spliced in, empty)
@@ -1229,6 +1249,7 @@ impl KtApp {
                             clip: *id,
                             // a side of a pair whose chain did not move sends nothing (D10)
                             fx_in: (ch.wires && (ch.fx || wiring != clip.fx_in)).then_some(wiring),
+                            to: slots_to,
                             fx: (ch.fx || params_changed.base).then_some(fx),
                             auto: (ch.auto || params_changed.curve).then_some(auto),
                             bypass: ch.bypass.then_some(bypass),
@@ -1362,8 +1383,25 @@ impl KtApp {
                 // a chain that branches comes back with its wires, as one step (fx-graph-dag)
                 let was = ed.wire_backup.iter().find(|(c, _)| *c == id).map(|(_, w)| w.clone()).unwrap_or_default();
                 let geo = ed.geo_backup.iter().find(|(c, ..)| *c == id).cloned();
+                // the addresses come back with the slots (found-defects 906): first, for the lists restored
+                // after it are in the numbers of that moment already
+                let now = self.model.clip(id).map(|c| c.fx.clone()).unwrap_or_default();
+                let to = kt_model::slot_addr::map_of(&kt_model::slot_addr::matching(&fx, &now), now.len());
+                let moved = !kt_model::slot_addr::is_identity(&to);
+                if moved && self.model.clip(id).is_some_and(|c| c.fx_in == was) && was.is_empty() {
+                    self.apply_batch_coalesced(
+                        vec![
+                            Command::MapFxSlots { id, to: to.clone() },
+                            Command::SetFx { id, fx: fx.clone() },
+                            Command::SetFxBypass { id, bypass: bypass.clone() },
+                            Command::SetFxAuto { id, auto: auto.clone() },
+                        ],
+                        ed.gesture,
+                    );
+                }
                 if self.model.clip(id).is_some_and(|c| c.fx_in != was) || !was.is_empty() {
                     let mut cmds = vec![
+                        Command::MapFxSlots { id, to },
                         Command::SetFx { id, fx: fx.clone() },
                         Command::SetFxBypass { id, bypass: bypass.clone() },
                         Command::SetFxAuto { id, auto: auto.clone() },
@@ -1453,9 +1491,9 @@ impl KtApp {
             } else {
                 ed.gesture
             };
-            // a chain that branches: its slots and its wires are one command batch, one step
-            // (fx-graph-dag D6); the masks of the slots go with it
-            if let Some(fx_in) = e.fx_in {
+            // slots that moved, or a chain that branches: the slots, their lists, masks, wires and addresses
+            // are one batch (fx-graph-dag D6, found-defects 906). A branching chain's is a step of its own
+            if e.fx_in.is_some() || e.to.is_some() {
                 let Some(c) = self.model.clip(e.clip).cloned() else { continue };
                 let mut cmds = Vec::new();
                 if let Some(fx) = e.fx {
@@ -1476,7 +1514,10 @@ impl KtApp {
                 if let Some((geometry, pos, auto)) = e.geometry {
                     cmds.push(Command::SetGeometry { id: e.clip, geometry, pos, auto });
                 }
-                cmds.push(Command::SetFxIn { id: e.clip, fx_in });
+                let branches = e.fx_in.is_some();
+                if let Some(fx_in) = e.fx_in {
+                    cmds.push(Command::SetFxIn { id: e.clip, fx_in });
+                }
                 if let Some(at) = slot_masks.iter().position(|(id, _)| *id == e.clip) {
                     let mut m = c.masks.clone();
                     m.slots = slot_masks.remove(at).1;
@@ -1486,7 +1527,25 @@ impl KtApp {
                 if let Some(off) = e.off {
                     cmds.push(Command::SetFxOff { id: e.clip, off });
                 }
-                self.apply_batch(cmds);
+                if let Some(to) = e.to {
+                    // the masks being edited over the preview are addressed by the slot too
+                    if let Some(m) = self.mask_ctl.as_mut()
+                        && let crate::maskctl::MaskOwner::Slot(c, s) = m.owner
+                        && c == e.clip
+                    {
+                        match to.get(s).copied().flatten() {
+                            Some(n) => m.owner = crate::maskctl::MaskOwner::Slot(c, n),
+                            None => self.mask_ctl = None,
+                        }
+                    }
+                    // last: the lists above carry their links in the old numbers as well
+                    cmds.push(Command::MapFxSlots { id: e.clip, to });
+                }
+                if branches {
+                    self.apply_batch(cmds);
+                } else {
+                    self.apply_batch_coalesced(cmds, gesture);
+                }
                 continue;
             }
             if let Some(fx) = e.fx {
@@ -2390,6 +2449,17 @@ pub(crate) fn cut_to(c: &mut kt_model::ClipEvent, from: kt_model::fx_graph::Node
         kt_model::fx_graph::Node::Source => crate::node_editor::Viewer { clip: c.id, keep: Vec::new(), lead_on: true, name: String::new() },
     };
     v.cut_event(c);
+}
+
+/// What a window keeps per slot of a chain goes with the slot.
+fn move_views<V>(views: &mut std::collections::HashMap<(ClipId, usize), V>, id: ClipId, to: &kt_model::slot_addr::SlotMap) {
+    let mine: Vec<usize> = views.keys().filter(|(c, s)| *c == id && *s < to.len()).map(|(_, s)| *s).collect();
+    let taken: Vec<(usize, V)> = mine.into_iter().filter_map(|s| views.remove(&(id, s)).map(|v| (s, v))).collect();
+    for (s, v) in taken {
+        if let Some(n) = to[s] {
+            views.insert((id, n), v);
+        }
+    }
 }
 
 /// A member's selection in the spliced chain's indices (the lead counted).

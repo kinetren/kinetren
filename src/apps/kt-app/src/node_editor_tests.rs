@@ -1071,3 +1071,69 @@ fn t3240_branches_on_a_pair_a_device_a_track_and_a_paste() {
     h.step();
     assert_eq!(h.state().model.project().track(v1).cloned(), before, "Cancel left the track's branch");
 }
+
+/// t3245 (found-defects 906): in the effects window a node dragged to another place takes its addresses
+/// along — another event's link follows the effect it was led by, the curve view stays with its slot —
+/// a branch started in front of it moves them on, a cross frees the follower, and Cancel gives all of it
+/// back; undo does too.
+/// - **PATH** an event with Blur, Glow, Vignette and another event whose blur is led by the Glow's
+///   strength → in the first event's effects window drag Glow onto Blur → the other event still follows
+///   the Glow → start a branch from Geometry → still the Glow → Cancel → the chain and the link as they were
+#[test]
+fn t3245_addresses_follow_a_node_and_cancel_gives_them_back() {
+    crate::plugins::install();
+    let mut h = fx_harness(vec![FxInstance::blur(3), FxInstance::builtin("glow"), FxInstance::builtin("vignette")]);
+    let mut p = h.state().model.project().clone();
+    let mut b = clip(2, ClipKind::Video, vec![FxInstance::blur(4)]);
+    (b.link_group, b.lane) = (None, 1);
+    let led = |path: &str| vec![vec![ParamCurve { param: "radius".into(), keys: vec![], source: CurveSource::Link { path: path.into(), expr: None, stops: vec![] } }]];
+    b.fx_auto = led("1/fx1/strength");
+    p.clips.push(b);
+    p.ensure_tracks(LaneKind::Video, 2);
+    p.validate().unwrap();
+    h.state_mut().model = TimelineModel::new(p);
+    h.state_mut().fx_editors.clear();
+    h.state_mut().open_fx_editor(ClipId(1));
+    h.step();
+    h.step();
+    let path = |h: &Harness<'_, KtApp>| {
+        let c = h.state().model.clip(ClipId(2)).unwrap();
+        c.fx_auto.first().and_then(|l| l.first()).and_then(|c| c.source.link_path()).map(str::to_string)
+    };
+    let names = |h: &Harness<'_, KtApp>| event(h).fx.iter().map(|f| f.tag().to_string()).collect::<Vec<_>>();
+    let start = (event(&h), path(&h));
+    let (from, to) = (node_label(&h, "Glow").center(), node_label(&h, "Blur").center());
+    drag(&mut h, from, to);
+    assert_eq!(names(&h), ["glow", "blur", "vignette"], "scene");
+    assert_eq!(path(&h).as_deref(), Some("1/fx0/strength"), "the follower lost its Glow");
+    // a branch in front: the arm's slot stands before them
+    let lead = node_of(&h, crate::fx_editor::fx_display_name(&FxInstance::geometry()));
+    branch(&mut h, &format!("fx.out.{lead}"), "posterize", "fxreg.tpl.posterize");
+    let moved = names(&h).iter().position(|n| n == "glow").unwrap();
+    assert_eq!(path(&h), Some(format!("1/fx{moved}/strength")), "{:?}", names(&h));
+    h.state_mut().undo();
+    h.step();
+    h.step();
+    assert_eq!(path(&h).as_deref(), Some("1/fx0/strength"), "undo left the address");
+    // Cancel: the window's whole session back
+    let cancel = at("fx.cancel");
+    h.hover_at(cancel);
+    h.step();
+    click_at(&mut h, cancel);
+    h.step();
+    assert_eq!((event(&h), path(&h)), start, "Cancel left the slots or their addresses");
+    // a cross: the leader is gone, its follower is free
+    h.state_mut().open_fx_editor(ClipId(1));
+    h.step();
+    h.step();
+    let glow = node_of(&h, "Glow");
+    let node = crate::widgets::field_probe::rect_of(&format!("fx.node.{glow}")).unwrap();
+    let x = h.query_all_by_label(crate::icons::CLEAR).map(|n| n.rect()).find(|r| node.contains(r.center())).expect("Glow's cross");
+    h.hover_at(x.center());
+    h.step();
+    click_at(&mut h, x.center());
+    h.step();
+    assert_eq!(names(&h), ["blur", "vignette"], "scene");
+    assert_eq!(path(&h), None, "the follower follows the Vignette that took the Glow's number");
+}
+

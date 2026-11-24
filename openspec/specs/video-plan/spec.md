@@ -1863,3 +1863,119 @@ Why: one store, not several (the owner's B1 with B2's folder); invariant 4.
 - **WHEN** the store is full with a frame segment saving 40 ms per read and a source copy saving 3 ms per read of the same size, and a new entry arrives
 - **THEN** the copy is evicted first; a frame read in the last minute is never evicted
 - **TEST** t3453 (`src/libs/kt-engine/tests/persistent_cache.rs`)
+
+### Requirement: The bytes path shows a kept or stored moment as the display path does
+A preview composed to bytes (a GL preview off the window's device, kt-cli `preview`, the harness) SHALL find
+a kept moment by the probe plan's key, with no stream stage, decode or look-ahead, and read the kept
+composite back; a moment the disk tier holds SHALL be restored once into the executor's kept memo under the
+same restored key the display path uses, and later laps SHALL read it from the memo, not from the store.
+Why: found-defects 774 — the bytes path read and decoded a disk moment on every lap (250 restores over ten
+laps, ~4 ms of a core each at 640×360), and found an ordinary kept moment only by its full plan, after the
+stream stage's history (disk-bytes-once D1–D3).
+
+#### Scenario: A disk moment is restored once on the bytes path
+- **WHEN** a moment the disk tier holds is composed to bytes ten times over a loop
+- **THEN** the store is read once, the nine later composes are memo reads, and every output equals the stored picture
+- **TEST** t3356 (`src/libs/kt-engine/tests/render_cache_bytes.rs`)
+
+#### Scenario: A kept moment on the bytes path needs no history
+- **WHEN** a Datamosh moment kept by the bytes path's executor is composed again after its stream memo is cleared
+- **THEN** it is shown from the kept memo, and the stream's walk counter and the decode requests do not move
+- **TEST** t3357 (`src/libs/kt-engine/tests/decode_storm.rs`)
+
+#### Scenario: The live GL run restores each moment once
+- **WHEN** the live `render_cache` scenario (the stand's preview is GL: the bytes path) restarts and plays its one-second loop eight laps
+- **THEN** the restores its trace counts are at most the moments written, not eight times them
+- **TEST** t3358 (live `render_cache`, `src/scripts/live/render_cache.py`)
+
+### Requirement: The disk prerender's writer converts on the device
+The disk prerender SHALL hand its segment writer the encoder's planes made by the export's conversion pass
+on the composing device (the CPU reference where there is no pass), not RGBA converted by the processor.
+The durable key SHALL not change.
+Why: export-host-copy D4 — the prerender runs at rest, where every core counts (owner: "the program at rest
+costs nothing"); it read back RGBA and converted it by swscale per moment.
+
+#### Scenario: A segment is written from planes
+- **WHEN** the prerender writes three moments to a segment through the test codec
+- **THEN** the writer receives planes of the encoder's layout, no processor conversion runs, each moment reads back within the codec's tolerance, and the keys are those of before
+- **TEST** t3317 (`src/libs/kt-engine/tests/render_cache.rs`)
+
+### Requirement: A picture made on the composing device is composed where it lies
+The trace SHALL record every stream-stage or compute-generator frame read back to be composed: its bytes,
+the processor time of its conversion and the bytes uploaded again. `kt-cli trace … loop` SHALL sum them
+per lap.
+
+A stream stage whose picture the compute host keeps on its device, at the layer's decode size, SHALL hand
+the plan that buffer (a held layer input, `LayerInput::Held`), not bytes. An executor on that device SHALL
+convert it into the layer's picture with one pass in the processor conversion's integer arithmetic
+(`kt_plugin_api::stream::planes_to_rgba`), so the composite is byte-equal to the bytes path. Any other
+executor SHALL read the planes back through the compute host and convert them on the processor. The held form SHALL
+NOT change any key, the plan's completeness or the coverage.
+
+Why: found-defects 663 — every shown Datamosh frame was read back as planes, converted on the processor
+and uploaded again, between two devices of the same chip (stream-picture-stays D1, D3).
+
+#### Scenario: The crossing is in the trace
+- **WHEN** mosh frames are composed on two devices, a held picture is read back by an executor on another device, and the trace of a looped run with crossings and held history is read
+- **THEN** each frame composed leaves a `stream_cross` record (bytes back, RGBA handed up, the conversion's span; the kernel's or the executor's), a project with no stream stage none; `trace loop` names per lap the frames crossed, their megabytes and processor time, and the history's device megabytes (`stream_held`, a record at every megabyte moved)
+- **TEST** t3812 (`src/libs/kt-engine/tests/stream_stage.rs`), t3813 (`src/apps/kt-cli/src/trace_query/tests.rs`), t3816, t3823
+
+#### Scenario: A held layer composes as the bytes did
+- **WHEN** a Datamosh frame inside the mosh is planned, then composed by an engine on the compute host's device and by one on another device
+- **THEN** the layer's input is held; the first converts it on the device and reads nothing back, the second reads it back; the two composites are equal byte for byte and differ from the unmoshed frame
+- **TEST** t3814 (`src/libs/kt-engine/tests/stream_stage.rs`)
+
+#### Scenario: The planes are converted as the processor converts them
+- **WHEN** planes of every byte value, padded 16×16 to 80×48, cropped to even and odd widths and heights down to 1×1, are composed held on the shared device and as the processor's conversion
+- **THEN** the composites are equal, converted on the device with nothing read back
+- **TEST** t3815 (`src/libs/kt-gpu/tests/stream_held.rs`)
+
+#### Scenario: The frames walked ahead stay on the device
+- **WHEN** the host holds pictures, the prefetch's walk advances a run of ten mosh frames, and every frame of the run is composed on the host's device
+- **THEN** neither the walk nor the composites read a picture back, and a frame of the run is the bytes an engine on another device reads back
+- **TEST** t3823 (`src/libs/kt-engine/tests/stream_stage.rs`)
+
+#### Scenario: Another device reads back
+- **WHEN** the composing executor is not on the compute host's device
+- **THEN** it reads the planes back through the compute host, and the composite is the bytes path's
+- **TEST** t3816 (`src/libs/kt-gpu/tests/stream_held.rs`)
+
+### Requirement: One device per adapter where the window can compute
+Where the window's backend has compute (Vulkan, DX12, Metal) and its adapter is the compute host's, the
+window's device (eframe's, asking the pass timer's features, which are the compute host's) SHALL be the
+process's one context, and the compute host SHALL open over that same device and queue before anything else
+opens it; the preview's engine is built on the same context. On GL, or with the two on different adapters, the compute host SHALL stay a
+device of its own, and the machine facts in the trace SHALL say which and why. A device loss SHALL poison
+the preview and the compute host together; the interface's save and the close path's durability SHALL NOT
+need the device.
+
+Why: the codec and the window ran on two devices of one chip, and the picture crossed between them (found-
+defects 663); the compute-backends decision keeps one API, wgpu, so one device per adapter is the way to
+share (stream-picture-stays D2).
+
+#### Scenario: The compute host over an existing device
+- **WHEN** a window's device is shared and the compute host opens, and an engine on it leaves a frame on the device
+- **THEN** the host's device is the window's (the same `Arc`), and a compute job reads the held frame as it lies — the bytes `execute_once` reads back
+- **TEST** t3817 (`src/libs/kt-gpu/tests/compute_shared.rs`)
+
+#### Scenario: The setup picks one device or two
+- **WHEN** the decision is asked for a Vulkan window on the adapter the host picks, a GL window, a hybrid pair whose window is on the integrated chip, no adapter for the host, and a lone integrated chip
+- **THEN** the first and the last share, the others do not, each with its reason (the trace's `gpu.compute.shares_display`, the run journal's GPU line); the host's pick skips WARP and GL and prefers a card
+- **TEST** t3818 (`src/libs/kt-gpu/tests/compute_shared.rs`)
+
+#### Scenario: A lost shared device poisons both, and the work is saved
+- **PATH** a project with Datamosh plays → the device is lost: the preview says it has no picture and a notice rings once → Space stops → Ctrl+S: the title loses its asterisk
+- **WHEN** the shared device is lost during a walk
+- **THEN** the preview says it has no picture, the compute host refuses new jobs, and Ctrl+S writes the project
+- **TEST** t3819 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: One device crosses nothing over a loop
+- **WHEN** `kt-cli preview --one-device` plays a Datamosh loop on two fixture videos, and the same loop runs on two devices
+- **THEN** on two devices every mosh frame rendered is a `stream_cross` record, on one device (the run says it shares) none is — a relation, not a count: how many frames a loop renders is the machine's (byte equality of the paths is t3814's and t3820's)
+- **TEST** t3821 (`src/apps/kt-cli/tests/cli.rs`)
+
+#### Scenario: A paused Datamosh loop costs nothing on one device
+- **PATH** the heavy showcase with a Datamosh loop → Space plays a lap → Space stops → the mouse rests, then moves over the preview → nothing redraws or walks by itself
+- **WHEN** a paused Datamosh moment stands on one device (the host holding pictures, the preview composing on its device), its history walked and its frame complete, and the mouse moves over the preview, then stops
+- **THEN** no position is walked, nothing is composed or submitted, no prefetch pass runs, and at rest no frame is asked
+- **TEST** t3822 (`src/apps/kt-app/src/idle_tests.rs`)

@@ -105,7 +105,9 @@ impl Staged {
     /// Everything staged into `arena`, in one write.
     pub fn flush(&mut self, queue: &wgpu::Queue, arena: &wgpu::Buffer) {
         if !self.bytes.is_empty() {
+            let mark = std::time::Instant::now();
             queue.write_buffer(arena, self.base, &self.bytes);
+            crate::holds::note_wait("uniforms", kt_time::trace::gpu_wait::CALL, None, mark.elapsed());
             self.bytes.clear();
         }
     }

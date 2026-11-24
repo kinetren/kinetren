@@ -21,6 +21,8 @@ pub mod ops;
 pub mod project;
 pub mod project_file;
 pub mod published;
+pub mod shared;
+pub mod slot_addr;
 pub mod warp;
 
 pub use autoplan::*;

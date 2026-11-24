@@ -119,7 +119,9 @@ pub struct ComputeDevice {
     /// Apart from `calib`, so a record reads it without waiting for a calibration in progress
     /// (found-defects 562).
     best: Mutex<Option<(u64, u64, u64, std::time::Instant)>>,
-    pipes: Mutex<HashMap<(String, usize, usize), Arc<Pipe>>>,
+    /// By text: a slot of its own each, so a compile (the driver reads its disk cache in it) holds only
+    /// the jobs that want that same text (gpu-waits-named).
+    pipes: Mutex<HashMap<(String, usize, usize), Arc<Mutex<Option<Arc<Pipe>>>>>>,
     pool: Mutex<Pool>,
     /// The pool's free buffers, to the memory ledger (memory-ledger).
     account: kt_time::mem::Account,
@@ -390,11 +392,12 @@ impl ComputeDevice {
 
     /// The pipeline of a text, and whether this call created it.
     fn pipe(&self, text: &str, reads: usize, writes: usize) -> Result<(Arc<Pipe>, bool), String> {
-        let mut pipes = self.pipes.lock().unwrap_or_else(|e| e.into_inner());
-        let key = (text.to_string(), reads, writes);
-        if let Some(p) = pipes.get(&key) {
+        let slot = self.pipes.lock().unwrap_or_else(|e| e.into_inner()).entry((text.to_string(), reads, writes)).or_default().clone();
+        let mut slot = crate::holds::lock(&slot, "compute pipeline", Some(crate::errors::role::COMPUTE));
+        if let Some(p) = slot.as_ref() {
             return Ok((p.clone(), false));
         }
+        let _h = crate::holds::hold(crate::errors::role::COMPUTE, "create compute pipeline");
         let d = &self.device;
         // the uniform at a dynamic offset into the job's one arena (gpu-leftovers, found-defects 520)
         let entry = |binding: usize, ty| wgpu::BindGroupLayoutEntry {
@@ -433,7 +436,7 @@ impl ComputeDevice {
             return Err(format!("compute shader refused: {e}"));
         }
         let p = Arc::new(Pipe { pipe, layout, warm: Default::default() });
-        pipes.insert(key, p.clone());
+        *slot = Some(p.clone());
         Ok((p, true))
     }
 }
@@ -491,7 +494,7 @@ impl ComputeDevice {
             // bracket is taken after the admission, so a wait for room never widens it
             let ticket = self.arb.admit(kt_time::sched::current_class(), CALIBRATION_NS);
             let before = kt_time::trace::now_ns();
-            let sub = self.queue.submit([enc.finish()]);
+            let sub = { let _h = crate::holds::hold(crate::errors::role::COMPUTE, "compute submit"); self.queue.submit([enc.finish()]) };
             let flight = ticket.submitted(&self.device, &self.queue, sub.clone(), CALIBRATION_NS, false);
             let (tx, rx) = std::sync::mpsc::channel();
             read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
@@ -500,7 +503,11 @@ impl ComputeDevice {
             // its own submission (datamosh-history-wait D2): the bracket's half-width is the clock
             // error, and a wait for everything widened it by every job submitted meanwhile (his
             // kt26.11.16 trace: error up to 39 ms, wider than the waits it was to measure)
-            if crate::wait_for(d, sub).is_err() {
+            let waited = {
+                let _h = crate::holds::hold(crate::errors::role::COMPUTE, "calibration wait");
+                crate::wait_for(d, sub)
+            };
+            if waited.is_err() {
                 return false;
             }
             let after = kt_time::trace::now_ns();
@@ -566,7 +573,7 @@ impl ComputeHost for ComputeDevice {
         }
         // the warm thread's class (background) on the ring: it never stands in front of a frame
         let ticket = self.arb.admit(kt_time::sched::current_class(), WARM_NS);
-        let sub = self.queue.submit([enc.finish()]);
+        let sub = { let _h = crate::holds::hold(crate::errors::role::COMPUTE, "compute submit"); self.queue.submit([enc.finish()]) };
         let flight = ticket.submitted(&self.device, &self.queue, sub.clone(), WARM_NS, false);
         let refused = pollster::block_on(scope.pop());
         crate::wait_for(d, sub).map_err(|e| e.to_string())?;
@@ -733,7 +740,7 @@ impl ComputeDevice {
                 }
                 kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
                 let at = kt_time::trace::now_ns();
-                let sub = self.queue.submit([full.finish()]);
+                let sub = { let _h = crate::holds::hold(crate::errors::role::COMPUTE, "compute submit"); self.queue.submit([full.finish()]) };
                 pieces.push((from, i, at));
                 from = i;
                 if let Some(l) = learns.last().filter(|l| l.to == i.min(timed) && l.ready.load(std::sync::atomic::Ordering::Acquire) == 0) {
@@ -799,7 +806,7 @@ impl ComputeDevice {
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
         let submitted = std::time::Instant::now();
         let submitted_ns = kt_time::trace::now_ns();
-        let sub = self.queue.submit([enc.finish()]);
+        let sub = { let _h = crate::holds::hold(crate::errors::role::COMPUTE, "compute submit"); self.queue.submit([enc.finish()]) };
         pieces.push((from, job.steps.len(), submitted_ns));
         // this job's own submission: a wait for "the most recent" one waited for every piece another
         // thread submitted to the device after it too (stream-round-trips D9, found-defects 661: its
@@ -822,6 +829,7 @@ impl ComputeDevice {
             })
             .collect();
         if !maps.is_empty() {
+            let _h = crate::holds::hold(crate::errors::role::COMPUTE, "compute wait");
             crate::wait_for(d, mine.clone()).map_err(|e| e.to_string())?;
         }
         let mut out = Vec::with_capacity(staging.len());
@@ -922,6 +930,7 @@ impl ComputeDevice {
     fn learn(&self, learns: &mut Vec<Learn>, steps: &[kt_plugin_api::compute::Step<'_>], predicted: &mut [Option<u64>], next: usize) {
         use std::sync::atomic::Ordering;
         if learns.iter().all(|l| l.ready.load(Ordering::Acquire) == 0) {
+            let _h = crate::holds::hold(crate::errors::role::COMPUTE, "compute poll");
             let _ = self.device.poll(wgpu::PollType::Poll);
         }
         let period = self.queue.get_timestamp_period() as f64;

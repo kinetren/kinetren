@@ -3,7 +3,7 @@
 > IMPLEMENTATION-READY (references re-checked against orch `286c406c`, 2026-11-24: after fx-graph-dag v2a–v2c, the cache
 > folder, the audio-reactive generators). **After `fx-graph-dag` v2d and `durable-moment-key` merge** (MODEL: v2d's slot
 > commands; `video.rs`, `incremental.rs`: the key's leaves). The owner chose to build it now (kkt-26.11.20 A19, his Q31 b). Tests: t3367–t3375
-> (spare t3376–t3378). Read first: `design.md` D1, D1a (the container), D2–D4, D6 (the class walk);
+> (t3376, t3377 are section 2's; spare t3378). Read first: `design.md` D1, D1a (the container), D2–D4, D6 (the class walk);
 > `src/libs/kt-model/CLAUDE.md`; `openspec show project-format --type spec` and `transport`. Commit per
 > section; `scripts/target-prune.py` after each commit.
 
@@ -15,25 +15,25 @@
 
 ## 1. The before numbers
 
-- [ ] 1.1 `cargo build --release -p kt-cli`; `kt-cli showcase` ×1 and ×10 (the 1357- and 13 357-event projects
+- [x] 1.1 `cargo build --release -p kt-cli`; `kt-cli showcase` ×1 and ×10 (the 1357- and 13 357-event projects
       of found-defects 192/641); `kt-cli edit-cost` on both; paste the drag line, the handover and the
       incremental build times into design D5 under "before"
 
 ## 2. The cell and the container (kt-model, no behaviour change yet)
 
-- [ ] 2.1 `src/libs/kt-model/src/shared.rs` (kt-model takes the workspace's `xxhash-rust`; the program gains no dependency):
+- [x] 2.1 `src/libs/kt-model/src/shared.rs` (kt-model takes the workspace's `xxhash-rust`; the program gains no dependency):
       `Shared<T>` (D1: `Arc<Cell { value, fp: OnceLock<u64> }>`, Deref,
       `edit` via `Arc::make_mut` clearing `fp`, `edit_if`, pointer-first `PartialEq`, transparent Debug and
       serde, `fp()`); move `hash_debug` from `kt-engine/src/incremental.rs:198` into kt-model (the same xxh3
       over the same text; `hash_fmt` and `DebugHash` with it) and re-export it for kt-engine's callers
       (`incremental.rs:157`, `audio.rs:924`, `video.rs:1359` and `:1404`)
-- [ ] 2.2 `Events<T>` with the table of D1a: Index/IndexMut, `iter` → `&T`, no `iter_mut` and no `&mut` iteration,
+- [x] 2.2 `Events<T>` with the table of D1a: Index/IndexMut, `iter` → `&T`, no `iter_mut` and no `&mut` iteration,
       `edit_all`, `push/insert/extend` of `T`, `len/is_empty/first/last/get/remove/retain/sort_by_key/truncate/drain`,
       `edit(i)`, `edit_where`, `edit_if`, `From<Vec<T>>`, `FromIterator<T>`, `IntoIterator` for `&Events<T>`
       and by value (values out by `Arc::unwrap_or_clone`), `Default`, `Clone`, `Debug` = `debug_list` of
-      values, serde as a sequence of `T`; unit tests in `shared.rs` for the Debug text and serde bytes equal
-      to `Vec<T>`'s
-- [ ] 2.3 `kt_time::cost`: `Cost::EventClone` (counted in `Shared::edit` when the cell was shared) and
+      values, serde as a sequence of `T`; t3376 (`shared.rs`: the Debug text, plain and pretty, and the serde bytes equal
+      to `Vec<T>`'s, the copies counted), t3377 (the fingerprint once per version)
+- [x] 2.3 `kt_time::cost`: `Cost::EventClone` (counted in `Shared::edit` when the cell was shared) and
       `Cost::EventHash` (counted when `fp()` computes)
 
 ## 3. The fields (kt-model, then the rest of the workspace)
