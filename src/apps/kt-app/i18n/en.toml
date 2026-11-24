@@ -2086,6 +2086,26 @@ hint_cache_delete = "Delete this cache folder: everything in it is computed agai
 hint_cache_cap = "At the cap the oldest results are replaced"
 cache_open = "Persistent cache…"
 
+# The persistent cache of the preview (persistent-cache).
+[pcache]
+title = "Persistent cache"
+as_preview = "As in the preview"
+off = "Off"
+hint = "Persistent cache on disk: the finished frames of slow moments and lighter copies of heavy files. The size the preview plays, 1/2 or 1/4 of the file, or off"
+making = "A lighter copy is being made: frame {0} of {1}"
+copy = "The preview reads a lighter copy on disk: {0}×{1}"
+camera = "The preview reads the camera's own copy"
+failed = "No lighter copy: {0}"
+use_camera = "Use a camera's copy…"
+use_camera_hint = "A smaller file the camera wrote beside this one: the preview reads it, a render never does"
+drop_camera = "Stop using the camera's copy"
+differs_duration = "The camera's copy is another length: {0} s here, {1} s there"
+differs_frames = "The camera's copy has another count of frames: {0} here, {1} there"
+differs_sound = "The sound of the camera's copy is another length: {0} s here, {1} s there"
+unreadable = "The camera's copy cannot be read: {0}"
+frames = "Frames: {0}, read {1}, written {2}"
+copies = "Source copies: {0}, read {1}, written {2}"
+
 # The deck face of the VHS tape simulation (vhs-tape-simulation, D11).
 [deck]
 one_deck = "One deck: records and plays"

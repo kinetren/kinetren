@@ -804,6 +804,8 @@ pub struct KtApp {
     /// The start, the Guide and the tour (welcome-window-and-tour): the state that lives
     /// BETWEEN projects. `replace_with` carries it across the in-place rebuild of File → New/Open.
     pub start: crate::welcome::Start,
+    /// The persistent cache of the preview on the interface's side.
+    pub(crate) copies_ui: crate::copies_ui::CopiesUi,
 }
 
 impl KtApp {
@@ -936,7 +938,7 @@ impl KtApp {
         // the disk tier of preview composites in the project's cache folder (project-cache-folder D1b);
         // the harness keeps none
         if !cfg!(test) {
-            self.set_render_cache();
+            self.set_persistent_cache();
         }
         let db = self.cache_folder();
         let doc = self.model.doc();
@@ -1230,6 +1232,7 @@ impl KtApp {
             complete_composites: 0,
             reel_hash_cache: (None, Arc::new(HashMap::new())),
             start: Default::default(),
+            copies_ui: Default::default(),
         };
         // failure to open a file at startup is an ERROR, not a line for five
         // seconds (rule 16): the person reads it in the bell, when the hover hint
@@ -1576,6 +1579,7 @@ impl KtApp {
             complete_composites: 0,
             reel_hash_cache: (None, Arc::new(HashMap::new())),
             start: Default::default(),
+            copies_ui: Default::default(),
         };
         // loop region of a loaded project — into the player at once (previously
         // sync happened only in on_region_changed, i.e. only on an EDIT of the region —
@@ -2209,6 +2213,7 @@ impl KtApp {
             }
         }
         self.take_cache_notices();
+        self.take_camera();
         self.take_saved(std::time::Duration::ZERO);
         self.take_media(std::time::Duration::ZERO);
         self.take_opening(std::time::Duration::ZERO);
@@ -3332,17 +3337,6 @@ impl KtApp {
     pub(crate) fn scene_rev(&self) -> u64 {
         let place = self.model.editing().map_or(0, |m| m.0.wrapping_add(1));
         self.model.revision().wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ place
-    }
-
-    /// Keep the preview's frames in the project's cache folder.
-    fn set_render_cache(&self) {
-        let cfg = self.cache_folder().map(|root| kt_engine::render_cache::Config {
-            codec: std::sync::Arc::new(kt_media::segment::ffmpeg::FfmpegSegments::from_env()),
-            root,
-            made: kt_engine::render_cache::Made::of(kt_media::ffmpeg::backend_info().map_or(0, |b| b.avcodec_version.0)),
-            cap: kt_engine::render_cache::cap_from_env(),
-        });
-        self.player.set_render_cache(cfg);
     }
 
     /// The cache folder of the current project: beside it, an untitled one's under the user's data
@@ -6307,6 +6301,10 @@ impl KtApp {
     pub(crate) fn replace_with(&mut self, mut app: KtApp) {
         self.queue_poster();
         std::mem::swap(&mut app.start, &mut self.start);
+        // the switch came with the store: the load above had none yet
+        if !cfg!(test) && app.cache_mode() != Default::default() {
+            app.set_persistent_cache();
+        }
         let mut old = std::mem::replace(self, app);
         // its lock goes at once (a close): the new project's claim, posted after the swap, must
         // not meet the closed one's on the same file
@@ -6421,7 +6419,7 @@ impl KtApp {
                 }
                 self.thumbs.set_cache(Some(to.clone()));
                 if !cfg!(test) {
-                    self.set_render_cache();
+                    self.set_persistent_cache();
                 }
                 self.index.enqueue(Some(to), {
                     let base = p.parent();
@@ -8300,6 +8298,8 @@ impl KtApp {
                 self.player.set_preview_quality(q_for(proj.width, proj.height, fracs[frac_idx]));
             }
             ui.separator();
+            self.draw_cache_switch(ui);
+            ui.separator();
             let sm = ui.checkbox(&mut self.smooth_scaling, tr(k::perf::SMOOTHING));
             self.hint(sm, tr(k::hint::SMOOTHING));
         });
@@ -8431,16 +8431,7 @@ impl KtApp {
                 ui.weak(tr(k::perf::VIDEO_FX_NONE));
             }
         }
-        // the disk prerender (render-cache-disk): its hardware encoder, or why it writes nothing here
-        match self.player.render_cache().status() {
-            Some(Ok(enc)) if !enc.is_empty() => {
-                ui.weak(crate::tf!(k::perf::RENDER_CACHE_ON, enc));
-            }
-            Some(Err(why)) => {
-                ui.weak(crate::tf!(k::perf::RENDER_CACHE_OFF, why));
-            }
-            _ => {}
-        }
+        self.draw_cache_figures(ui);
         // what composing the preview costs (morpher-event-grid-cost, D1): the last frame and
         // the average of the last second — the number behind "the fps drops here"
         ui.weak(crate::tf!(
@@ -11031,6 +11022,9 @@ impl KtApp {
         }
         self.perf.last_sample = std::time::Instant::now();
         let ord = std::sync::atomic::Ordering::Relaxed;
+        if self.perf.diag_open {
+            self.sample_copies();
+        }
 
         // saturating: recreating the player zeroes the counters of the new cache,
         // while perf.last_* holds the cumulatives of the old one — a bare subtraction gave
@@ -11887,6 +11881,9 @@ pub fn run() -> eframe::Result {
                 None => KtApp::new_empty(Some(tr(k::msg::OPEN_A_PROJECT).to_string())),
             };
             app.start.store = store;
+            if app.cache_mode() != Default::default() {
+                app.set_persistent_cache();
+            }
             app.load_controls(offer_controls);
             app.note_recent();
             // R.49 item 353: unsaved work no longer “replaces the project if

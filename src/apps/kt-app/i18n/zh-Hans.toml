@@ -2081,6 +2081,26 @@ hint_cache_delete = "删除此缓存文件夹：其中的一切会在需要时�
 hint_cache_cap = "达到上限时替换最旧的结果"
 cache_open = "持久缓存…"
 
+# The persistent cache of the preview (persistent-cache).
+[pcache]
+title = "持久缓存"
+as_preview = "与预览相同"
+off = "关"
+hint = "磁盘上的持久缓存：较慢片刻的成品帧和大文件的轻量副本。按预览尺寸、文件的 1/2 或 1/4，或关闭"
+making = "正在制作轻量副本：第 {0} 帧，共 {1} 帧"
+copy = "预览读取磁盘上的轻量副本：{0}×{1}"
+camera = "预览读取相机自带的副本"
+failed = "没有轻量副本：{0}"
+use_camera = "使用相机的副本…"
+use_camera_hint = "相机在此文件旁边写入的较小文件：预览读取它，渲染从不读取"
+drop_camera = "不再使用相机的副本"
+differs_duration = "相机副本的长度不同：此处 {0} 秒，彼处 {1} 秒"
+differs_frames = "相机副本的帧数不同：此处 {0}，彼处 {1}"
+differs_sound = "相机副本的声音长度不同：此处 {0} 秒，彼处 {1} 秒"
+unreadable = "无法读取相机副本：{0}"
+frames = "帧：{0}，已读 {1}，已写 {2}"
+copies = "文件副本：{0}，已读 {1}，已写 {2}"
+
 # The deck face of the VHS tape simulation (vhs-tape-simulation, D11).
 [deck]
 one_deck = "一台录像机：录制并播放"

@@ -21,6 +21,7 @@ mod bench;
 mod bg;
 mod bin_panel;
 mod cache_prefs;
+mod copies_ui;
 mod camera_editor;
 mod controls;
 mod ctx_menu;
