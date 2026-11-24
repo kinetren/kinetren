@@ -145,12 +145,17 @@ impl crate::app::KtApp {
 
     /// The section “Persistent cache”.
     pub(crate) fn draw_cache_section(&mut self, ui: &mut egui::Ui) {
-        if let Some(rows) = self.start.caches.reading.as_ref().and_then(|a| a.take_within(std::time::Duration::ZERO)) {
+        let first = self.start.caches.rows.is_none() && self.start.caches.reading.is_none();
+        if first {
+            self.cache_job(|| {});
+        }
+        // the first list has a moment to come in the frame the window takes its height in: one that came
+        // later stood below the fold of a window that had settled without it, and a click on a row's
+        // button went past it (found-defects 969)
+        let grace = if first { crate::app::media_grace() } else { std::time::Duration::ZERO };
+        if let Some(rows) = self.start.caches.reading.as_ref().and_then(|a| a.take_within(grace)) {
             self.start.caches.reading = None;
             self.start.caches.rows = Some(rows);
-        }
-        if self.start.caches.rows.is_none() && self.start.caches.reading.is_none() {
-            self.cache_job(|| {});
         }
         ui.add(egui::Label::new(tr(k::prefs::CACHE_ABOUT)).wrap());
         let Some(rows) = self.start.caches.rows.clone() else { return };

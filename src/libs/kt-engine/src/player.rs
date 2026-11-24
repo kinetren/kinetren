@@ -464,6 +464,7 @@ impl Player {
                 .spawn(move || crate::render_cache::run_prerender(parts, stop))
                 .expect("spawn render-cache")
         };
+        let composer = crate::compose_queue::Composer::new();
         let prefetch_thread = {
             let wake_p = wake.clone();
             let stats_p = loop_stats.clone();
@@ -482,18 +483,19 @@ impl Player {
             let gpu_p = video_gpu.clone();
             let ahead_p = ahead.clone();
             let disk_p = render_cache.clone();
+            let composer_p = composer.clone();
             std::thread::Builder::new()
                 .name("prefetch".into())
                 .spawn(move || {
                     prefetch_loop(
                         cache, transport, workers, builds, quality, stop, wake_p,
                         stats_p, version_p, content_p, region_p, shared_p, mix_p, shown_p, gpu_p, ahead_p, disk_p,
+                        composer_p,
                     )
                 })
                 .expect("spawn prefetch")
         };
 
-        let composer = crate::compose_queue::Composer::new();
         let compose_thread = crate::compose_queue::spawn(composer.clone(), parts);
         let build_thread = {
             let ctx = BuildCtx {
@@ -733,11 +735,8 @@ impl Player {
         let display = parts.display_exec()?;
         let store = self.render_cache.store(display.info())?;
         let built = self.builds.latest();
-        let versions = parts.versions();
-        let files = self.render_cache.files(&built.project, (built.seq, versions.1), false);
         let t = built.video.grid.align_floor(t);
-        let (plan, leaves) = built.video.probe_durable(&self.cache, t, parts.quality());
-        store.get(self.render_cache.key(&plan, &leaves, &files))
+        store.get(self.render_cache.key(&built.video.probe_plan(&self.cache, t, parts.quality()))?)
     }
 
     /// What the preview already holds for the moment `t` of the current version (poster-from-kept):
@@ -1773,7 +1772,8 @@ impl PreviewParts {
         let display = self.display_exec()?;
         let q = self.quality();
         let t = built.video.grid.align_floor(t);
-        let key = display.present_key(&built.video.probe_plan(&self.cache, t, q))?;
+        let plan = built.video.probe_plan(&self.cache, t, q);
+        let key = display.present_key(&plan)?;
         let mut rgba = Vec::new();
         if let Some((w, h)) = display.read_kept(key, &mut rgba) {
             return Some(crate::render_cache::Picture { w, h, rgba });
@@ -1781,10 +1781,7 @@ impl PreviewParts {
         if !self.rc.is_on() {
             return None;
         }
-        let store = self.rc.store(display.info())?;
-        let files = self.rc.files(&built.project, (built.seq, self.versions().1), false);
-        let (plan, leaves) = built.video.probe_durable(&self.cache, t, q);
-        store.get(self.rc.key(&plan, &leaves, &files))
+        self.rc.store(display.info())?.get(self.rc.key(&plan)?)
     }
 
     pub(crate) fn restore_from_disk(&self, display: &Arc<dyn VideoGpuExec>, video: &VideoRenderer, t: Tick, q: Quality) -> Option<u64> {
@@ -1793,13 +1790,11 @@ impl PreviewParts {
             return None;
         }
         let store = self.rc.store(display.info())?;
-        let built = self.builds.latest();
         let versions = self.versions();
-        let files = self.rc.files(&built.project, (built.seq, versions.1), false);
-        let (plan, leaves) = video.probe_durable(&self.cache, t, q);
-        let present = display.present_key(&plan)?;
-        let dk = self.rc.key(&plan, &leaves, &files);
-        let key = crate::render_cache::restored_key(present, dk);
+        let plan = video.probe_plan(&self.cache, t, q);
+        // kept under the moment's own key: a composed one replaces it
+        let key = display.present_key(&plan)?;
+        let dk = self.rc.key(&plan)?;
         let (w, h) = (plan.out_w, plan.out_h);
         drop(plan);
         if display.holds(key) {
@@ -1927,8 +1922,11 @@ impl PreviewParts {
                     shown.remove(&t);
                 }
             }
-            let stale: Vec<i64> =
+            let mut stale: Vec<i64> =
                 shown.iter().filter(|(_, (_, p, c))| (*p, *c) != now).map(|(t, _)| *t).collect();
+            // from the playhead outward: what is asked next is known first (durable-moment-key D4)
+            let head = self.transport.playhead().0;
+            stale.sort_by_key(|t| t.abs_diff(head));
             (stale, shown.len() != before)
         };
         if changed {
@@ -2248,7 +2246,7 @@ impl MediaParts {
         // the native size of the new file may differ from the placeholder — the decode scale step
         // must be recomputed at the next build (R.46)
         self.natives.write().unwrap().observe(media, source.info());
-        self.cache.invalidate_source(kt_cache::SourceId(media.0));
+        // the worker's `adopt` drops what the old source decoded
         let w = MediaWorker::spawn_with_stats(media, source, self.cache.clone(), self.decode_stats.clone());
         self.workers.write().unwrap().insert(media, w);
         // the set of sources has changed — prefetch must wake up and
@@ -2289,7 +2287,7 @@ impl MediaParts {
             .collect();
         for m in stale {
             self.remove_media(m);
-            self.cache.invalidate_source(kt_cache::SourceId(m.0));
+            self.cache.forget(kt_cache::SourceId(m.0));
         }
         for (addr, state) in wanted {
             let live = self.gen_states.lock().unwrap().get(&addr).cloned();
@@ -3404,8 +3402,12 @@ fn preview_video(p: &Project, facts: &crate::SourceFacts, cache: &Arc<BurstCache
     vr.set_stream_pacing(Some(crate::StreamPacing::preview(cache.max_video_bytes())));
     // the cap the memory ledger moves after this build (frames-cache-growth)
     vr.set_stream_cap(cache.video_cap_reader());
+    vr.set_source_idents(cache.ident_reader());
     vr
 }
+
+/// How long a moment kept before an edit counts as held while its recheck runs.
+const RECHECK_GRACE: std::time::Duration = std::time::Duration::from_millis(200);
 
 #[allow(clippy::too_many_arguments)]
 fn prefetch_loop(
@@ -3426,6 +3428,7 @@ fn prefetch_loop(
     video_gpu: Arc<Mutex<VideoGpuState>>,
     ahead: Arc<crate::render_ahead::RenderAhead>,
     render_cache: Arc<crate::render_cache::RenderCache>,
+    composer: Arc<crate::compose_queue::Composer>,
 ) {
     // its stream advances and decodes are the look-ahead (gpu-arbiter D5)
     let _class = kt_time::sched::with_class(kt_time::sched::Class::Near);
@@ -3465,6 +3468,11 @@ fn prefetch_loop(
     let mut loop_told: Option<(Option<usize>, usize)> = None;
     // what the decoded-frame cache was sized for (frames-cache-growth)
     let mut frames_sized = crate::prefetch::FramesSizing::default();
+    // the state the kept moments were last seen at, when it moved, and whether some still wait for their
+    // recheck (durable-moment-key D4)
+    let mut versions_seen: Option<(u64, u64)> = None;
+    let mut edited = std::time::Instant::now();
+    let mut recheck_pending = false;
     // the last pass was skipped: nothing moved (one-scheduler: then the thread parks with no clock)
     let mut skipped = false;
     let mut seen = wake.seen();
@@ -3472,7 +3480,7 @@ fn prefetch_loop(
         // playing, a stream stage short of history (the decoder fills it, nothing notifies) or a
         // state that just moved: a pass every 100 ms; else park until something notifies (it woke
         // every 100 ms on a pause before)
-        if transport.is_playing() || stream_pending || !skipped {
+        if transport.is_playing() || stream_pending || recheck_pending || !skipped {
             wake.wait_timeout(std::time::Duration::from_millis(100));
         } else {
             wake.wait_since(seen);
@@ -3496,7 +3504,7 @@ fn prefetch_loop(
                 *loop_region.lock().unwrap(),
                 builds.built_seq(),
             );
-            if !transport.is_playing() && last_state == Some(state) && !stream_pending {
+            if !transport.is_playing() && last_state == Some(state) && !stream_pending && !recheck_pending {
                 skipped = true;
                 continue;
             }
@@ -3572,27 +3580,43 @@ fn prefetch_loop(
         // history, and a history ordered window by window is read before the cache drops it
         let interval = last_pass.elapsed();
         last_pass = std::time::Instant::now();
-        // the moments whose composite the display's executor keeps play without work: neither
-        // their decodes nor their stream history are asked (structured-telemetry, I8)
-        // ...and the moments the disk prerender holds for this state (cache-audit cut 1). A disk moment
-        // needs none of its source frames: its key is durable. A kept composite in memory is keyed by
-        // its frames' content serials, so its frames stay counted in the cache's want: evicted and
-        // decoded again they move its key, and the kept composite is lost (found-defects 965)
+        // the moments whose composite the display's executor keeps, and those the disk prerender holds for
+        // this state, play without work: neither their decodes nor their stream history are asked
+        // (structured-telemetry, I8), and their frames leave the cache's want (cache-audit cut 1): a
+        // moment's key does not depend on what is decoded (durable-moment-key; found-defects 965)
         let versions = (project_version.load(Ordering::Acquire), content_version.load(Ordering::Acquire));
-        let on_disk: std::collections::HashSet<i64> = render_cache.disk_moments(versions).into_iter().collect();
+        if versions_seen != Some(versions) {
+            versions_seen = Some(versions);
+            edited = std::time::Instant::now();
+        }
+        // a moment kept before an edit counts as held until the recheck says what it is, at most
+        // `RECHECK_GRACE`: every edit, a title elsewhere too, moves the versions, and the window would
+        // decode two seconds of sources evicted long ago. The recheck is asked for here, not by the bars
+        // alone
+        let wait = edited.elapsed() < RECHECK_GRACE;
+        recheck_pending = false;
         let kept_now: std::collections::HashSet<i64> = {
-            let mut held: std::collections::HashSet<i64> =
-                kept_moments.lock().unwrap().iter().filter(|(_, (_, p, c))| (*p, *c) == versions).map(|(t, _)| *t).collect();
-            held.extend(on_disk.iter().copied());
+            let mut held = std::collections::HashSet::new();
+            for (t, (_, p, c)) in kept_moments.lock().unwrap().iter() {
+                let now = (*p, *c) == versions;
+                recheck_pending |= !now && wait;
+                if now || wait {
+                    held.insert(*t);
+                }
+            }
+            held.extend(render_cache.disk_moments(versions));
             held
         };
+        if recheck_pending {
+            composer.nudge();
+        }
         let kept = |t: Tick| kept_now.contains(&t.0);
-        let disk_held = |t: Tick| on_disk.contains(&t.0);
         size_stream_memo(video, built.seq, q, region_ticks, &mut memo_sized);
         if transport.is_playing() && region_ticks.is_some() {
             if lap_at.is_some_and(|at| t0.0 < at) {
                 video.stream_lap();
                 cache.lap();
+                frames_sized.lap();
             }
             lap_at = Some(t0.0);
         } else {
@@ -3633,7 +3657,7 @@ fn prefetch_loop(
         }
         let (missing, window) = video_prefetch_pass_sized(video, &cache, t0, q, region_ticks, &kept);
         // the cache asks the memory ledger for what this window and the loop need at this quality
-        size_frames_cache(video, &cache, q, region_ticks, built.seq, window, (&disk_held, on_disk.len()), &mut frames_sized);
+        size_frames_cache(video, &cache, q, region_ticks, built.seq, window, (&kept, kept_now.len()), &mut frames_sized);
         pass_span.b(missing.len() as u64).c(stream_pending as u64);
         let workers = workers.read().unwrap();
         // what the playhead has passed is no longer asked for: a request left in the queue

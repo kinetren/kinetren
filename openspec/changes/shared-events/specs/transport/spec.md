@@ -10,7 +10,7 @@ on every version (49 ms at 13 357 events, linear) (shared-events D3, D4).
 
 #### Scenario: One event's edit hashes one event
 - **WHEN** one event's parameter is edited on projects of 1357 and 13 357 events and the next version is built with the memo
-- **THEN** the counted fingerprints computed and events derived are the same small number on both sizes
+- **THEN** the counted fingerprints computed and events derived are the same small number on both sizes, and no reel's text is hashed (`Cost::ReelHash` counts none)
 - **TEST** t3371 (`src/libs/kt-engine/tests/build_cost.rs`)
 
 #### Scenario: The resolve passes untouched events through

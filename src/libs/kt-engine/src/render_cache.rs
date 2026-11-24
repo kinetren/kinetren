@@ -2,12 +2,11 @@
 //! review R3). A slow moment, once composed, is kept on disk and played from it later — the next lap,
 //! after an eviction, after a restart — with no decode, no stream stage and no chain.
 //!
-//! - **The key** (D1; project-cache-folder D1b): [`DiskKey`] — [`durable_hash`] of the probe plan, every
-//!   field the executor's plan key hashes but the frames' per-process content serials, mixed with what
-//!   those serials stood for, collected while the plan is built ([`Leaves`]): a file's path, size and
-//!   modification time, a generator's values, every file of the project for a stream stage. Its salt is
-//!   what made the pixels ([`Made`]): the decoder's major, the plugins that ran, the composite code
-//!   outside them. Not the build: an update keeps what it did not change.
+//! - **The key** (durable-moment-key D2; project-cache-folder D1b): [`DiskKey`] — the moment's one key
+//!   (`moment_key`, the memory's too), and the rows as the curves gave them. Its salt is what made the
+//!   pixels ([`Made`]): the decoder's major, the plugins that ran, the composite code outside them. Not
+//!   the build: an update keeps what it did not change. A plan with a frame whose name does not outlive
+//!   the process (a placeholder's) has no key here: its picture is neither written nor asked.
 //! - **The store** (D2): [`DiskStore`], segments of up to [`SEGMENT_FRAMES`] moments, each a video
 //!   written by the host's [`SegmentCodec`] (a hardware encoder) with a manifest beside it, in the
 //!   project's cache folder under `results/v<FORMAT>/<device class>/frames/`, written in that folder's
@@ -22,10 +21,8 @@
 use crate::video_plan::{FramePlan, LayerInput, LayerSrc, PlanLayer};
 use kt_media::cache_folder::{Folder, Tenant};
 pub use kt_media::segment::{RawSegments, SegmentCodec, SegmentReader, SegmentWriter};
-use kt_model::MediaId;
 use kt_plugin_api::Family;
 use kt_time::trace::{self, render_cache as rc, Ev};
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -632,219 +629,26 @@ fn read_loop(codec: Arc<dyn SegmentCodec>, rx: std::sync::mpsc::Receiver<ReadAsk
     }
 }
 
-// ---- the durable key (D1) ----------------------------------------------------------------------
+// ---- the key on disk -----------------------------------------------------------------------------
 
-/// What the frames' per-process serials stood for, collected while a plan is built (D1).
-#[derive(Default, Debug)]
-pub struct Leaves {
-    h: Xxh3Box,
-    /// Files whose identity the key needs.
-    files: BTreeSet<MediaId>,
-    /// A stream stage reads another event's file: every file of the project joins the key.
-    all_files: bool,
-    /// A procedural source drew: the generators join the salt.
-    gens: bool,
-}
-
-#[derive(Default)]
-struct Xxh3Box(Xxh3);
-
-impl std::fmt::Debug for Xxh3Box {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Xxh3")
-    }
-}
-
-thread_local! {
-    static LEAVES: RefCell<Option<Leaves>> = const { RefCell::new(None) };
-}
-
-/// Run `f` (a plan build) collecting the leaves it reads.
-pub(crate) fn with_leaves<R>(f: impl FnOnce() -> R) -> (R, Leaves) {
-    let before = LEAVES.with(|l| l.borrow_mut().replace(Leaves::default()));
-    let r = f();
-    let got = LEAVES.with(|l| std::mem::replace(&mut *l.borrow_mut(), before)).unwrap_or_default();
-    (r, got)
-}
-
-/// The plan builder's leaf (only while [`with_leaves`] collects): a file's frame (`file`), or a
-/// procedural source's values (`rev`), and whether it is a stream stage.
-pub(crate) fn note_leaf(source: u64, file: Option<MediaId>, rev: u64, stream: bool) {
-    LEAVES.with(|l| {
-        if let Some(l) = l.borrow_mut().as_mut() {
-            l.h.0.update(&source.to_le_bytes());
-            l.h.0.update(&rev.to_le_bytes());
-            if let Some(m) = file {
-                l.files.insert(m);
-            }
-            l.all_files |= stream;
-            l.gens |= rev != 0;
+/// The rows of every chain of the plan as the curves gave them: a changed curve arithmetic is another
+/// picture under the same chain (in one process it cannot change, so the memory's key leaves it out).
+fn put_rows(h: &mut Xxh3, plan: &FramePlan<'_>) {
+    fn src(h: &mut Xxh3, s: &LayerSrc<'_>) {
+        crate::moment_key::put_debug(h, &&*s.fx);
+        for (_, r) in &s.reads {
+            src(h, r);
         }
-    });
-}
-
-/// The identities of the project's files (D1): path, size and modification time.
-#[derive(Default, Clone, Debug)]
-pub struct FileIds {
-    pub by_media: HashMap<MediaId, u64>,
-    /// All of them, for a stream stage.
-    pub all: u64,
-}
-
-impl FileIds {
-    /// Read the identities of `media` (paths relative to `base`); a missing file is its path and a mark.
-    pub fn read(media: &[kt_model::MediaRef], base: Option<&Path>) -> FileIds {
-        let mut by_media = HashMap::new();
-        let mut all = Xxh3::new();
-        for m in media {
-            let p = Path::new(&m.path);
-            let full = match base {
-                Some(b) if p.is_relative() => b.join(p),
-                _ => p.to_path_buf(),
-            };
-            let mut h = Xxh3::new();
-            h.update(m.path.as_bytes());
-            match std::fs::metadata(&full) {
-                Ok(md) => {
-                    h.update(&md.len().to_le_bytes());
-                    let t = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).unwrap_or_default();
-                    h.update(&t.as_nanos().to_le_bytes());
-                }
-                Err(_) => h.update(b"\0missing"),
-            }
-            let id = h.digest();
-            all.update(&m.id.0.to_le_bytes());
-            all.update(&id.to_le_bytes());
-            by_media.insert(m.id, id);
-        }
-        FileIds { by_media, all: all.digest() }
-    }
-}
-
-impl Leaves {
-    /// The key's part from the leaves and the files' identities.
-    pub fn digest(&self, files: &FileIds) -> u64 {
-        let mut h = Xxh3::new();
-        h.update(&self.h.0.digest().to_le_bytes());
-        for m in &self.files {
-            h.update(&m.0.to_le_bytes());
-            h.update(&files.by_media.get(m).copied().unwrap_or(0).to_le_bytes());
-        }
-        if self.all_files {
-            h.update(&files.all.to_le_bytes());
-        }
-        h.digest()
-    }
-}
-
-/// The plan's hash as the executor's plan key takes it, without what a process numbers (D1): the
-/// frames' content serials and the input frame's presence and size (both follow from the address,
-/// the index and the step). A new field a plan key hashes is hashed here too (t2981).
-pub fn durable_hash(plan: &FramePlan<'_>) -> u64 {
-    let mut h = Xxh3::new();
-    h.update(&FORMAT.to_le_bytes());
-    put_plan(&mut h, plan);
-    h.digest()
-}
-
-/// Debug text streamed into the hash, no string built.
-fn put_debug(h: &mut Xxh3, v: &dyn std::fmt::Debug) {
-    struct Into<'h>(&'h mut Xxh3);
-    impl std::fmt::Write for Into<'_> {
-        fn write_str(&mut self, s: &str) -> std::fmt::Result {
-            self.0.update(s.as_bytes());
-            Ok(())
+        if let LayerInput::Nest(n) = &s.input {
+            put_rows(h, &n.plan);
         }
     }
-    let _ = std::fmt::Write::write_fmt(&mut Into(h), format_args!("{v:?}"));
-}
-
-fn put_mix(h: &mut Xxh3, m: &crate::TransMix) {
-    match crate::transitions::plugin_id(m.mode) {
-        Some(id) => {
-            h.update(&[1u8]);
-            h.update(id.as_bytes());
-            h.update(&[0u8]);
-        }
-        None => h.update(&m.mode.to_le_bytes()),
-    }
-    for v in m.p {
-        h.update(&v.to_bits().to_le_bytes());
-    }
-}
-
-fn put_src(h: &mut Xxh3, s: &LayerSrc<'_>) {
-    h.update(&s.source.0.to_le_bytes());
-    h.update(&s.cache_idx.to_le_bytes());
-    match &s.blend {
-        None => h.update(&[0u8]),
-        Some(b) => {
-            h.update(&[1u8]);
-            h.update(&b.cache_idx.to_le_bytes());
-            h.update(&b.k.to_le_bytes());
-        }
-    }
-    h.update(&s.fx_hash.to_le_bytes());
-    // the rows as the curves gave them: a changed curve arithmetic is another picture under the same
-    // chain
-    put_debug(h, &&*s.fx);
-    // the wiring, as `plan_hash` does (fx-graph-dag D3); a line adds nothing
-    if !s.fx_in.is_empty() {
-        put_debug(h, &s.fx_in);
-    }
-    for (slot, r) in &s.reads {
-        h.update(&(*slot as u64).to_le_bytes());
-        put_src(h, r);
-    }
-    if !s.masks.is_empty() {
-        put_debug(h, &s.masks);
-    }
-    h.update(&s.src_scale.to_le_bytes());
-    h.update(&s.u.to_bits().to_le_bytes());
-    put_debug(h, &s.cam3d);
-    put_debug(h, &s.lead);
-    h.update(&[s.blend_mode as u8]);
-    match &s.input {
-        // a held picture is the frame it stands for (stream-picture-stays D3)
-        LayerInput::Frame(_) | LayerInput::Held(_) => h.update(&[1u8]),
-        LayerInput::Nest(n) => {
-            h.update(&[2u8]);
-            h.update(&n.seq.0.to_le_bytes());
-            h.update(&[n.blend as u8]);
-            h.update(&n.nest_scale.to_le_bytes());
-            h.update(&n.content_hash.to_le_bytes());
-            h.update(&n.inner_t.0.to_le_bytes());
-            put_plan(h, &n.plan);
-        }
-    }
-}
-
-fn put_plan(h: &mut Xxh3, plan: &FramePlan<'_>) {
-    h.update(&plan.t.0.to_le_bytes());
-    h.update(&plan.out_w.to_le_bytes());
-    h.update(&plan.out_h.to_le_bytes());
     for layer in &plan.layers {
         match layer {
-            PlanLayer::One { src, alpha_k, scale_alpha, fade } => {
-                h.update(&[1u8, *scale_alpha as u8]);
-                h.update(&alpha_k.to_le_bytes());
-                match fade {
-                    None => h.update(&[0u8]),
-                    Some(f) => {
-                        h.update(&[1u8, f.incoming as u8]);
-                        h.update(&f.k.to_le_bytes());
-                        put_mix(h, &f.mix);
-                    }
-                }
-                put_src(h, src);
-            }
-            PlanLayer::Dissolve { a, b, k, alpha_k, mix } => {
-                h.update(&[2u8]);
-                h.update(&k.to_le_bytes());
-                h.update(&alpha_k.to_le_bytes());
-                put_mix(h, mix);
-                put_src(h, a);
-                put_src(h, b);
+            PlanLayer::One { src: s, .. } => src(h, s),
+            PlanLayer::Dissolve { a, b, .. } => {
+                src(h, a);
+                src(h, b);
             }
         }
     }
@@ -853,7 +657,7 @@ fn put_plan(h: &mut Xxh3, plan: &FramePlan<'_>) {
 /// What a moment's picture is kept under.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct DiskKey {
-    /// What the picture is OF: the plan, its leaves, the quality it was asked at.
+    /// What the picture is OF: the plan and its frames, at the size it was asked at.
     pub key: u64,
     /// What MAKES it ([`Made`]).
     pub salt: u64,
@@ -886,9 +690,11 @@ impl Made {
     }
 
     /// The salt of a plan: with the versions of the plugins whose kernels run in it.
-    pub fn salt(&self, plan: &FramePlan<'_>, leaves: &Leaves) -> u64 {
+    pub fn salt(&self, plan: &FramePlan<'_>) -> u64 {
         let mut used: BTreeSet<(u8, &str)> = BTreeSet::new();
-        plugins_of(plan, &mut used);
+        // (a procedural source drew, a stream stage ran)
+        let mut drew = (false, false);
+        plugins_of(plan, &mut used, &mut drew);
         let reg = kt_model::plugin_slot::registry();
         let mut h = Xxh3::new();
         h.update(&self.decoder.to_le_bytes());
@@ -902,7 +708,7 @@ impl Made {
         // what drew a leaf is not in the plan: every generator, every stream kernel
         for p in reg.plugins() {
             let m = p.manifest();
-            let ran = (leaves.gens && m.media.family() == Family::Generator) || (leaves.all_files && p.stream().is_some());
+            let ran = (drew.0 && m.media.family() == Family::Generator) || (drew.1 && p.stream().is_some());
             if ran {
                 h.update(m.id.as_bytes());
                 h.update(&kernel_version(reg, m.media.family(), &m.id).to_le_bytes());
@@ -938,18 +744,20 @@ fn kernel_version(reg: &kt_plugin_api::Registry, family: Family, id: &str) -> u6
 }
 
 /// The plugins whose kernels run in a plan.
-fn plugins_of<'p>(plan: &'p FramePlan<'_>, out: &mut BTreeSet<(u8, &'p str)>) {
-    fn src<'p>(s: &'p LayerSrc<'_>, out: &mut BTreeSet<(u8, &'p str)>) {
+fn plugins_of<'p>(plan: &'p FramePlan<'_>, out: &mut BTreeSet<(u8, &'p str)>, drew: &mut (bool, bool)) {
+    fn src<'p>(s: &'p LayerSrc<'_>, out: &mut BTreeSet<(u8, &'p str)>, drew: &mut (bool, bool)) {
+        drew.0 |= s.leaf.drawn;
+        drew.1 |= s.leaf.stream;
         for f in s.fx.iter() {
             if let kt_model::FxInstance::Plugin(p) = f {
                 out.insert((0, &p.id));
             }
         }
         for (_, r) in &s.reads {
-            src(r, out);
+            src(r, out, drew);
         }
         if let LayerInput::Nest(n) = &s.input {
-            plugins_of(&n.plan, out);
+            plugins_of(&n.plan, out, drew);
         }
     }
     let mix = |m: &crate::TransMix, out: &mut BTreeSet<(u8, &'p str)>| {
@@ -963,30 +771,27 @@ fn plugins_of<'p>(plan: &'p FramePlan<'_>, out: &mut BTreeSet<(u8, &'p str)>) {
                 if let Some(f) = fade {
                     mix(&f.mix, out);
                 }
-                src(s, out);
+                src(s, out, drew);
             }
             PlanLayer::Dissolve { a, b, mix: m, .. } => {
                 mix(m, out);
-                src(a, out);
-                src(b, out);
+                src(a, out, drew);
+                src(b, out, drew);
             }
         }
     }
 }
 
-/// The key on disk: the plan's durable hash, its leaves and the quality it was asked at; what makes it.
-pub fn disk_key(plan: &FramePlan<'_>, leaves: &Leaves, files: &FileIds, made: &Made) -> DiskKey {
+/// The key on disk of a plan's picture; `None` — a frame of it has no name outside this process.
+pub fn disk_key(plan: &FramePlan<'_>, made: &Made) -> Option<DiskKey> {
+    if !plan.durable() {
+        return None;
+    }
     let mut h = Xxh3::new();
-    h.update(&durable_hash(plan).to_le_bytes());
-    h.update(&leaves.digest(files).to_le_bytes());
-    DiskKey { key: h.digest(), salt: made.salt(plan, leaves) }
-}
-
-/// The key the display's memo holds a restored moment under: its present key mixed with the durable
-/// one (D3) — a probe plan of an undecoded moment carries serial 0, and a memo entry under that key
-/// alone could be shown after the file under the same media id was replaced.
-pub fn restored_key(present: u64, durable: DiskKey) -> u64 {
-    present ^ durable.id().rotate_left(17).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0x5245_5354_4f52_4544
+    h.update(&FORMAT.to_le_bytes());
+    h.update(&crate::moment_key::moment_key(plan).to_le_bytes());
+    put_rows(&mut h, plan);
+    Some(DiskKey { key: h.digest(), salt: made.salt(plan) })
 }
 
 // ---- what to prerender (D4) --------------------------------------------------------------------
@@ -1065,21 +870,18 @@ pub struct Config {
     pub root: PathBuf,
     /// What makes the pixels outside the plan.
     pub made: Made,
-    /// The project file's folder: relative media paths resolve against it.
-    pub base: Option<PathBuf>,
     /// A cap of the frames alone ([`cap_from_env`]).
     pub cap: Option<u64>,
 }
 
 /// The player's disk tier: its configuration, the store of the display's device, the files'
-/// identities, the moments on disk for the bars, the input stamp and the prerender's wake.
+/// moments on disk for the bars, the input stamp and the prerender's wake.
 #[derive(Default)]
 pub struct RenderCache {
     cfg: Mutex<Option<Config>>,
     store: Mutex<Option<(String, Arc<DiskStore>)>>,
     /// Held while a store is opened.
     opening: Mutex<()>,
-    files: Mutex<Option<(u64, u64, Arc<FileIds>)>>,
     /// Moments the store holds: tick → (durable key, the versions it was computed at).
     on_disk: Mutex<BTreeMap<i64, OnDisk>>,
     pub(crate) disk_gen: Arc<AtomicU64>,
@@ -1113,7 +915,6 @@ impl RenderCache {
     pub fn set_config(&self, cfg: Option<Config>) {
         *self.cfg.lock().unwrap() = cfg.filter(|_| enabled());
         *self.store.lock().unwrap() = None;
-        *self.files.lock().unwrap() = None;
         *self.unavailable.lock().unwrap() = None;
         self.on_disk.lock().unwrap().clear();
         self.disk_gen.fetch_add(1, Ordering::Relaxed);
@@ -1146,26 +947,10 @@ impl RenderCache {
         Some(s)
     }
 
-    /// The key of a probe plan as the tier keeps it.
-    pub(crate) fn key(&self, plan: &FramePlan<'_>, leaves: &Leaves, files: &FileIds) -> DiskKey {
+    /// The key of a plan's picture as the tier keeps it.
+    pub(crate) fn key(&self, plan: &FramePlan<'_>) -> Option<DiskKey> {
         let made = self.cfg.lock().unwrap().as_ref().map_or(Made::of(0), |c| c.made);
-        disk_key(plan, leaves, files, &made)
-    }
-
-    /// The identities of `project`'s files, read again when the state (`stamp`: build, content
-    /// version) moved or `refresh` asks (the prerender at its start: a file edited outside).
-    pub fn files(&self, project: &kt_model::Project, stamp: (u64, u64), refresh: bool) -> Arc<FileIds> {
-        let base = self.cfg.lock().unwrap().as_ref().and_then(|c| c.base.clone());
-        let mut g = self.files.lock().unwrap();
-        if !refresh
-            && let Some((a, b, f)) = g.as_ref()
-            && (*a, *b) == stamp
-        {
-            return f.clone();
-        }
-        let f = Arc::new(FileIds::read(&project.media, base.as_deref()));
-        *g = Some((stamp.0, stamp.1, f.clone()));
-        f
+        disk_key(plan, &made)
     }
 
     /// The person acted (D4): an atomic stamp, no notify.
@@ -1300,6 +1085,8 @@ enum Outcome {
     Stopped(u64),
     Incomplete,
     NoExec,
+    /// The picture has no name outside this process.
+    Unnamed,
 }
 
 /// The state the prerender's knowledge belongs to: the build, the versions, the quality, the region.
@@ -1417,7 +1204,7 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
         let bucket = head.div_euclid(5 * kt_time::TICK_HZ);
         if scanned != Some((sk, bucket)) {
             scanned = Some((sk, bucket));
-            scan(&parts, &rc, &store, &display, &video, &built.project, (built.seq, versions), q, region, head);
+            scan(&parts, &rc, &store, &display, &video, versions, q, region, head);
         }
         let unavailable = rc.unavailable.lock().unwrap().is_some();
         if full || unavailable {
@@ -1479,7 +1266,7 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
         }
         worked = true;
         rc.busy.store(true, Ordering::Release);
-        let out = one(&parts, &rc, &store, &display, &video, &built.project, built.seq, t, q, versions, layout, &stop);
+        let out = one(&parts, &rc, &store, &display, &video, t, q, versions, layout, &stop);
         rc.busy.store(false, Ordering::Release);
         match out {
             Outcome::Heavy(dk, w, h, rgba, ns) => {
@@ -1522,7 +1309,7 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
                     commit(&rc, &mut seg);
                 }
             }
-            Outcome::Light | Outcome::OnDisk | Outcome::NoExec => {
+            Outcome::Light | Outcome::OnDisk | Outcome::NoExec | Outcome::Unnamed => {
                 done.insert(t);
             }
             Outcome::Full => {
@@ -1556,8 +1343,7 @@ fn scan(
     store: &DiskStore,
     display: &Arc<dyn crate::video_plan::VideoGpuExec>,
     video: &crate::video::VideoRenderer,
-    project: &kt_model::Project,
-    stamp: (u64, (u64, u64)),
+    versions: (u64, u64),
     q: kt_media::Quality,
     region: Option<(i64, i64)>,
     head: i64,
@@ -1568,7 +1354,6 @@ fn scan(
     }
     let step = video.grid.frame_step().max(1);
     let (a, b) = region.unwrap_or((head - 5 * kt_time::TICK_HZ, head + 5 * kt_time::TICK_HZ));
-    let files = rc.files(project, (stamp.0, stamp.1.1), false);
     let mut t = video.grid.align_floor(kt_time::Tick(a.max(0))).0;
     let (mut looked, mut found) = (0u64, 0u64);
     let input = rc.input_stamp();
@@ -1578,13 +1363,13 @@ fn scan(
         }
         if !video.layers_at(kt_time::Tick(t), q).is_empty() {
             looked += 1;
-            let (plan, leaves) = video.probe_durable(&parts.cache, kt_time::Tick(t), q);
-            if display.present_key(&plan).is_some() {
-                let dk = rc.key(&plan, &leaves, &files);
-                if store.contains(dk) {
-                    rc.note_on_disk(t, dk, stamp.1);
-                    found += 1;
-                }
+            let plan = video.probe_plan(&parts.cache, kt_time::Tick(t), q);
+            if display.present_key(&plan).is_some()
+                && let Some(dk) = rc.key(&plan)
+                && store.contains(dk)
+            {
+                rc.note_on_disk(t, dk, versions);
+                found += 1;
             }
         }
         t += step;
@@ -1602,8 +1387,6 @@ fn one(
     store: &DiskStore,
     display: &Arc<dyn crate::video_plan::VideoGpuExec>,
     video: &Arc<crate::video::VideoRenderer>,
-    project: &kt_model::Project,
-    seq: u64,
     t: i64,
     q: kt_media::Quality,
     versions: (u64, u64),
@@ -1611,11 +1394,12 @@ fn one(
     stop: &Arc<std::sync::atomic::AtomicBool>,
 ) -> Outcome {
     use kt_time::Tick;
-    let files = rc.files(project, (seq, versions.1), false);
     let (dk, w, h) = {
-        let (plan, leaves) = video.probe_durable(&parts.cache, Tick(t), q);
-        (rc.key(&plan, &leaves, &files), plan.out_w, plan.out_h)
+        let plan = video.probe_plan(&parts.cache, Tick(t), q);
+        (rc.key(&plan), plan.out_w, plan.out_h)
     };
+    // a placeholder's picture, or a source whose name dies with the process: never written
+    let Some(dk) = dk else { return Outcome::Unnamed };
     if store.contains(dk) {
         rc.note_on_disk(t, dk, versions);
         return Outcome::OnDisk;
@@ -1650,7 +1434,7 @@ fn one(
     let mut buf = Vec::new();
     let mut moved = (kt_plugin_api::stream::positions_walked(), parts.cache.video_inserted());
     let mut since = std::time::Instant::now();
-    let (w, h) = loop {
+    let (dk, w, h) = loop {
         if check() {
             span.c(2);
             return Outcome::Stopped(why());
@@ -1667,13 +1451,14 @@ fn one(
                     Some(l) => exec.execute_once_yuv(&plan, l, &mut buf),
                     None => exec.execute_into(&plan, &mut buf),
                 };
-                (r, plan.out_w, plan.out_h)
+                // the name of what was COMPOSED: a retune applied since the probe is another picture
+                (r, rc.key(&plan), plan.out_w, plan.out_h)
             });
             let want = |w: u32, h: u32| layout.map_or(w as usize * h as usize * 4, |l| l.frame_bytes(w, h));
             match out {
-                (Ok(true), w, h) if buf.len() == want(w, h) => break (w, h),
-                (Ok(_), _, _) => {}
-                (Err(_), _, _) => {
+                (Ok(true), Some(dk), w, h) if buf.len() == want(w, h) => break (dk, w, h),
+                (Ok(_), ..) => {}
+                (Err(_), ..) => {
                     span.c(2);
                     return Outcome::Incomplete;
                 }

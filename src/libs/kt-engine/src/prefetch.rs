@@ -224,6 +224,23 @@ pub struct FramesSizing {
     asked: usize,
     /// How many moments were held final when the loop was last counted.
     held: usize,
+    /// How many were held at the last pass: the window's peak is of that many.
+    held_seen: usize,
+    /// The loop came round since it was last counted.
+    lapped: bool,
+    /// How often the loop was counted (t4114).
+    counts: u64,
+}
+
+impl FramesSizing {
+    /// The loop came round: what filled since the last count is counted.
+    pub fn lap(&mut self) {
+        self.lapped = true;
+    }
+
+    pub fn counts_for_tests(&self) -> u64 {
+        self.counts
+    }
 }
 
 /// Ask the ledger for what the player's look-ahead and loop need (frames-cache-growth): called by
@@ -231,9 +248,11 @@ pub struct FramesSizing {
 /// region or build counts the loop's frames again and forgets the window's peak; the ledger is
 /// asked only when the rounded want moves, and the sizing is a `frames_cap` record. The cap now.
 /// `held` names the moments whose final frame is kept, in memory or on disk, and how many there are:
-/// they count in neither the window (the pass skips them) nor the loop, and when their number moves
-/// the loop is counted again and the window's peak forgotten — the want is sized AFTER the skip
-/// (cache-audit cut 1; the cap still grows with what the window needs, kkt-26.11.10 J4).
+/// they count in neither the window (the pass skips them) nor the loop — the want is sized AFTER the skip
+/// (cache-audit cut 1; the cap still grows with what the window needs, kkt-26.11.10 J4). When their number
+/// moves the window's peak is forgotten; the loop, a walk of every moment, is counted again when the
+/// number fell, when it grew by a sixteenth of the loop, and when the loop came round
+/// (durable-moment-key D4): in a first lap it moves on every pass.
 #[allow(clippy::too_many_arguments)]
 pub fn size_frames_cache(
     video: &VideoRenderer,
@@ -246,10 +265,22 @@ pub fn size_frames_cache(
     sizing: &mut FramesSizing,
 ) -> usize {
     let key = (q, region_ticks, build);
-    if sizing.key != Some(key) || sizing.held != held_n {
+    let moments = region_ticks.map_or(0, |(s, e)| (e - s) / video.grid.frame_step().max(1)).max(0) as usize;
+    let recount = held_n < sizing.held
+        || held_n >= sizing.held + (moments / 16).max(1)
+        || (sizing.lapped && held_n != sizing.held);
+    if sizing.held_seen != held_n {
+        sizing.held_seen = held_n;
+        sizing.window = 0;
+    }
+    if sizing.key != Some(key) || recount {
+        if sizing.key != Some(key) {
+            sizing.window = 0;
+        }
         sizing.key = Some(key);
         sizing.held = held_n;
-        sizing.window = 0;
+        sizing.lapped = false;
+        sizing.counts += 1;
         // a loop past what the machine has now cannot be held: its count stops there
         // (the room: the cache's own growth is memory the loop may keep, class-walk-revision)
         let stop = kt_time::mem::room().map_or(usize::MAX, |a| usize::try_from(a).unwrap_or(usize::MAX));

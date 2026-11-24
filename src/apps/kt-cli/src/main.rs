@@ -1188,7 +1188,6 @@ fn preview_run(
             codec: std::sync::Arc::new(kt_media::segment::ffmpeg::FfmpegSegments::from_env()),
             root: dir.into(),
             made: render_cache_made(),
-            base: std::path::Path::new(path).parent().map(|p| p.to_path_buf()),
             cap: kt_engine::render_cache::cap_from_env(),
         }));
     }

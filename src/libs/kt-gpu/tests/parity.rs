@@ -87,6 +87,7 @@ impl Src {
             // BurstCache issues it; here it is a hash of the frame’s own bytes, so that
             // different frames do not share a texture in UploadCache
             content: self.frame.as_ref().map(|f| xxhash_rust::xxh3::xxh3_64(&f.rgba)).unwrap_or(0),
+            leaf: Default::default(),
             src_scale: self.src_scale,
             input: kt_engine::video_plan::LayerInput::Frame(self.frame.clone()),
             fx: kt_engine::LayerChain::Borrowed(&self.fx[..]),

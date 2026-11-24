@@ -22331,12 +22331,7 @@ fn t3842_preferences_list_the_cache_folders() {
     use crate::i18n::{k, tr};
     use egui_kittest::kittest::Queryable;
     use kt_media::cache_folder::{Folder, registry};
-    // tall: the section is the window's last, and a click below the fold hits nothing
-    let mut h = harness_sized(1440.0, 1600.0);
-    crate::i18n::set_lang(crate::i18n::Lang::En);
-    assert!(h.state().index.wait_idle());
-    h.step();
-    h.step();
+    let mut h = harness_lang(crate::i18n::Lang::En);
     let dir = std::env::temp_dir().join(format!("kt-t3842-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let make = |n: &str, project: bool| {
@@ -22391,6 +22386,10 @@ fn t3842_preferences_list_the_cache_folders() {
     let rows = h.state().start.caches.rows_for_tests();
     let at = rows.iter().position(|r| r.folder == orphan).unwrap();
     let r = crate::widgets::field_probe::rect_of(&format!("prefs.cache.{at}.delete")).unwrap();
+    // the window opened tall enough for the list: every row is on screen, not below its fold
+    let win = h.ctx.memory(|m| m.area_rect(egui::Id::new("kt_prefs"))).unwrap();
+    assert!(win.contains_rect(r), "the list stands below the window's fold: {r:?} in {win:?}");
+    assert!(texts(&h).iter().any(|t| t.contains("gone")), "the orphan's row is not drawn: {:?}", texts(&h));
     crate::reach_tests::click_at(&mut h, r.center());
     wait(&mut h, "the orphan's row stays", &|h| has(h, "gone") == 0);
     assert!(!orphan.exists(), "the folder stays on the disk");

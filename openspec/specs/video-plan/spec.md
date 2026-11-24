@@ -1665,10 +1665,16 @@ filled from lap 15.
 ### Requirement: Slow moments are prerendered at rest as hardware-encoded video and played from it
 The preview SHALL keep complete composites of slow moments on disk under a DURABLE key: the plan key's
 inputs (every field the executor's plan key hashes) with each frame's per-process content serial replaced
-by what determines the frame across processes — a file's path, size and modification time, a generator's
-values (`src_rev`), a stream stage's own key plus the identities of the project's files — salted by the
-format, the program build and the device, so the same plan gives the same key in another process and an
-edit, a replaced file, another build or another device gives another. The key SHALL NOT depend on the
+by what determines the frame across processes — the identity of its source (a file's name, size and modification
+time as it was opened, a generator's values; capability `media-index`, change `durable-moment-key`), a stream stage's
+own key, which mixes the identities of the sources it reads; a moment with a source whose identity does not outlive the process is neither written nor read — salted by the
+store's format and the device class (the folder `results/v<FORMAT>/<device class>/`), and keyed further by
+the decoder's major, the version of the decode's own conversion, the versions of the kernels that ran (each plugin's version — the hash of its
+crate's source, made at build time — and its WGSL text's hash) and `COMPOSITE_PATH_VERSION` (the hash of the
+composite code outside the kernels, the files of `kt-engine/composite-path.txt` without comments), not by the
+whole build. A procedural source SHALL bring the generators' versions, a stream stage the stream kernels'. So the same plan gives the same key in
+another process and in a release that did not change those kernels, while an edit, a replaced file, a
+changed kernel or another device class gives another. The key SHALL NOT depend on the
 codec, the encoder or the container: it names the picture, and a later reader (the cached final render,
 F-EXP-003) can match it. The pictures SHALL be stored as video segments — runs of consecutive moments, every
 frame a keyframe — written in-process by the machine's HARDWARE video encoder (the export's encoder cascade
@@ -1676,9 +1682,10 @@ with its real open check; H.264 at a high quality) and read back by our libav de
 manifest SHALL name the codec, the encoder, the frame size and rate and the durable key of every frame. No
 processor encoder SHALL be used unless the host forces one by name (`KT_RENDER_CACHE_ENCODER`: tests and the
 live check on a machine without a hardware encoder); where no hardware encoder opens the store writes
-nothing and the Diagnostics window and the trace say why. The total SHALL be bounded (2 GiB unless
-`KT_RENDER_CACHE_MB`), evicted a segment at a time, least recently used; the folders of other builds SHALL
-be removed when the store opens. A restored picture is the composite within the codec's tolerance.
+nothing and the Diagnostics window and the trace say why. The store SHALL be the `frames/` kind of the persistent cache in the project's cache folder (`results/`; capability `media-index`, "The project's
+caches live in a folder beside it"), written in that folder's cycle (capability `media-index`: the least recently used dropped first when the
+folder cannot take more; `KT_RENDER_CACHE_MB` caps it alone for tests), a segment at a time, the lowest value per byte first; an entry
+whose salt no longer matches SHALL be a miss and be removed when met, with no sweep when the store opens. A restored picture is the composite within the codec's tolerance.
 
 Before composing a moment the display's executor does not hold — the render-ahead producer before it asks
 whether the moment is decoded, the compose thread before it composes — the preview SHALL look the moment up
@@ -1697,11 +1704,14 @@ exception to "the program at rest costs nothing"; a heavy loop was composed agai
 whenever the display's memo lost it. kkt-26.11.18b U4 — the storage: not raw, not a processor codec ("слабо
 я верю что ffv1 аппаратно ускорен"), a normal video codec on the hardware ("сделай ты сжатие видео
 нормальное"); lossy accepted, the export never reads it. U5 — the key is reused later by the cached final
-render.
+render. kkt-26.11.20b B1 — it is the frames kind of the persistent cache, salted by the kernels that ran
+rather than the build (agreed with change `persistent-cache`), so a release keeps what it did not change.
+kkt-26.11.20 A14 — the store moves beside the project ("вот с тем же превью кэшем"),
+so one heavy project no longer evicts another's loop (project-cache-folder D3).
 
 #### Scenario: The store keeps segments within its cap
-- **WHEN** segments of two frames are written to a store with a small cap, two of them read, another build's folder exists at open, a segment's video is truncated, and a codec opens no encoder
-- **THEN** each frame reads back as written, the manifest names the codec, the encoder, the size, the rate and the keys and is its own text, the least recently used segment goes first, the other build's folder is gone, the truncated segment is a miss and removed, the prerender evicts nothing this process used, and the codec with no encoder refuses the segment
+- **WHEN** segments of two frames are written to a store with a small cap, two of them read, an entry of another salt is asked, a segment's video is truncated, and a codec opens no encoder
+- **THEN** each frame reads back as written, the manifest names the codec, the encoder, the size, the rate and the keys and is its own text, the least recently used segment goes first, the entry of another salt is a miss and is removed while nothing else is touched, the truncated segment is a miss and removed, the prerender evicts nothing this process used, and the codec with no encoder refuses the segment
 - **TEST** t2980 (`src/libs/kt-engine/src/render_cache.rs`)
 
 #### Scenario: A segment is written by the hardware encoder or refused
@@ -1715,8 +1725,8 @@ render.
 - **TEST** t3129 (`src/libs/kt-media/tests/segment.rs`)
 
 #### Scenario: The durable key survives a process and follows what the picture is made of
-- **WHEN** a moment's durable key is computed by two renderers over two frames caches (different serials), with its frames decoded and not; then after an edit of an effect parameter, a file's modification time, a generator's value, the quality and the build salt
-- **THEN** the first keys are equal; each change gives another key
+- **WHEN** a moment's durable key is computed by two renderers over two frames caches (different serials), with its frames decoded and not; then after an edit of an effect parameter, a file's modification time, a generator's value, the quality, a kernel's version or WGSL text, the decoder's major, `COMPOSITE_PATH_VERSION` and the device class; and after a change of the program build that touches none of them
+- **THEN** the first keys are equal; each named change gives another key, and the build change alone keeps it
 - **TEST** t2981 (`src/libs/kt-engine/tests/render_cache.rs`)
 
 #### Scenario: A prerendered moment plays from disk after a restart
@@ -1756,6 +1766,16 @@ render.
 - **THEN** segments appear in the render cache at rest and the program then rests; the first run's trace records heavy prerendered moments and the encoder; the restart's trace counts moments restored from disk in its first lap
 - **TEST** t2988 (`src/scripts/live/render_cache.py`)
 
+#### Scenario: The store lives in the project's folder
+- **WHEN** two projects in two folders prerender a loop each, the second folder's cap smaller than its loop, and the first start of the build finds a former `<data>/render-cache`
+- **THEN** each project's segments lie in its own `kinetren-cache/`, the second folder's oldest segments are replaced as its loop is written (a segment holds at most an eighth of the room; one that finds none is taken again in shorter ones) while the first folder is untouched and the bars draw no dropped moment, and the former folder is gone
+- **TEST** t3833, t3834 (`src/libs/kt-engine/tests/render_cache.rs`)
+
+#### Scenario: The composite path's version follows its code
+- **WHEN** the guard hashes the composite code outside the kernels (the fusion, `plan_chain`, the core passes and shaders, the conversions, the titles and the core's generators) as `composite-path.txt` names it
+- **THEN** the hash equals `COMPOSITE_PATH_VERSION`, every named file is there, every shader of the core crates is among them, and the executor, the planner and the conversions are
+- **TEST** t3808 (`src/libs/kt-engine/tests/render_cache.rs`)
+
 ### Requirement: An offline job takes the moment the preview already holds
 A background job that wants a picture of a moment of the current project version — the project's poster
 — SHALL first ask the player for what the preview holds for it (`Player::kept_picture_reader`): the
@@ -1770,3 +1790,40 @@ a software device, for the moment the preview had just shown (poster-from-kept D
 - **WHEN** the preview has presented a moment over a cut mosh, the stream memo and the decoded frames are dropped, and the reader is run for that moment and for one never composed
 - **THEN** the first gives the picture at the preview's size with no stream run, walk or decode request; the second gives nothing
 - **TEST** t2978 (`src/libs/kt-engine/tests/decode_storm.rs`)
+
+### Requirement: A moment's key does not depend on what is decoded now
+The key a finished frame is kept under SHALL be one function of the plan (`kt_engine::moment_key`), used by the
+display's memo, the render-ahead producer, the kept-moment recheck and the disk prerender. It SHALL name a layer's
+frame by the source, the source's identity (capability `media-index`, "A cached source carries the identity of what it
+decodes"), the frame's index and the decode size; a stream stage by its kernel's key, which SHALL mix the
+identities of the sources it reads; a reel and a track stage by their whole sub-plan. It SHALL NOT contain a content
+serial, the presence or the size of a decoded frame where the identity is known, so a moment has one key before its
+frames are decoded, while they are held, after they are evicted and after they are decoded again. Where the cache
+knows no identity (a private cache of an export, a thumbnail, a strip) the content serial SHALL name the frame as
+before. The identity SHALL be taken from the cache together with the frame, never from the renderer: a picture
+made of frames of old values or of an old file is never kept under the new ones' key. A picture with a frame whose
+identity does not outlive the process SHALL NOT be written to or read from disk. The memory's key MAY add what only this
+process knows (the run forms' revision).
+Why: kkt-26.11.22 D2, D7 and found-defects 965 — the memo's key held the serial of each decoded frame, 0 for one not
+decoded, so a kept composite was found only while its sources were decoded too; leaving them out of the cache turned
+21 frames a second into 2. Found-defects 1061–1063.
+
+#### Scenario: One key before, during and after the decode
+- **WHEN** a moment of a demo with a file, a generator, a blended pair, a reel and a Datamosh event is keyed by the probe plan over an empty cache, with its frames decoded, after other frames evicted them, and decoded again; then its file is adopted under another identity
+- **THEN** the first four keys are equal and equal the full plan's, the display's memo answers "held" to each once the moment was presented, and the last key differs; two private caches with no identity, the same media id and different frames still give two keys
+- **TEST** t4108 (`src/libs/kt-engine/tests/moment_key.rs`)
+
+#### Scenario: An old picture is never kept under new values
+- **WHEN** a title's text is edited while its worker is held before the retune, the new renderer's moment is composed from the old frame and kept, and then the worker applies the retune and decodes
+- **THEN** the first composite is not answered for the new moment's key: the new frame is composed and shown, and an undo to the old text shows the kept one with nothing composed
+- **TEST** t4109 (`src/libs/kt-engine/tests/moment_key.rs`)
+
+#### Scenario: Memory and disk name a moment alike
+- **WHEN** a moment with durable sources and one with a placeholder's frame are prerendered, the first is restored into an empty memo by a new player over the same store, and the file is then replaced by another under the same media id
+- **THEN** the restored picture is held under the moment's own present key; the placeholder's moment was neither written nor asked of the store; after the replacement the old picture is not shown
+- **TEST** t4115 (`src/libs/kt-engine/tests/render_cache.rs`)
+
+#### Scenario: A relinked file starts a new history
+- **WHEN** a Datamosh moment is composed, its event's media is replaced by another file under the same media id with the same timing, and the moment is composed again, also through a slot in front of the stage and through a second input
+- **THEN** each time the stage reads the new file, its compiled schedule included (the renderer is not rebuilt): the picture equals a fresh renderer's over a fresh memo
+- **TEST** t4116 (`src/libs/kt-engine/tests/moment_key.rs`)

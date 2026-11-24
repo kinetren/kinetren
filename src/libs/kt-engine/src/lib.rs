@@ -17,6 +17,7 @@ pub mod fxstore;
 pub mod incremental;
 pub mod listen;
 pub mod render_ahead;
+pub mod moment_key;
 pub mod render_cache;
 pub mod compose_queue;
 pub mod player;

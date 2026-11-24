@@ -146,6 +146,7 @@ pub fn mix(dst: &mut Vec<u8>, a: &VideoFrame, b: &VideoFrame, k: u32, m: TransMi
         source: SourceId(id),
         cache_idx: 0,
         content: xxhash_rust::xxh3::xxh3_64(&f.rgba),
+        leaf: Default::default(),
         src_scale: 1,
         input: LayerInput::Frame(Some(Arc::new(f.clone()))),
         fx: kt_engine::LayerChain::Borrowed(&[]),
@@ -219,6 +220,7 @@ fn chain_plan<'a>(fx: &'a [FxInstance], frame: Frame, ctx: &VideoFxCtx) -> Frame
         source: SourceId(3),
         cache_idx: 0,
         content,
+        leaf: Default::default(),
         src_scale: ctx.in_scale,
         input: LayerInput::Frame(Some(Arc::new(VideoFrame {
             pts: Tick(0),

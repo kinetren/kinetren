@@ -1,7 +1,9 @@
 # Proposal: loudness-norms
 
-> DESIGN ONLY (spec session), revision 2 (2026-11-22) after the owner's answer (`kkt-26.11.20b` B6). Registry
-> `v26.10-index.md` T14, round R.74. Note F-AUD-005. Tests reserved: t3919–t3923, t3966–t3971.
+> DESIGN ONLY (spec session), revision 3 (2026-11-24): re-read against stage 24's tree (`286c406c`), no open question.
+> Revision 2 (2026-11-22) followed the owner's answer (`kkt-26.11.20b` B6). Registry `v26.10-index.md` T14. Note
+> F-AUD-005; the report's note is the branch's F-EXP-009 renumbered at the merge. Tests: t3919–t3923, t3966, t4200–t4203; t3106, t3107 come with the branch
+> `render-loudness-norms`.
 
 ## Why
 
@@ -23,25 +25,34 @@ The professional path (sources in `design.md`):
   (−23 LUFS), and is known to miscount SHORT clips (too little material for a gated average);
 - a **true-peak limiter on the master** keeps the ceiling whatever the gain.
 
-Today: the project has no loudness target; the render window compares with a hard-coded −23 LUFS in grey text; the
-master gain lives only in the player (monitoring) and by the export spec must not exist in the project.
+Today (`286c406c`): the project has no loudness target; the render result prints one label and one weak line against a
+hard-coded −23 LUFS (`render_dialog.rs:1682–1694`); `Loudness` has no per-channel value (`kt-fx/src/audio/loudness.rs`);
+the master gain lives only in the player (monitoring) and by the export spec must not exist in the project.
+
+**A finished half lies unmerged.** The branch `render-loudness-norms` (53fe3a33, 6eec28ce, 2026-11-18, features-slow's
+report 5) built the per-channel meter (t3106) and the result table with norms and colours (t3107, live
+`render_loudness`), archived its own change — and no merge ever took it: it is not in `orch-26-11-01`. Its norms are
+constants (−23 or −14); the owner's B6 puts them in the project. This change starts from that branch.
 
 ## What Changes
 
 - **The project's loudness target** (Project settings → Sound): a standard (EBU R128 −23 LUFS, ATSC A/85 −24, Streaming
   −14, Podcast −16, or a number) and a true-peak ceiling. The meters, the render report and every match below read it;
   render presets carry no target.
-- **Match loudness of clips** (Premiere's Auto-Match, Resolve's Normalize Audio Levels): on selected events, a track, or a
-  role ("all Dialogue"), each event's gain is set so its own integrated loudness (BS.1770, gated, through its chain)
-  reaches the role's target — dialogue at the project target, music and ambience at a set offset below it (default
-  −8 LU), effects −4 LU. Short events (< 3 s) of one track and source are measured TOGETHER as one material, so a short
-  line is not over-raised (Premiere's known flaw). One undo step; the gains are ordinary event levels, editable.
-- **The program stage on the master**: a project-level stage after the mix — "Program loudness": a gain and a
-  true-peak limiter at the ceiling (look-ahead, the R.48 limiter). "Match the program" measures the whole edit in the
-  background and sets the gain so the integrated loudness hits the target; the stage shows the measured value and a
-  "changed since measured" mark after edits. Preview and render play the same stage (one mix).
-- **The render report** (revision 1 kept): a table of measurements against the project target with states, per-channel
-  peak, loudness, balance and silence, timed findings joining the picture check's list.
+- **Match loudness of clips** (Premiere's Auto-Match, Resolve's Normalize Audio Levels): on selected events or a whole
+  track, each event's gain is set so its own integrated loudness (BS.1770, gated, through its chain) reaches a target the
+  person picks in the same small window: Dialogue (the project's target), Music (8 LU below), Effects (4 LU below) or a
+  number. Short events (< 3 s) of one track and source are measured TOGETHER as one material, so a short line is not
+  over-raised (Premiere's known flaw). One undo step; the gains are ordinary event levels, editable. Roles
+  (`auto-ducking-by-role`) are not needed; when they exist, an event's role preselects its row.
+- **The program stage on the master**: a project-level stage after the mix — a gain and a TRUE-PEAK limiter at the
+  ceiling. A project has none until the person switches it on or presses "Match the program", and without it every byte
+  is today's. "Match the program" measures the whole edit in the background and sets the gain so that the integrated
+  loudness AFTER the limiter hits the target; the stage shows the measured value and "changed since measured" after an
+  edit that is heard. Preview and render play the same stage.
+- **The render report**: the branch's table, judged against the project's target and ceiling instead of constants, plus
+  timed findings (over the ceiling, a silent channel, an imbalance) — a list of their own until `picture-check` adds its
+  kinds to it.
 - The player's monitoring volume stays out of the project and out of every measurement.
 
 ## Capabilities
@@ -56,24 +67,26 @@ master gain lives only in the player (monitoring) and by the export spec must no
 
 ## Impact
 
-- kt-model: `ProjectSettings.loudness { standard, target_lufs, ceiling_dbtp, offsets }`, `Project.program: ProgramStage
-  { gain_db, limiter_on, measured: Option<(lufs, revision)> }`; a `MatchLoudness` batch of `SetGain`.
-- kt-engine: the program stage after the master bus in the audio render (the same in export); the loudness analysis job
-  (the export's meter on an offline pass of the mix, background lane) for "Match the program"; per-event analysis
-  through the event's chain.
-- kt-fx: per-channel accumulators (revision 1).
-- kt-app: Project settings → Sound, "Match loudness…" on events, tracks and roles, the program stage in the meters
-  column (gain, limiter light, the measured value), the render report; i18n ×5.
-- Format: the next free `.kt` version by content. OTIO: a planned row (a foreign editor gets the event gains, not the
-  program stage).
-- Idle: analyses run on request on a background lane, paused by playback.
+- kt-model: `ProjectSettings.loudness { target_lufs, ceiling_dbtp, standard }`, `Project.program: Option<ProgramStage
+  { gain_db, ceiling: follows the settings, measured: Option<{lufs, dbtp, sound: u64}> }>`; commands `SetLoudness`,
+  `SetProgram`; a match is a batch of the existing `SetGain`.
+- kt-fx: `audio::program` (the stage's kernel: gain, true-peak limiter); per-channel accumulators (the branch).
+- kt-engine: the stage at the OUTPUT of the mix, after the kept mix (design D3), in `player.rs` and
+  `export::render_raw_audio_range`, which takes it as an argument (its other callers pass none); two analysis jobs.
+- kt-app: Project settings → Sound (`settings_window.rs`, the card `settings.audio`), the stage in the meters column
+  (`meters.rs`), "Match loudness…" in the event and track menus, the report (`render_dialog.rs`), `AnalysisKind` grows
+  (t774's lock is extended by name); i18n ×5.
+- Format: the next free `.kt` version by content. OTIO: the planned row stands.
+- Idle: the jobs run on request on the analysis lane, paused by playback; the stage costs only while sound plays.
+
+## Decided
+
+- **The project, not the presets** (B6).
+- **When the gain is measured: on request.** Put as a question in revision 2, decided here: B6 asks for the professional
+  path, and Resolve normalizes when asked (the Fairlight analysis, the Deliver page), never behind the mixer's back. A
+  gain that follows every edit would move the level of everything the person is mixing. The stage says "changed since
+  measured", and the render report judges the file either way.
 
 ## Questions to the owner
 
-Decided (2026-11-22, B6): normalization at the project level, not in render presets, by the professional path.
-
-**Q1. Does the program stage re-measure by itself after edits?** Your words above: "нормализация … на уровне проекта".
-Resolve normalizes the mix when you ask (Fairlight analysis, or the Deliver page), not continuously.
-- (a) **On request: "Match the program" measures and sets the gain; after edits the stage says "changed since measured";
-  the limiter always holds the ceiling** (*recommended*: the loudness does not shift under your hands while you mix).
-- (b) Automatically: after edits the program is re-measured in the background and the gain follows.
+None.

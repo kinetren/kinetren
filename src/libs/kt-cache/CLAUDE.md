@@ -16,6 +16,11 @@ Cache of bursts + coverage. Without FFmpeg/audio hardware.
   composites are keyed by the serial. `Inner::past` remembers evicted serials (bounded);
   `invalidate_source` forgets a source's, and an overwrite of a present entry gets a new serial. A path
   that puts NEW bytes at an old address must invalidate the source first.
+- **A live source has an identity, and every entry of it was decoded from it** (durable-moment-key D1,
+  t4110): `adopt` sets it and drops the entries of another in one step, a worker's insert names it and is
+  refused once it is another's, `invalidate_source` drops bytes and keeps it, `forget` drops both. A frame
+  and its identity are read in one look (`get_video_leaf`). A private cache has none: its frames are named
+  by their serials.
 - Evictions go into the trace with the key's parts and the insert that pushed them out (`trace_evict`).
 - **The cache reports to the memory ledger** (memory-ledger): two `Frames` accounts (video, audio) with
   the configured budgets as bases; every path that changes `video_bytes`/`audio_bytes` ends in
