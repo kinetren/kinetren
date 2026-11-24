@@ -6771,10 +6771,12 @@ fn no_teaching_layer_over_the_ui() {
 
     // (2) the closed list of layers above the window layer, by the sources
     const LAYERS: &[&str] = &[
-        "ambient-overlay",
+        // a LIVE status line: the answer to the pointer or an action, which may be in the window
+        // covering the strip; the resting line is under the windows (window-chrome D1)
         "status-hint",
-        "project-title",
+        // the speed read-out beside the pointer while the playback speed is dragged
         "speed-drag-overlay",
+        // the inline fields typed in place, one at a time
         "bin-group-name",
         "marker-name-edit",
         // the marker's note typed at its flag (marker-notes), the same inline field as its name
@@ -6821,6 +6823,9 @@ fn no_teaching_layer_over_the_ui() {
         }
     }
     assert!(seen.len() >= 6, "the layer scan found too little — it is broken: {seen:?}");
+    for name in LAYERS {
+        assert!(seen.iter().any(|s| s == name), "“{name}” is in the list and in no source: a row that allows nothing");
+    }
 
     // (3) at run time, with the lessons panel open on every step of every lesson
     let mut h = crate::layout_tests::harness_sized(1440.0, 860.0);

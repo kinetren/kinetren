@@ -22069,3 +22069,155 @@ fn t3127_transition_with_next_is_one_item_and_opens_its_window() {
     assert_eq!(h.state().model.undo_depth(), depth + 1, "one history step");
     assert!(h.state().transition_editors.iter().any(|e| e.id == t.id && e.open), "its window did not open");
 }
+
+/// Test 3936 (window-chrome, `v26.10` W1 and T9): the project's title, the meters' glow and the resting
+/// status line are painted UNDER the effects window moved over them, and over the panels.
+/// - **PATH** open the effects window → drag its title over the meters → the window is opaque, the glow
+///   ends at its edge → drag it to the top over the project title → the title does not show through
+#[test]
+fn t3936_a_window_over_the_glow_and_the_title_shows_neither() {
+    fn walk(shape: &egui::Shape, at: usize, f: &mut dyn FnMut(usize, &egui::Shape)) {
+        match shape {
+            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, at, f)),
+            s => f(at, s),
+        }
+    }
+    let mut h = r72_transport_scene();
+    let clip = {
+        let app = h.state_mut();
+        let id = app.model.project().clips[0].id;
+        app.open_fx_editor(id);
+        app.fx_editors[0].clip
+    };
+    h.state_mut().sw_render = Some(false);
+    for _ in 0..4 {
+        h.step();
+    }
+    let window = move |h: &Harness<'_, KtApp>| {
+        h.ctx.memory(|m| m.area_rect(egui::Id::new(("fx", clip)))).expect("the effects window")
+    };
+    let drag = |h: &mut Harness<'_, KtApp>, to: egui::Vec2| {
+        let w = window(h);
+        let grab = egui::pos2(w.left() + w.width() * 0.5, w.top() + 12.0);
+        h.drag_at(grab);
+        h.step();
+        for k in 1..=4 {
+            h.hover_at(grab + to * (k as f32 / 4.0));
+            h.step();
+        }
+        h.drop_at(grab + to);
+        h.step();
+        h.step();
+    };
+    let (mut title, mut halo, mut hint) = (None, None, None);
+    let look = |h: &Harness<'_, KtApp>, title: &mut Option<(usize, egui::Rect)>, halo: &mut Option<(usize, egui::Rect)>, hint: &mut Option<usize>| {
+        let w = window(h);
+        let meters = h.state().meter_glow.map(|(r, ..)| r);
+        let name = h.state().last_title.clone();
+        let mut frame = None;
+        for (i, cs) in h.output().shapes.iter().enumerate() {
+            walk(&cs.shape, i, &mut |i, s| match s {
+                egui::Shape::Text(t) if t.galley.text() == name => *title = Some((i, t.visual_bounding_rect())),
+                egui::Shape::Text(t) if t.galley.text() == tr(k::hint::IDLE) => *hint = Some(i),
+                egui::Shape::Mesh(m) if meters.is_some_and(|r| m.calc_bounds().right() == r.left() && m.calc_bounds().width() > 70.0) => {
+                    *halo = Some((i, m.calc_bounds()))
+                }
+                egui::Shape::Rect(r) if r.fill.a() == 255 && r.rect.contains_rect(w.shrink(3.0)) && !r.rect.contains_rect(w.expand(3.0)) => {
+                    frame = Some(i)
+                }
+                _ => {}
+            });
+        }
+        frame.expect("the window's opaque ground")
+    };
+    // over the project's title
+    let w = window(&h);
+    drag(&mut h, egui::vec2(-w.left(), 2.0 - w.top()));
+    let ground = look(&h, &mut title, &mut halo, &mut hint);
+    let (at, rect) = title.expect("the project title is drawn");
+    assert!(window(&h).intersects(rect), "the window stands over the title: {:?} {rect:?}", window(&h));
+    assert!(at < ground, "the title is painted over the window ({at} after {ground})");
+    if let Some(i) = hint {
+        assert!(i < ground, "the resting status line is painted over the window");
+    }
+    // over the meters' halo
+    let w = window(&h);
+    drag(&mut h, egui::vec2(W - 40.0 - w.right(), 40.0));
+    for _ in 0..3 {
+        h.state_mut().meter.feed(0.8, 0.8);
+        h.step();
+    }
+    let ground = look(&h, &mut title, &mut halo, &mut hint);
+    let (at, rect) = halo.expect("the meters' halo is drawn");
+    assert!(window(&h).intersects(rect), "the window stands over the halo: {:?} {rect:?}", window(&h));
+    assert!(at < ground, "the halo is painted over the window ({at} after {ground})");
+    assert!(
+        h.ctx.memory(|m| m.layer_ids().any(|l| l == crate::app::under_windows())),
+        "the layer is an area: its order and its hits are egui's"
+    );
+}
+
+/// Test 3937 (window-chrome, `v26.10` T5): a window that started maximized goes back to a normal size
+/// before a drag — 80 % of the screen when it has none, the remembered one otherwise — from the header
+/// strip and from the toolbar alike; a window that has been normal keeps the window manager's size.
+/// - **PATH** start the program maximized → drag the toolbar's empty space → the window becomes smaller
+///   and follows the pointer → double-click to maximize → drag again → the same normal size
+#[test]
+fn t3937_a_window_started_maximized_drags_at_a_normal_size() {
+    use egui::ViewportCommand as V;
+    let monitor = egui::vec2(1920.0, 1080.0);
+    let start = || {
+        let mut h = harness();
+        h.ctx.data_mut(|d| d.clear());
+        h.state_mut().window_was_normal = false;
+        let v = h.input_mut().viewports.entry(egui::ViewportId::ROOT).or_default();
+        v.maximized = Some(true);
+        v.monitor_size = Some(monitor);
+        v.outer_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, monitor));
+        h.step();
+        h
+    };
+    let drag = |h: &mut Harness<'_, KtApp>, at: egui::Pos2| -> Vec<V> {
+        h.drag_at(at);
+        h.step();
+        h.hover_at(at + egui::vec2(20.0, 6.0));
+        h.step();
+        h.output().viewport_output.values().flat_map(|v| v.commands.clone()).collect()
+    };
+    let strip = |h: &Harness<'_, KtApp>| {
+        use egui_kittest::kittest::Queryable;
+        let play = h.get_by_label(crate::icons::PLAY).rect();
+        egui::pos2(W - 3.0, play.center().y)
+    };
+    let sizes = |cmds: &[V]| {
+        cmds.iter().filter_map(|c| if let V::InnerSize(s) = c { Some(*s) } else { None }).collect::<Vec<_>>()
+    };
+    for toolbar in [false, true] {
+        let mut h = start();
+        let at = if toolbar { strip(&h) } else { egui::pos2(W * 0.5, 1.0) };
+        let cmds = drag(&mut h, at);
+        assert!(cmds.iter().any(|c| matches!(c, V::Maximized(false))), "toolbar {toolbar}: not restored: {cmds:?}");
+        assert_eq!(sizes(&cmds), [monitor * 0.8], "toolbar {toolbar}: 80 % of the screen");
+        let pos = cmds.iter().find_map(|c| if let V::OuterPosition(p) = c { Some(*p) } else { None }).expect("placed");
+        assert!((pos.x..=pos.x + monitor.x * 0.8).contains(&at.x), "under the pointer: {pos:?}");
+        h.step();
+        let next: Vec<V> = h.output().viewport_output.values().flat_map(|v| v.commands.clone()).collect();
+        assert!(next.iter().any(|c| matches!(c, V::StartDrag)), "then it moves: {next:?}");
+    }
+    // the remembered normal size
+    let mut h = start();
+    h.ctx.data_mut(|d| d.insert_persisted(egui::Id::new("kt-window-normal-size"), [1200.0f32, 700.0]));
+    let cmds = drag(&mut h, egui::pos2(W * 0.5, 1.0));
+    assert_eq!(sizes(&cmds), [egui::vec2(1200.0, 700.0)], "the size of the last run");
+    // a window that stood at a normal size: the window manager knows it
+    let mut h = start();
+    h.input_mut().viewports.get_mut(&egui::ViewportId::ROOT).unwrap().maximized = Some(false);
+    h.step();
+    assert_eq!(crate::window_frame::normal_size(&h.ctx), Some(h.ctx.content_rect().size()), "remembered");
+    h.input_mut().viewports.get_mut(&egui::ViewportId::ROOT).unwrap().maximized = Some(true);
+    h.step();
+    let cmds = drag(&mut h, egui::pos2(W * 0.5, 1.0));
+    assert!(sizes(&cmds).is_empty(), "the window manager's own size: {cmds:?}");
+    assert!(cmds.iter().any(|c| matches!(c, V::Maximized(false))));
+    assert_eq!(crate::window_frame::restored_size(Some(monitor), monitor), monitor * 0.8, "a whole-screen size is none");
+}

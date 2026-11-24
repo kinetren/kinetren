@@ -53,6 +53,42 @@ pub fn under_wine() -> bool {
     false
 }
 
+/// The main window's last size that was not maximized, kept between runs (egui's saved memory).
+pub fn normal_size(ctx: &eframe::egui::Context) -> Option<eframe::egui::Vec2> {
+    ctx.data_mut(|d| d.get_persisted::<[f32; 2]>(normal_id())).map(|[w, h]| eframe::egui::vec2(w, h))
+}
+
+fn normal_id() -> eframe::egui::Id {
+    eframe::egui::Id::new("kt-window-normal-size")
+}
+
+/// Is `size` a normal window's, not one filling the monitor? (A window that started maximized reads
+/// so for its first frames.)
+pub fn is_normal(size: eframe::egui::Vec2, monitor: Option<eframe::egui::Vec2>) -> bool {
+    monitor.is_some_and(|m| m.x > 0.0 && m.y > 0.0 && (size.x < 0.9 * m.x || size.y < 0.85 * m.y))
+}
+
+/// The size a maximized window goes back to (`v26.10` T5, t3937): the remembered normal one, or
+/// 80 % of the monitor.
+pub fn restored_size(remembered: Option<eframe::egui::Vec2>, monitor: eframe::egui::Vec2) -> eframe::egui::Vec2 {
+    remembered.filter(|s| is_normal(*s, Some(monitor))).unwrap_or(monitor * 0.8)
+}
+
+/// Note the window's size when it is a normal one; `true` — it is. Writes only a changed size.
+pub fn note_normal(ctx: &eframe::egui::Context) -> bool {
+    let (size, monitor, full) = ctx.input(|i| {
+        let v = i.viewport();
+        (i.content_rect().size(), v.monitor_size, v.maximized.unwrap_or(false) || v.fullscreen.unwrap_or(false))
+    });
+    if full || !is_normal(size, monitor) {
+        return false;
+    }
+    if normal_size(ctx) != Some(size) {
+        ctx.data_mut(|d| d.insert_persisted(normal_id(), [size.x, size.y]));
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
