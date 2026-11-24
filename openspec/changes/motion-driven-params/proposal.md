@@ -1,7 +1,7 @@
 # Proposal: motion-driven-params
 
-> DESIGN ONLY (spec session), revision 2 (2026-11-22) after the owner's answer (`kkt-26.11.20b` B7). Registry
-> `v26.10-index.md` TD2. Note F-AUT-014. Tests reserved: t3947–t3951.
+> IMPLEMENTATION-READY (spec-engine, revision 3, 2026-11-25, orch `fc60a5d9`) after the owner's answer (`kkt-26.11.20b` B7). Registry
+> `v26.10-index.md` TD2. Note F-AUT-014. Tests: t3947–t3951, t3967, t4146, t4147.
 
 ## Why
 
@@ -48,21 +48,19 @@ it — the speed at which its container plays it — not a curve copied from ano
 ### Modified Capabilities
 
 - `automation`: the outer-speed channels as a link source, resolved per instance and composed through nested maps.
-- `compositions`: an instance's speed is visible to the reel's content as its outer speed; the reel's per-instance plan
-  is keyed by it.
+- `compositions`: an instance's speed is visible to the reel's content as its outer speed; its picture and its sub-mix are
+  keyed by it.
 - `ui-reach`: "Follow the outer speed change".
 - `project-format`: the new link source by content.
 
 ## Impact
 
-- kt-model: link source `outer/{rate,accel,change}` (attack, release, full-at on the link); resolution in `morph_pass`
-  per instance: the outer map = the instance's warp profile ∘ (a morpher layer's warp) ∘ (the event's warp), composed by
-  the integral rule of `warp.rs`; the closed-form envelope.
-- kt-engine: a reel's sub-plan and sub-mix already keyed by instance (`NestKey`); the key includes the outer channels'
-  content hash only when the reel's content reads them (so other reels share as before).
-- kt-app: the link menu item; i18n ×5.
-- Format: the next free `.kt` version by content; OTIO: a planned row (static values outside).
+- kt-model: `CurveSource::Outer`, `outer.rs` (the path of time maps and its three channels), `AutoPlan` evaluated with it. kt-engine: the picture reads the channels at the OUTER moment while the plan is
+  built (a composition that stands still has one inner moment and a fisheye that must die away: keys cannot say that), one sub-renderer per reel as today; the sound samples them into keys per instance.
+- kt-app: the "Driven by…" menu; i18n ×5.
+- Format: the next free `.kt` version by content; OTIO: a row in "What OTIO export loses".
 - Idle: nothing at rest.
+- Refused, with a reason: the speed's own row, generator and title rows (`simulated-elements`), track chains.
 
 ## Questions to the owner
 
