@@ -1,51 +1,51 @@
 # Tasks: download-library
 
-> The owner answered (kkt-26.11.20b B3): Q1 b, Q2 a, Q3 a. Code starts on the orchestrator's go. Feature note
-> F-EXT-006. Tests reserved: t3850–t3869. Base: orch `5e7a8ea9`.
+> Decided (kkt-26.11.20b B3: Q1 b, Q2 a, Q3 a); revision 3 implementation-ready at `229c694b` (2026-11-24). Stage 5 waits for
+> Q4. Tests: t3850–t3869.
 
-## 0. Notes first
+## 0. Notes
 
-- [x] 0.1 feature note F-EXT-006 (`docs/features/plugins/hosts/download-library.md`); `features-index.py --check`
-- [x] 0.2 proposal, design (D1–D9, class walk D8), deltas `media-index`, `plugins`, `ui-reach`, `durability`;
+- [x] 0.1 F-EXT-006; proposal, design (D0–D9), deltas `media-index`, `plugins`, `ui-reach`, `durability`;
       `openspec validate download-library --strict`
-- [x] 0.3 his answers (kkt-26.11.20b lines 5–7);
-      `kkt-26.11.20-index.md` A11 points here; `subtitles-and-text-editing` tasks 2.2 and 2.6 point here
+- [x] 0.2 his answers (kkt-26.11.20b lines 10–12); `kkt-26.11.20-index.md` A11 and `subtitles-and-text-editing` 2.2, 2.6 point here
+- [x] 0.3 planned OTIO row (the font pack's reference travels in `metadata["kt"]` with the title's values)
 
-## 1. The core and FFmpeg on it
+## 1. The core (new `libs/kt-library`; kt-dirs; kt-ffmpeg `search.rs`; kt-cli `main.rs`)
 
-- [ ] 1.1 kt-dirs `library_root()`; `library/catalogue.rs` (the signed list's reader, the packed list, the
-      sequence rule), `library::resolve` and the grep guard; t3850, t3851
-- [ ] 1.2 `library/fetch.rs` from `ffmpeg_setup.rs` (mirrors, length, cap, hash, Cancel, partial + rename,
-      stale cleanup, phases); the FFmpeg download's existing tests green; t3852, t3853
-- [ ] 1.3 the search plan reads `library/ffmpeg/` before the old root; t3854
-- [ ] 1.4 "Install from file…" and kt-cli `library list|install|verify|remove`; t3855, t3856
+- [ ] 1.1 kt-dirs `library_root()`, t1311's and t3722's lists; `Catalogue` with the packed floor (`assets/library/catalogue.toml`),
+      `Library::resolve`, `installed.toml`, stale cleanup; t3850, t3851
+- [ ] 1.2 the search plan's library step (`Env::library_dirs`, `Source::Library`), kt-app and kt-cli hand it the root; t844, t845,
+      t864 green; t3854
+- [ ] 1.3 `dist-check.py` t860 reads the floor; `FFMPEG_DOWNLOAD_VERSION` gone; the crate in the workspace map (root `CLAUDE.md`),
+      its own `CLAUDE.md`
 
-## 2. The window
+## 2. Downloads
 
-- [ ] 2.1 View → Library…, rows, states, buttons, the header total; the FFmpeg window's item opens its row;
-      a feature's missing-item line; i18n in every catalog; `reach_tests`, `layout_tests`, font tests;
-      t3857–t3859; planned live scenario `library_window` with a screenshot per step
+- [ ] 2.1 `kt-library::net` from `ffmpeg_setup.rs` (mirrors, length, cap, hash, cancel, unpack rules, partial + rename), t848 and
+      t867 on it; t3852, t3853, t3862
+- [ ] 2.2 "Install from file…"; kt-cli `library list|install [--from FILE]|verify|remove`; t3855, t3856
 
-## 3. Speech
+## 3. The window (kt-app `library/`)
 
-- [ ] 3.1 `speech-runtime` and `speech-model` entries, the `depends` check at load, the row's "needs" state;
-      t3860–t3862 (with `subtitles-and-text-editing`)
+- [ ] 3.1 `kt_library` in place of `kt_ffmpeg`, the FFmpeg row's detail, Preferences › Library…, the start; `library_line`; i18n ×5;
+      `reach_tests`, `layout_tests`, t850, t950–t952; t3857–t3859
+- [ ] 3.2 live `library_window` (a screenshot per step), live `ffmpeg_download` green on the new window; t3869
 
-## 4. Fonts
+## 4. Fonts (**v+**) and speech
 
-- [ ] 4.1 `font-pack` entries; kt-text registers faces from `resolve`; the title's pack reference in `.kt`;
-      the placeholder with Download and the export's refusal (Q3 a); t3863–t3865; a "What OTIO export loses" row if the
-      reference does not survive the door
+- [ ] 4.1 `GeneratorKind::Text.font_pack`, the next free version by content, `docs/ktprompts/v26.10-index.md` OTIO row; kt-text
+      `set_packs`, `resolve_family`; the face in `GeneratorSource::identity`; t3863, t3865
+- [ ] 4.2 the placeholder in `render_at`, the family combo, the export's refusal and the substitute choice, kt-cli
+      `--font-substitute`; t3864
+- [ ] 4.3 the `speech-*` entries and the `depends` check, with `subtitles-and-text-editing`; t3860, t3861
 
-## 5. The server list and plugins
+## 5. The server list (after Q4) and plugins
 
-- [ ] 5.1 the list's fetch (Library opened, Download pressed, daily under consent), the sequence and rollback
-      refusal, "no longer offered" rows; the release build packs the signed list; t3866, t3867
-- [ ] 5.2 with the wasm host: `.ktplugin` rows, registration, a missing plugin's line; t3868
+- [ ] 5.1 the fetch, the signature, the sequence, "no longer offered"; `scripts/library-sign.py`; t3866, t3867
+- [ ] 5.2 with the wasm host: `.ktplugin` rows; t3868
 
-## 6. Rest
+## 6. Close
 
-- [ ] 6.1 the idle check with the Library window open; t3869; What's new line ("everything the program
-      downloads is in one Library window: what it is, its size, what needs it, one click to get or
-      remove it"); media-index and plugins `design.md`; kt-app `CLAUDE.md` (only `resolve` builds an
-      item's path); commit
+- [ ] 6.1 What's new ("everything the program downloads is in one Library window: what it is, its size, what needs it, one
+      click to get or remove it"); media-index and plugins `design.md`; kt-app and kt-text `CLAUDE.md`; A11, B3 moved;
+      `finish.sh` (orchestrator)

@@ -131,6 +131,11 @@ per-event geometry overrides and per-event presence, a batch render. The copy mo
 rejected: it is exactly the divergence the owner's "варианты кадра одного таймлайна" asks to avoid.
 Automatic subject-following reframe is a later stage (it needs the point tracker, F-MSK-005).
 
+Change `frame-format-variants`, implementation-ready 2026-11-24. The owner's ★15 says "поправка … поверх общей": a format holds a
+CORRECTION over the common geometry (an offset, a factor, a turn), so a later move of the master reaches every format; a
+replacement, as the first design had it, would diverge event by event, the same trap as a copy. A title's size is by the
+frame's height and it does not wrap: in a format it keeps its share of the short side and breaks at spaces.
+
 ## Sources
 
 - The owner's candidate ★15, `docs/ktprompts/kkt-26.11.01-candidates.md` (taken 2026-11-01).

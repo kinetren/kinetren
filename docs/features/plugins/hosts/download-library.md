@@ -156,6 +156,10 @@ Take: the owner asked for it in so many words (kkt-26.11.20 A11: "все что 
 already designed to copy the FFmpeg window, so this is the moment to make it one place. The plugin
 library comes with the wasm host.
 
+Change `download-library`, implementation-ready 2026-11-24: a crate `kt-library` (kt-app, kt-cli and kt-text meet in it),
+the release's list inside the binary (no key needed until a list is fetched), the Library in Preferences where FFmpeg…
+stood, and the font file in the identity of a title's frames.
+
 ## Sources
 
 - Kdenlive bug 499012 (access date 2026-11-20), https://bugs.kde.org/show_bug.cgi?id=499012

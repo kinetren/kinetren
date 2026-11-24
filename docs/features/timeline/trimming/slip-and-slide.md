@@ -365,6 +365,10 @@ still have to be done by eye — the latter is moved into a separate note and is
 estimate. We take slide second and only as an explicit mode: it is the only one of the four trims that
 changes what the user did not drag, and that is a direct clash with rule No. 20.
 
+Change `ripple-and-trim-modes`, implementation-ready 2026-11-24: Ctrl+F is Find in every style, so the post-edit ripple is F (track) and
+Ctrl+Shift+F (all); slip is Shift- or Alt-drag (Alt alone is taken by window managers); a locked track stays and is named; a
+ripple acts in one reel.
+
 ## Sources
 
 - https://help.magix-hub.com/video/vegas/23/en/content/topics/7-edit/slipping_and_sliding_events.htm — the definitions of slip/slide and the modifiers Alt / Ctrl+Alt verbatim (accessed 2026-09-07). The help was read on branch 23; for 2026.0 no separate branch was found on the host (`/2026/` → 404), so the table row is marked with the version from `_editors.md`, and the check is by the nearest available branch

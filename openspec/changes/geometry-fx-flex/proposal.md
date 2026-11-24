@@ -1,7 +1,7 @@
 # Proposal: geometry-fx-flex
 
-> DESIGN ONLY (spec session, 2026-11-20). Code starts on the owner's word after his answers to the
-> questions at the end. Tests reserved: t3570–t3584.
+> DESIGN, revision 2 (2026-11-24), base `229c694b`: implementation-ready after `preview-canvas-and-gizmos`. The owner answered Q1–Q2
+> (A24). Code starts on the orchestrator's go. Tests: t3570–t3576, t4245.
 
 ## Why
 
@@ -18,19 +18,13 @@ legacy effects get a parameter audit. Note F-FX-019.
 
 ## What Changes
 
-- **Mirror gains a reflect mode**: a line through a centre (x, y) at an angle; the side the line's normal
-  points to is kept and the other side shows its reflection; a "both" option reflects the other way. The old
-  flip (horizontal/vertical flags) stays the mode of existing slots, byte for byte; a Mirror added from the
-  picker starts in reflect mode (Q1).
-- **EventGrid gains flips and motion**: flip every other column, flip every other row (a seamless pattern),
-  a gap between cells, a phase x/y that slides the content inside the cells, a row phase shift (bricks).
-- **A new Tile** (AE's Motion Tile): a source rectangle of the picture (default the whole frame), the tile
-  size, mirrored edges, phase x/y and an alternate-row shift; it fills the canvas. Repeating the top half
-  with mirrored edges and an animated phase is the owner's "saw".
-- **All are inverse maps of the one fused geometry pass** (concatenation, F-CMP-001): the owner's chain is
-  one pass with supersampling by the local scale.
-- **An audit table** of the other legacy effects against Vegas and AE (in the design), each gap a row for
-  the catalogue waves (F-FX-007), not built here.
+- **Mirror gains a reflect mode**: a line through a centre at an angle; the kept side stays, the other shows its reflection, which may
+  also be flipped along the line. Old slots keep the flip byte for byte; a Mirror from the picker reflects.
+- **EventGrid gains** flips of every other column and row, a gap, a phase that slides the content, a row shift.
+- **A new Tile** (AE's Motion Tile): a source rectangle repeated in tiles INSIDE a destination rectangle, mirrored edges, an
+  animated phase, a row shift; the picture outside the rectangle stays: "из верхней части сделать «пилу», чтобы там текстура ездила".
+- **All are maps of the one fused geometry pass** (F-CMP-001), affine inside a cell, so no seam is blurred; his chain is one pass.
+- **The audit** of the other legacy effects stays a list (F-FX-019).
 
 ## Capabilities
 
@@ -40,24 +34,23 @@ legacy effects get a parameter audit. Note F-FX-019.
 
 ### Modified Capabilities
 
+- `ui-reach`: the line and the rectangles on the preview.
 - `video-fx`: Mirror's reflect mode, EventGrid's flips/gap/phase, the Tile kind; their place in the fused
   geometry pass and the owner's chain as the acceptance frame.
 
 ## Impact
 
-- kt-plugin-api: `GeoStep::Reflect { cx, cy, angle, both }`, `GeoStep::Grid` gains `flip_x, flip_y, gap,
-  phase, row_shift`, `GeoStep::Tile { src: Rect, tile: (w, h), mirror, phase, row_shift }`.
-- kt-fx `geom.rs` ↔ kt-gpu `geom_fused.wgsl` (a pair, one commit): the new maps, their Jacobians for
-  supersampling, the uniform budget.
-- `src/plugins/fx-video-distort`: Mirror rows (`mode`, `cx`, `cy`, `angle`, `both`), EventGrid rows, the Tile
-  plugin; the centre on the preview (F-UI-009's crosshair) for Mirror and Tile; picker variants.
-- Format: new rows omitted at defaults; a file with any is written with the next free version by content.
-- Idle: geometry is a function of the frame; nothing runs at rest.
+- kt-plugin-api: `GeoStep::{Reflect, Cells}`, `HandleDecl::Rect`; kt-fx `geom.rs` ↔ kt-gpu `geom_fused.wgsl` (one commit).
+- `src/plugins/fx-video-distort`: Mirror and EventGrid rows, the `tile` plugin, variants.
+- kt-app: the rectangle handle, i18n ×5. Format: the next free version by content. Idle: nothing at rest.
 
 ## Questions to the owner
 
-Decided (2026-11-20, `kkt-26.11.20` A24, his Q44–Q45): "Старые отражают как раньше, остальное потом" — Q1 (a), old
-Mirrors keep flipping, a new one reflects; Q2 (a), the rest of the audit as ranked rows, built later.
+Decided (2026-11-20, `kkt-26.11.20.txt` line 35, A24): "Q44/Q45 Mirror: «Старые отражают как раньше, остальное потом
+(Recommended)»" — Q1 (a), old Mirrors keep flipping, a new one reflects; Q2 (a), the rest of the audit later. Read again on
+2026-11-24 with his whole items (`kkt-26.11.01b.txt` lines 7–9): "остальное" is the audit of the other effects, not the grid and the
+repeat he asked for; B8's "из верхней части … там" needed a destination rectangle, B7's "вертикальное отражение отзеркалить" a flip
+of the reflected side (design D0.1, D0.2). No open question.
 
 The questions as asked:
 

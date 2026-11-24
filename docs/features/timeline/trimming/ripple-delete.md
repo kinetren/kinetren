@@ -352,6 +352,10 @@ We do NOT take the FCP magnetic model (ripple as the only behavior): it is
 incompatible with the legal overlaps of `overlap_layers`, introduced at the user's
 direct request, and with rule 20 in its literal wording.
 
+Change `ripple-and-trim-modes`, implementation-ready 2026-11-24: Ctrl+F is Find in every style, so the post-edit ripple is F (track) and
+Ctrl+Shift+F (all); slip is Shift- or Alt-drag (Alt alone is taken by window managers); a locked track stays and is named; a
+ripple acts in one reel.
+
 ## Sources
 
 - https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/7-edit/post_edit_ripple.htm — official help for VEGAS Pro 2026: the three ripple types by name, the list of triggers, `F`/`Ctrl+F`/`Ctrl+Shift+F`, `Ctrl+L`, the red indicator and the checkbox that turns it off (2026-09-07)

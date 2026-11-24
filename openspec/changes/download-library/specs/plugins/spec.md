@@ -7,7 +7,7 @@ capabilities with no I/O), its module and its licence, pinned by sha256 in the c
 registered only through the external host's door. A project SHALL name the plugin's id and version, and a
 project that names a plugin not installed SHALL open in the "missing plugin" state with a line that opens
 the plugin's row in the library. A downloaded plugin SHALL never take part in the goldens.
-Why: kkt-26.11.20 line 16 ("их же тоже можно будет качать. вот и сделат библиотеку плагинов"); F-EXT-003
+Why: kkt-26.11.20 line 19 ("их же тоже можно будет качать. вот и сделат библиотеку плагинов"); F-EXT-003
 fixes what foreign code declares; download-library D6.
 
 #### Scenario: A plugin package is installed, registered and missed
