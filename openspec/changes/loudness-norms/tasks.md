@@ -10,7 +10,25 @@
 
 ## 1. The unmerged half
 
-- [ ] 1.1 Merge the branch `render-loudness-norms` (conflicts at `286c406c`: features README, What's new, the v26.10 registry, the Chinese subset and its manifest (rebuild), `layout_tests.rs`); its note renumbered F-EXP-009 → the next free; t3106, t3107, live `render_loudness` green
+- [ ] 1.1 `git merge --no-ff render-loudness-norms` (53fe3a33, 6eec28ce; the orchestrator confirmed it 2026-11-24). It
+      brings t3106, t3107 and the live scenario `render_loudness`, its archived change `2026-11-18-render-loudness-norms`
+      and its text in `openspec/specs/export/`. Six files conflict at `0c2a4065` (`git merge-tree` run there); the others
+      merge by themselves:
+  - `docs/features/README.md`, the folder table: keep OUR rows (theirs are of 2026-11-18); only `export/` moves to
+    `10 / 3`. In the list of notes keep every row of ours and add theirs under the new number (1.2), after F-EXP-008.
+  - `docs/guide/whats-new.md`: both sides added lines at the top of `## kt26.11`; keep all of ours and put theirs first.
+  - `docs/ktprompts/v26.10-index.md`: T12 — OURS (already done). T14 — neither: state "partial", naming t3106/t3107 and
+    `render_loudness` for the table and channels, and this change for the program loudness and the matching.
+  - `src/apps/kt-app/assets/NotoSansSC-kt.otf` and `SUBSET-MANIFEST.txt`: take OURS, then
+    `python3 src/scripts/subset-fonts.py` over the merged catalogs (ours has 944 code points, theirs 939; the
+    result is a new set). t125/t1283 and `font_tests.rs` say whether it is right.
+  - `src/apps/kt-app/src/layout_tests.rs`: both sides appended at the end; keep ours whole and put `t3107` after it.
+- [ ] 1.2 Their note `docs/features/export/pipeline/render-loudness-report.md` is F-EXP-009, taken by `picture-check.md`:
+      it becomes **F-EXP-010** in the note, the README row, t3107's comment, `render_loudness.py`, the archived change and
+      `docs/ktprompts/v26.10-index.md`; `python3 src/scripts/features-index.py --check`
+- [ ] 1.3 What the merge cannot see: `Loudness` gains `channels` and the true-peak gate becomes per channel. Today it is
+      built in one place (`loudness.rs:270`); t2174 (`kernel_specialization.rs`) holds the bits of LUFS, LRA and dBTP and
+      stays green as it is — a red there is a cause to find, not numbers to print again
 
 ## 2. Model and format
 

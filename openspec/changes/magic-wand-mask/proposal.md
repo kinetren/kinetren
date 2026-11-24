@@ -1,32 +1,37 @@
 # Proposal: magic-wand-mask
 
-> DESIGN ONLY (spec session, 2026-11-20). Code starts on the owner's word after his answers to the
-> questions at the end. Tests reserved: t3535–t3544.
+> DESIGN ONLY, revision 2 (2026-11-24, base `0c2a4065`): made implementation-ready against today's code; the coverage
+> is a contour now, not a raster (design D0). Tests: t3535–t3544. No open question.
 
 ## Why
 
-The owner, `kkt-26.11.01` G1 (line 71; registry `kkt-26.11.01-index.md`): "Крутой механизм
-magic-wand-масок". Classic masks are done (shape-masks: rectangle, ellipse, Bézier pen, feather, modes,
-on the picture, a slot and a track). A wand picks a region by clicking on the picture. Note F-MSK-008
-(new) found that video editors either key a colour range without contiguity or segment objects with a
-neural model; a contiguous wand holds in video only when its seed follows the object — which the point
-tracker (change `point-tracker`) provides.
+The owner's items, whole:
+
+- `kkt-26.11.01.txt` lines 68–73 (G1): "Следующий запрос: ``` Крутой механизм magic-wand-масок ```"
+- `kkt-26.11.20.txt` line 28 (A20), the one answer to Q32–Q35 (tracker first or plane, where its controls live, an
+  algorithm or a neural wand, what a wand on an effect reads): "первые два, по умолчанию - самые удобные и точные. позже
+  сеть - нейросеть"
+
+**The reading, checked.** "Позже сеть" decides Q34: the algorithm now, a neural mask later. "По умолчанию — самые удобные и
+точные" is a rule for the defaults of both tools. Q35 (the source picture or the slot's input) is named by no word
+of his; the registry took the recommended one, and this design keeps it, with what it costs said in D3. His rule of
+exactness decides three things here: the region is cut at a sub-pixel contour, it is computed per frame and not
+carried over, and it reads the decoded source whatever the preview's quality would need.
+
+Classic masks are built (shape-masks). F-MSK-008: editors key a colour range without contiguity or segment with a
+network; a contiguous wand holds in motion only when its seed follows the object (keys now, `point-tracker` later).
 
 ## What Changes
 
-- **A wand mask shape** beside rectangle, ellipse and Bézier: seeds (normalized points, each add or
-  subtract), a tolerance, contiguous or colour range, the colour space (RGB, luma, chroma), anti-aliasing
-  from the colour distance, grow/shrink and fill holes; it joins the mask list with the existing modes,
-  feather, opacity and invert, on the picture or an effect slot (a track wand is refused with its reason in
-  this stage: the track's composite is not on the CPU).
-- **Recomputed per frame from the source picture**: the coverage is a pure function of the event's decoded
-  frame, the seeds at that frame and the parameters, computed by the one mask rasterizer at an analysis
-  size and memoized by those inputs.
-- **Seeds can move**: a seed's x/y are ordinary mask rows, so they take keyframes, formulas and links — a
-  seed linked to a tracker point follows the object.
-- **Clicks on the preview**: right click → Mask → Magic wand; click adds a seed, Shift-click adds, Alt-click
-  subtracts; the tolerance is dragged on the preview (drag from the seed) and shown live on the shown
-  frame; the matte view (the existing mask overlay) shows the result.
+- **A wand shape** beside rectangle, ellipse and path: seeds (add or subtract), tolerance, contiguous or every matching
+  pixel, the colour space, fill holes. It lives in the same mask lists (picture, effect slot) with the same mode, invert,
+  opacity, feather, falloff and expansion.
+- **Its outline is computed per frame** from the event's decoded source and the seeds at that frame, as closed contours;
+  everything after is the one mask rasterizer.
+- **Seeds are mask rows**: keys, formulas and links as any vertex has.
+- **On the preview**: right click → Mask → Magic wand; a click adds a seed, Ctrl+click a subtract seed, the ring
+  around a seed sets the tolerance, the outline follows on the paused frame.
+- **Refused or skipped, said**: a track (no picture on the processor), a composition instance (the same).
 
 ## Capabilities
 
@@ -36,43 +41,19 @@ tracker (change `point-tracker`) provides.
 
 ### Modified Capabilities
 
-- `video-fx`: the wand shape in the mask rasterizer; its inputs, determinism, the memo.
-- `project-format`: a wand mask raises the file by content.
-- `ui-reach`: the wand on the preview's mask menu, seed clicks, tolerance drag.
+- `video-fx`: the wand shape in the rasterizer, its inputs, determinism, the memos.
+- `project-format`: a wand raises the file by content.
+- `ui-reach`: the wand in the mask menu and list, its gestures.
 
 ## Impact
 
-- kt-model: `MaskShape::Wand { seeds, tolerance, contiguous, space, soft, grow, fill_holes }`, seed rows
-  `s<id>.x/.y` (stable ids, as vertices), validation.
-- kt-fx: `mask::wand_coverage(frame, w, h, shape)` — a scanline flood fill / colour range, distance
-  ramp, morphology; integer and IEEE-exact operations.
-- kt-engine: the layer's mask plan hands the source frame bytes (already in the cache) to the rasterizer
-  for a wand; the coverage memo keyed by (content serial, the wand's resolved values, size).
-- kt-app: preview gestures, i18n ×5.
-- Format: next free `.kt` version by content; OTIO row (masks are already metadata-only).
-- Idle: a paused frame's coverage is computed once; at rest nothing runs.
-- Feature note: F-MSK-008.
+- kt-model `mask.rs`: `MaskShape::Wand`, its rows, `check_masks`; a wand on a track refused.
+- kt-fx `mask.rs`: contours of a mask (one or many), `wand.rs`: box mean, distance, fill, marching squares; `MaskOp.pixels`.
+- kt-engine `video.rs`: the order of the source frame for a stream event, the pixels in `layer_src` and in the stream's
+  inputs.
+- kt-app `maskctl.rs`, `masks.rs`, `app.rs` (menu): the tool, gestures, list row; i18n ×5.
+- Format: next free version by content. OTIO: masks are metadata only (planned row there). Idle: nothing at rest.
 
 ## Questions to the owner
 
-Decided (2026-11-20, `kkt-26.11.20` A20, his Q34–Q35): "первые два, по умолчанию - самые удобные и точные. позже
-сеть - нейросеть" — Q1 (a), the algorithmic wand now, a neural object mask later; Q2 (a), a wand on an effect reads
-the event's source picture. The defaults are the most convenient and exact ones (the tracker's rule, change `point-
-tracker` D10).
-
-The questions as asked:
-
-**Q1. An algorithm now, a neural object mask later?** Your words: "Крутой механизм magic-wand-масок".
-Your decision for the professional keyer (2026-11-01): "an algorithm, not a neural network, as the base …
-the same bytes on every machine and no ML runtime or model weights in the program. A neural matte may come
-later as an extra assist." Resolve's Magic Mask, AE's Roto Brush and FCP's Magnetic Mask are neural.
-- (a) **The algorithmic wand (contiguous or colour range, seeds that can follow a track) now; a neural
-  object mask later as a separate assist** (*recommended*, the keyer's rule).
-- (b) A neural object segmentation now, downloaded on a click like the speech recognizer.
-
-**Q2. What does a wand on an effect slot read?** Today a slot mask mixes the slot's result with its dry
-side; the wand needs pixels to choose a region.
-- (a) **The event's SOURCE picture (as decoded, before effects), on the CPU** (*recommended*: no GPU
-  readback; "select the sky, grade it" is the use).
-- (b) The picture at the slot's input (after the previous effects): exact but needs the intermediate frame
-  read back from the device per frame.
+None. Q34–Q35 as asked are in the git history of this file (ffe4eebf).

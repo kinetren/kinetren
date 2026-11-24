@@ -129,6 +129,9 @@ an anti-aliased edge from the colour distance — computed per frame from the so
 object segmentation is not taken now, for the reason the owner accepted for the pro keyer (2026-11-01):
 the same bytes on every machine, no ML runtime and weights in the program; it may come later as an assist.
 
+Design `magic-wand-mask` revision 2 (2026-11-24): the wand gives sub-pixel CONTOURS to the one mask rasterizer, so feather,
+expansion and falloff are the ones every mask has; a track and a composition instance have no pixels to read and say so.
+
 ## Sources
 
 - The owner's request, `docs/ktprompts/kkt-26.11.01.txt` line 71 (registry G1).

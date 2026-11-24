@@ -1,61 +1,48 @@
 # Proposal: preview-canvas-and-gizmos
 
-> DESIGN ONLY (spec session, 2026-11-20). Registry `kkt-26.11.01b-index.md` B9 (`preview-canvas-and-gizmos`,
-> queue 6). Tests reserved: t3597–t3599.
+> DESIGN ONLY, revision 2 (2026-11-24, base `0c2a4065`): made implementation-ready against today's code (design D0).
+> Registry `kkt-26.11.01b-index.md` B9. Tests: t3597–t3599, t4229–t4231. No open question.
 
 ## Why
 
-The owner, `kkt-26.11.01b` line 10: "когда пытаешься в превью пправить зум панорамирования - нет возможности
-отзумиться в превью чтобы поправить большой зум, или задать поворот - вообщем нет нормальнго управления
-эффектом в превью, выглядит дешево". Taken (2026-11-01): "zoom and pan the preview canvas past the frame, a
-rotation handle on the on-screen frame, and on-screen handles for effects that have a place on the frame."
-The rotation handle exists since R.64, but a zoomed frame puts it — and every other handle — off the visible
-canvas. Note F-UI-011.
+The owner's items, whole:
+
+- `kkt-26.11.01b.txt` line 10 (B9): "когда пытаешься в превью пправить зум панорамирования - нет возможности отзумиться в
+  превью чтобы поправить большой зум, или задать поворот - вообщем нет нормальнго управления эффектом в превью, выглядит
+  дешево"
+- `kkt-26.11.20.txt` line 34 (A26, the answer to Q53 and Q54): "Контуры; не запоминать (Recommended)"
+
+**The reading, checked.** The item names three things. Zooming the preview OUT to reach a large zoom's handles, and the
+rotation, which exists since R.64 but is off the picture at such a zoom: one mechanism, the handles live only inside the
+fitted picture. And "нет нормального управления эффектом в превью": effects have no handles beyond one crosshair pair.
+His example is the pan's zoom; the class is every control drawn over the picture (D6). A26: outside the frame
+outlines and handles only; the zoom is not remembered. Both read as designed.
 
 ## What Changes
 
-- **Viewer zoom and pan**: the preview shows the canvas at Fit (default) or 25 %, 33 %, 50 %, 100 %, 200 %, 400 %
-  (a menu in the preview's corner, Ctrl+wheel over the preview, Ctrl+0 = Fit); a middle-drag or Space+drag pans.
-  The composite is unchanged — the display scales the presented texture.
-- **A pasteboard**: around the canvas, a neutral area where the transform frame, its handles and every effect
-  handle are drawn and grabbed even when they lie outside the canvas; the off-canvas part of a layer is drawn as
-  its outline (Q1).
-- **Handle kinds declared on rows**: besides the centre crosshair (point pairs), a passport row may declare
-  itself a radius (a circle around a named centre), an angle (a dial around a named centre) or a corner of a quad
-  (four point pairs → a draggable quad). The viewer draws handles from these declarations; Vignette, Twirl,
-  Ripple, Lens, Radial Blur, Corner Pin, Mirror (reflect), Tile and Kaleidoscope get handles without their own
-  UI code.
-- **The rotation handle at any zoom**: reachable on the pasteboard; it stays the same gesture.
+- **Zoom and pan of the preview**: Fit (default) or 25, 33, 50, 100, 200, 400 %; Ctrl+wheel around the pointer, a menu in
+  the corner, the wheel and Shift+wheel pan when not at Fit, a middle drag pans. The composite is unchanged: the display
+  draws the presented picture scaled.
+- **The pasteboard**: the place around the canvas is neutral; the transform frame with its rotation handle, masks,
+  centres and effect handles are drawn and grabbed there.
+- **Effect handles by declaration**: a plugin declares what its rows are on the frame — a centre, a radius, an angle, a
+  quad — and the preview draws and edits them, for an event's slot, a morpher's and a track's.
 
 ## Capabilities
 
 ### Modified Capabilities
 
-- `ui-timeline`: the viewer zoom/pan and the pasteboard; the transform frame and effect handles on it.
-- `ui-reach`: the zoom menu and keys; handle kinds reach every effect that declares them.
+- `ui-timeline`: the viewer transform and the pasteboard.
+- `ui-reach`: effect handles by declared kinds.
+- `ui-controls`: the command "Fit the preview".
 
 ## Impact
 
-- kt-plugin-api: `ParamSpec.handle: Option<Handle>` (`Radius { centre }`, `Angle { centre }`, `Quad { corner }`),
-  declared in the plugins' passports (no file change: a UI declaration).
-- kt-app: the viewer transform (zoom, pan) shared by the frame, the centre crosshairs and the new handles
-  (`geomctl.rs`, `centerctl.rs` take the viewer transform instead of the fitted rect); the pasteboard overlay;
-  `controls.rs` rows (Ctrl+wheel, Ctrl+0 in every layout); i18n ×5.
-- No model/engine/format change; `UiState.viewer_zoom` not stored (a view, resets to Fit on open — Q2).
-- Idle: zoom/pan redraw the display only; handles are a mesh rebuilt per gesture.
+- kt-plugin-api: `UiDecl.handles: &[HandleDecl]`; declarations in `fx-video-{color,distort,blur}`.
+- kt-app: `viewer.rs` (new), `app.rs` (`draw_preview`), `geomctl.rs`, `maskctl.rs`, `centerctl.rs` → `handlectl.rs`,
+  `controls.rs` (one command); i18n ×5.
+- No model, engine or format change; nothing stored. OTIO: nothing. Idle: zoom and pan redraw the display only.
 
 ## Questions to the owner
 
-Decided (2026-11-20, `kkt-26.11.20` A26, his Q53–Q54): Q1 (a), outlines and handles only outside the frame; Q2 (a),
-the zoom is not remembered.
-
-The questions as asked:
-
-**Q1. Outside the frame: outlines or the picture?** Premiere/AE draw only outlines on the pasteboard; showing
-the picture beyond the frame needs a larger composite while you edit.
-- (a) **Outlines and handles only** (*recommended*: no extra render cost; the frame is what is exported).
-- (b) The picture too, composed on a larger canvas while the viewer is zoomed out (costlier preview).
-
-**Q2. Is the viewer zoom remembered?**
-- (a) **No: every opening starts at Fit; Ctrl+0 returns to Fit** (*recommended*).
-- (b) Remembered per project in its view state.
+None. Q53–Q54 as asked are in the git history of this file (ffe4eebf).
