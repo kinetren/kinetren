@@ -44,7 +44,11 @@ The disk key (`durable_hash`, `render_cache.rs:639`) already has neither. It is 
   after that folder is moved. The media id is hashed beside it (`put_src` hashes `source.0`). A failed stat gives a
   process number, never a guess.
 - It is the file AS OPENED. `seek_and_reopen` (`kt-ffmpeg/src/source_impl.rs:1126`) reopens the decoder, not the file,
-  so the identity stays true until the source is replaced.
+  so the identity stays true until the source is replaced. **One path does reopen the file** (found 2026-11-24, after this
+  design was first written): `FfmpegSource::cursor_for` (`kt-media/src/ffmpeg.rs:149`, the open at `:167`) opens a second
+  decoder by the PATH, later. A file replaced on disk between the two gives one source two files, and the new file's
+  frames would go into the cache under the old identity (found-defects 1065). A cursor whose file's stat is not the one the
+  identity was made of is not kept: the source goes on with the decoders it has.
 - Not the content id of `project-cache-folder` (xxh3 of the whole file): it is known only after the index lane read
   the file, and the key would move in the middle of a session.
 

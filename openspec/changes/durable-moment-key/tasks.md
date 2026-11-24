@@ -15,8 +15,8 @@
 
 - [ ] 1.1 kt-cache: `SourceIdent`, `adopt`, `forget`, `get_video_leaf`, the identity on worker inserts and its refusal;
       `invalidate_source` keeps the identity; t4110
-- [ ] 1.2 kt-media: `MediaSource::identity` and its four answers; the stat once at open; the generators' after a
-      retune; `src_rev`'s text in one function both use; t4111
+- [ ] 1.2 kt-media: `MediaSource::identity` and its four answers; the stat once at open, and compared when
+      `cursor_for` opens another decoder by the path (D1, row 1065); the generators' after a retune; `src_rev`'s text in one function both use; t4111
 - [ ] 1.3 kt-engine `worker.rs`: `adopt` in `spawn_with_stats` and after an applied retune, the identity passed to every
       insert (`:669`, `:677`, the audio ones); `player.rs:2245` and `:2286`; t211, t496, t496a, t497, t2152 green as they are
 - [ ] 1.4 `cargo test -p kt-cache -p kt-media -p kt-engine`; clippy; commit
