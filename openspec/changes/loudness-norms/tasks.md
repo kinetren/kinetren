@@ -10,7 +10,7 @@
 
 ## 1. The unmerged half
 
-- [ ] 1.1 `git merge --no-ff render-loudness-norms` (53fe3a33, 6eec28ce; the orchestrator confirmed it 2026-11-24). It
+- [x] 1.1 `git merge --no-ff render-loudness-norms` (53fe3a33, 6eec28ce; the orchestrator confirmed it 2026-11-24). It
       brings t3106, t3107 and the live scenario `render_loudness`, its archived change `2026-11-18-render-loudness-norms`
       and its text in `openspec/specs/export/`. Six files conflict at `0c2a4065` (`git merge-tree` run there); the others
       merge by themselves:
@@ -23,10 +23,10 @@
     `python3 src/scripts/subset-fonts.py` over the merged catalogs (ours has 944 code points, theirs 939; the
     result is a new set). t125/t1283 and `font_tests.rs` say whether it is right.
   - `src/apps/kt-app/src/layout_tests.rs`: both sides appended at the end; keep ours whole and put `t3107` after it.
-- [ ] 1.2 Their note `docs/features/export/pipeline/render-loudness-report.md` is F-EXP-009, taken by `picture-check.md`:
+- [x] 1.2 Their note `docs/features/export/pipeline/render-loudness-report.md` is F-EXP-009, taken by `picture-check.md`:
       it becomes **F-EXP-010** in the note, the README row, t3107's comment, `render_loudness.py`, the archived change and
       `docs/ktprompts/v26.10-index.md`; `python3 src/scripts/features-index.py --check`
-- [ ] 1.3 What the merge cannot see: `Loudness` gains `channels` and the true-peak gate becomes per channel. Today it is
+- [x] 1.3 What the merge cannot see: `Loudness` gains `channels` and the true-peak gate becomes per channel. Today it is
       built in one place (`loudness.rs:270`); t2174 (`kernel_specialization.rs`) holds the bits of LUFS, LRA and dBTP and
       stays green as it is — a red there is a cause to find, not numbers to print again
 
