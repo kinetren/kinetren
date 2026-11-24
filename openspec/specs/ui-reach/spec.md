@@ -412,6 +412,12 @@ transition windows, and on another system it grew wider by itself.
 - **PATH** double-click an event → its FX window → double-click the camera block → the camera window on top of it → Esc → only the FX window is left → open the morpher window, click the FX window's title → FX is on top → Esc → only the morpher window is left
 - **TEST** t920 (`src/apps/kt-app/src/reach_tests.rs`)
 
+#### Scenario: Two presses of Esc in one frame close two windows
+- **WHEN** the FX window is open with the morpher window over it and a slow frame reads two presses of Esc at once
+- **THEN** both windows close: each press closes the window that is on top for it
+- **PATH** double-click an event → its FX window → open the morpher layer's window over it → press Esc twice quickly while the program is busy → both windows are gone, the timeline is free
+- **TEST** t3291 (`src/apps/kt-app/src/reach_tests.rs`), live scenario `node_graph`
+
 #### Scenario: The title cross and Esc are one path
 - **WHEN** each openable window of the registry that has a title cross is opened twice in the same scene; once it is closed by a click on the cross, once by Esc; the model, the undo stack, the clipboard and the focus are compared
 - **THEN** both closings leave the same model, the same undo depth and the same focus state; every window of the kind "tool window" and "dialog" has the cross in the same place of its title row and no collapse arrow, every "progress" window has no cross, as its kind declares

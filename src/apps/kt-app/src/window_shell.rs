@@ -315,7 +315,8 @@ pub(crate) fn fitting() -> bool {
 #[derive(Clone, Default)]
 struct Frame {
     shown: Vec<(egui::Id, egui::LayerId, bool)>,
-    armed: Option<egui::Id>,
+    /// The windows Esc closes this frame: a slow frame reads several presses, one window each.
+    armed: Vec<egui::Id>,
     /// The windows open as the telemetry journal knows them, with their titles: a window that
     /// appears is journaled once, one that a frame no longer draws is journaled closed
     /// (telemetry-journal). Allocates only when a window opens.
@@ -333,12 +334,9 @@ fn record(ctx: &egui::Context, id: egui::Id, layer: egui::LayerId, esc: bool) {
 fn take_armed(ctx: &egui::Context, id: egui::Id) -> bool {
     ctx.data_mut(|d| {
         let f = d.get_temp_mut_or_default::<Frame>(key());
-        if f.armed == Some(id) {
-            f.armed = None;
-            true
-        } else {
-            false
-        }
+        let n = f.armed.len();
+        f.armed.retain(|a| *a != id);
+        f.armed.len() < n
     })
 }
 
@@ -347,7 +345,7 @@ fn take_armed(ctx: &egui::Context, id: egui::Id) -> bool {
 pub(crate) fn begin_frame(ctx: &egui::Context) -> Vec<egui::Id> {
     let (shown, closed) = ctx.data_mut(|d| {
         let f = d.get_temp_mut_or_default::<Frame>(key());
-        f.armed = None;
+        f.armed.clear();
         let shown = std::mem::take(&mut f.shown);
         let mut closed = Vec::new();
         f.open.retain(|(id, title)| {
@@ -372,9 +370,9 @@ pub(crate) fn begin_frame(ctx: &egui::Context) -> Vec<egui::Id> {
     v.into_iter().map(|(_, id)| id).collect()
 }
 
-/// Hand Esc to the window `escape_action` picked: its `show` this frame reports `Closed::Esc`.
-pub(crate) fn arm_esc(ctx: &egui::Context, id: Option<egui::Id>) {
-    if let Some(id) = id {
-        ctx.data_mut(|d| d.get_temp_mut_or_default::<Frame>(key()).armed = Some(id));
+/// Hand Esc to the windows `escape_action` picked: the `show` of each this frame reports `Closed::Esc`.
+pub(crate) fn arm_esc(ctx: &egui::Context, ids: Vec<egui::Id>) {
+    if !ids.is_empty() {
+        ctx.data_mut(|d| d.get_temp_mut_or_default::<Frame>(key()).armed = ids);
     }
 }

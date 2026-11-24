@@ -216,3 +216,40 @@ fn t2684_a_warm_render_allocates_nothing() {
     let got = play(&r, &mut f);
     assert_eq!(got, (0, 0), "allocations in 4 s of warm bursts: linear, looped");
 }
+
+/// Test t3292 (fx-graph-dag D4, capability `audio-fx`): a warm render of sound GRAPHS allocates nothing —
+/// an event with a Slowed arm (a sound read), a look-ahead arm aligned before its Merge and a compressor
+/// keyed by an arm, and a track stage with a branch; linear and looped.
+#[test]
+fn t3292_a_warm_graph_allocates_nothing() {
+    use kt_model::fx_graph::{FxIn, MergeMode, SlotInputs};
+    kt_plugins_builtin::install();
+    let wire = |main: FxIn, second: Option<FxIn>| SlotInputs { main, second, matte: None };
+    let sum = || FxInstance::Merge { mode: MergeMode::Sum, mix: 0.5 };
+    let mut p = project();
+    // 0 slowed (arm, a read) ; 1 limiter (arm) ; 2 compressor of the Source keyed by 1 ; 3 2+0 ; 4 3+1
+    let ev = p.clips.iter_mut().find(|c| c.id == ClipId(3)).unwrap();
+    ev.fx = vec![
+        fx("slowed_reverb", &[("rate", 0.7), ("mix", 0.3)]),
+        fx("limiter", &[]),
+        FxInstance::plugin_with("compressor", &[-30.0, 12.0, 3.0, 10.0, 0.0, 0.0]).unwrap(),
+        sum(),
+        sum(),
+    ];
+    ev.fx_in = vec![
+        SlotInputs::default(),
+        wire(FxIn::Source, None),
+        wire(FxIn::Source, Some(FxIn::Slot(1))),
+        wire(FxIn::Prev, Some(FxIn::Slot(0))),
+        wire(FxIn::Prev, Some(FxIn::Slot(1))),
+    ];
+    let track = p.track_at_mut(A, 0).unwrap();
+    track.fx = vec![fx("limiter", &[]), sum()];
+    track.fx_in = vec![SlotInputs::default(), wire(FxIn::Prev, Some(FxIn::Source))];
+    p.validate().expect("a valid graph");
+    let r = AudioRenderer::new(&p);
+    let mut f = fetcher();
+    play(&r, &mut f);
+    let got = play(&r, &mut f);
+    assert_eq!(got, (0, 0), "allocations in 4 s of warm bursts of graphs: linear, looped");
+}

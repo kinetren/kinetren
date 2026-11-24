@@ -264,8 +264,9 @@ pub struct KtApp {
     /// The shell windows of the previous frame that take Esc, bottom to top
     /// (shared-window-shell): Esc closes the LAST one — the window the person sees on top.
     pub(crate) shell_seen: Vec<egui::Id>,
-    /// The window `escape_action` picked; armed after `handle_keys`, closed by its `show`.
-    pub(crate) shell_esc: Option<egui::Id>,
+    /// The windows `escape_action` picked, one per press of the frame (found-defects 905); armed
+    /// after `handle_keys`, each closed by its `show`.
+    pub(crate) shell_esc: Vec<egui::Id>,
     /// What the double click of the CURRENT gesture did to the view (selection-copy-target, D3):
     /// a triple click sets the region over the event and undoes it — the FX window it opened
     /// closes, the reel it expanded collapses.
@@ -1011,7 +1012,7 @@ impl KtApp {
             geom_dump_path: std::env::var("KT_GEOM_DUMP").ok(),
             geom_dumped_at: None,
             shell_seen: Vec::new(),
-            shell_esc: None,
+            shell_esc: Vec::new(),
             pending_double: None,
             // KT_DETACH_PREVIEW=1 — start with the preview detached (debugging)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
@@ -1349,7 +1350,7 @@ impl KtApp {
             geom_dump_path: std::env::var("KT_GEOM_DUMP").ok(),
             geom_dumped_at: None,
             shell_seen: Vec::new(),
-            shell_esc: None,
+            shell_esc: Vec::new(),
             pending_double: None,
             // KT_DETACH_PREVIEW=1 — start with the preview detached (debugging)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
@@ -1893,7 +1894,7 @@ impl KtApp {
         }
         self.key_clock.widen_clicks(&ctx);
         self.handle_keys(&ctx);
-        crate::window_shell::arm_esc(&ctx, self.shell_esc.take());
+        crate::window_shell::arm_esc(&ctx, std::mem::take(&mut self.shell_esc));
         // Speed-up by holding Space — EXACTLY once per frame (handle_keys when
         // the preview is detached is called twice, item 3 round 16).
         self.tick_space_boost(&ctx);
@@ -3362,7 +3363,7 @@ impl KtApp {
         // runs the action its kind declares (a tool closes and keeps its edits, a dialog
         // cancels). A progress window does not take Esc and is not in the list.
         if let Some(id) = self.shell_seen.pop() {
-            self.shell_esc = Some(id);
+            self.shell_esc.push(id);
             return;
         }
         // 2) cancel the active drag
