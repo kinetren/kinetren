@@ -454,7 +454,9 @@ over the first letter's fill. So:
     `SimDecl::forgets(rows) -> Option<Tick>` (particles: the longest lifetime over the prefix; springs: `None`, they
     never forget exactly). The catch-up starts at the later of the checkpoint and `t − forgets`. Equal bits need two rules:
     steps lie on the grid counted from the ORIGIN, not from where the walk began; spawn k (its moment, its seed) is a
-    closed form of the rate's curve.
+    closed form of the rate's curve. An emitter that reads another set (attraction, colliders) needs that set's states
+    over the window: they come from its own catch-up, from its origin where it never forgets, and the emitter's `Behind`
+    is the later of the two.
   - **The ceiling** is counted from that closed form too: spawn k is skipped when the spawns SCHEDULED in the longest lifetime
     before it (skipped or not) already reach the ceiling. Counting the living would make each spawn depend on all
     before it, and the window would not give the same state.

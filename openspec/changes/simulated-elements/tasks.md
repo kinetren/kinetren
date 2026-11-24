@@ -2,7 +2,7 @@
 
 > DESIGN ONLY until the orchestrator's go; no open question. Engine contract (D10, D12) reviewed with spec-engine at
 > `d613b228`, anchors re-checked at `5986f08e` (D13–D18). Tests: t3968–t3973, t3983–t3992, t4107. Depends on
-> `motion-driven-params` (the outer map's channels, D13 `Outer`); the tracker home of a mask works when `point-tracker`
+> `durable-moment-key` (one key function) and `motion-driven-params` (the outer map's channels, D13 `Outer`); the tracker home of a mask works when `point-tracker`
 > is in (a link to its samples), and is not needed to build this.
 
 ## 0. Notes
@@ -38,8 +38,8 @@
       `(SimKey(t), t)`; `Sim::key_only` never steps, so `show_kept` finds kept moments; probe key == full key; the
       per-event memo key takes the static part only (t2004); t3987
 - [ ] 2.5 the instanced-sprite op and pass in kt-gpu (design D12.3): a `Compiled` pipe with its `Slot`, timed, cut by
-      the arbiter, warmed by `prewarm::effect_ids`; `plan_key` (`engine.rs:4330`) and `put_plan`
-      (`render_cache.rs:715`) hash the op (t2981 green)
+      the arbiter, warmed by `prewarm::effect_ids`; `kt_engine::moment_key` hashes the op
+      (`durable-moment-key`, built first; before it `plan_key` and `put_plan` would both, t2981)
 - [ ] 2.6 the emitter's `forgets`, the step grid from the origin, the closed-form spawns and ceiling (D18); t3986
 
 ## 3. Model and format
