@@ -624,7 +624,7 @@ fn choice<T: PartialEq + Clone>(ui: &mut egui::Ui, cur: &mut T, v: T, label: &st
     false
 }
 
-type Sources = Vec<(MediaId, Box<dyn MediaSource>)>;
+pub(crate) type Sources = Vec<(MediaId, Box<dyn MediaSource>)>;
 
 /// Render sources. An unavailable file does NOT cancel the export (R.33
 /// item 10): a placeholder takes its place, and the name goes into the list —

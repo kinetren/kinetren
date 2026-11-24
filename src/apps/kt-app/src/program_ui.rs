@@ -39,7 +39,7 @@ impl MatchWin {
 }
 
 /// The sources the sound of `p` needs: no picture is opened. The names of those that did not open.
-fn open_heard(p: &Project, base: Option<&Path>) -> (Vec<(kt_model::MediaId, Box<dyn kt_media::MediaSource>)>, Vec<String>) {
+fn open_heard(p: &Project, base: Option<&Path>) -> (crate::render_dialog::Sources, Vec<String>) {
     let mut want = std::collections::HashSet::new();
     let mut reels = vec![None];
     let mut seen = std::collections::HashSet::new();
@@ -83,8 +83,12 @@ pub(crate) fn held_back(g: &ProgramStage) -> Option<f64> {
 }
 
 impl KtApp {
-    /// What is heard now, as the builder counted it (`None` — not yet, or no stage).
+    /// What is heard now, as the builder counted it (`None` — not yet, no stage, or the Viewer holds a
+    /// cut chain: the player then plays less than the document).
     fn heard_now(&self) -> Option<u64> {
+        if self.viewer.is_some() {
+            return None;
+        }
         self.player.built().sound
     }
 

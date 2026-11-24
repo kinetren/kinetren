@@ -83,8 +83,7 @@ impl Finder {
         for f in data.chunks_exact(AUDIO_CHANNELS) {
             let at = self.pos;
             self.pos = if at + 1 == TP_TAPS { 0 } else { at + 1 };
-            for c in 0..AUDIO_CHANNELS {
-                let x = f[c];
+            for (c, &x) in f.iter().enumerate() {
                 self.sum[c] += x as f64 * x as f64;
                 self.ring[c][at] = x;
                 self.ring[c][at + TP_TAPS] = x;
