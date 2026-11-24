@@ -314,6 +314,10 @@ the cheap substitute is to hold an intentional pause as a named area, which the 
 must respect. This is exactly the same entity that the morpher hangs on, and
 therefore the decision will have to be made regardless — see `ADDRESS:` above.
 
+Change `ripple-and-trim-modes`, implementation-ready 2026-11-24: Ctrl+F is Find in every style, so the post-edit ripple is F (track) and
+Ctrl+Shift+F (all); slip is Shift- or Alt-drag (Alt alone is taken by window managers); a locked track stays and is named; a
+ripple acts in one reel.
+
 ## Sources
 
 - https://bugs.kde.org/show_bug.cgi?id=414142 — the original live request ("Feature: Please add a GUI option to remove all blank spaces in a track"), 14.11.2019, closed as FIXED 17.03.2026 with the reply "Feature exists…" (access date 2026-09-08)

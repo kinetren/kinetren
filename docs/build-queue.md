@@ -72,8 +72,8 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
 | MASKS | `magic-wand-mask` **v+** | now; its model field is one enum variant, a text merge with v2d |
 | PREVIEW-UI | `preview-canvas-and-gizmos` | now: it stood after `frame-format-variants` by area order only, its design asks nothing of it |
 | SHELL | `memory-breakdown` | now (it and device-decode 2.1 both append a `Tenant`: the second to merge takes the next number) |
-| LIBRARY | `download-library` | after own-data-dir (`kt-dirs`) |
-| GPU | `scopes` | after v2d's 2.6; not beside `export-into-surface` (`engine.rs`) |
+| LIBRARY | `download-library` | now: stages 1–4; stage 5 after its Q4 |
+| GPU | `scopes` | now; not beside `export-into-surface` (`engine.rs`) |
 | new crates | `wasm-plugin-host`; `openfx-host` after it | now |
 | release build | `arm-build` (Linux aarch64) | now; it shares no file with anybody |
 | the plan | `simulated-elements` | after `motion-driven-params` (itself after `shared-events`); `durable-moment-key` is in |
@@ -108,23 +108,23 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
 | Change | Size | Needs first | Areas | Owner question | Tests |
 |---|---|---|---|---|---|
 | `timecode-is-text` | M | — | MODEL (`genmedia.rs`, `project_file.rs`, kt-otio import), `plugins/generators-test` | none | t3993–t3997 |
-| `fx-preset-change` | M | `fx-graph-dag` | FX-UI, `kt-model/src/ops.rs` | answered A4 | t3595–t3596, t3932–t3934 |
+| `fx-preset-change` | M | — (v2d is merged) | FX-UI (`node_editor.rs`, `fx_registry.rs`); no kt-model | answered A4; implementation-ready 2026-11-24 | t3595–t3596, t3932–t3934, t4243–t4244 |
 | `preview-canvas-and-gizmos` | M | — | PREVIEW-UI, `controls.rs` (a command), kt-plugin-api `UiDecl.handles` | answered A26; implementation-ready 2026-11-24 | t3597–t3599, t4229–t4231 |
-| `frame-format-variants` **v+** | L | `shared-events`; `preview-canvas-and-gizmos` (PREVIEW-UI) | MODEL, `kt-engine` `RenderTarget`, CACHE key (raster), PREVIEW-UI | answered A17 | t3485–t3492 |
+| `frame-format-variants` **v+** | L | `shared-events`; `preview-canvas-and-gizmos` (PREVIEW-UI) | MODEL (`Project::in_format`), `kt-text` (`wrap_lines`), one field of `moment_key.rs`, PREVIEW-UI, DIALOG (the render queue) | answered A17; implementation-ready 2026-11-24 | t3485–t3492, t4235–t4238 |
 | `multicam` **v+** | L | `shared-events` | MODEL, TIMELINE-UI, the preview area | answered A18 | t3505–t3514 |
-| `motion-driven-params` **v+** | M | `shared-events` | MODEL (link addresses), PLAYER, automation | answered B7 | t3947–t3951, t3967 (t3947: see below) |
+| `motion-driven-params` **v+** | M | `shared-events` | MODEL (link addresses), PLAYER, automation | answered B7 | t3947–t3951, t3967 |
 | `real-3d-groups` **v+** | L | `shared-events`; `fx-graph-dag` (GPU) | MODEL, the plan, GPU (a mesh pipeline) | answered B10 | t3952–t3956 |
 | `auto-ducking-by-role` **v+** | M | `shared-events` | MODEL (`AudioRole`), AUDIO, `track_window.rs` | **open: Q74** | t3911–t3918 |
 | `project-scale` **v+** | M | `shared-events` | MODEL (`project_file.rs`) | **open: Q1, Q2** | t3924–t3931 |
 | `magic-wand-mask` **v+** | M | — | MASKS, PREVIEW-UI (`maskctl.rs`: not beside `preview-canvas-and-gizmos`) | answered A20; implementation-ready 2026-11-24 | t3535–t3543 |
-| `title-word-effects` **v+** | M | `magic-wand-mask` | MASKS, `kt-text` | answered B8 | t3942–t3947 |
+| `title-word-effects` **v+** | M | `magic-wand-mask` | MASKS, `kt-text` | answered B8 | t3942–t3946, t4246 |
 | `point-tracker` **v+** | L | `magic-wand-mask`, `shared-events` | MASKS, MODEL, automation links, PREVIEW-UI | answered A20 | t3520–t3531 |
-| `geometry-fx-flex` **v+** | M | `preview-canvas-and-gizmos` | GEOM, PREVIEW-UI | answered A24 | t3570–t3576 |
-| `ripple-and-trim-modes` | L | `multicam` (TIMELINE-UI) | MODEL (`ops::ripple_plan`), TIMELINE-UI | answered A9 (owner check C9) | t3415–t3432 |
+| `geometry-fx-flex` **v+** | M | `preview-canvas-and-gizmos` | GEOM, kt-plugin-api (`HandleDecl::Rect`), PREVIEW-UI | answered A24; implementation-ready 2026-11-24 | t3570–t3576, t4245 |
+| `ripple-and-trim-modes` | L | `multicam` (TIMELINE-UI) | MODEL (`ops::ripple_plan`), TIMELINE-UI | answered A9 (owner check C9); **two questions, Q2 and Q3 of its proposal (defaults only, they hold nothing)**; implementation-ready 2026-11-24 | t3415–t3432, t4239–t4242 |
 | `subtitles-and-text-editing` **v+** | XL | `download-library` stage 1, `ripple-and-trim-modes` | MODEL, `kt-media` transcribe, `kt-text`, SHELL | answered A11 | t3460–t3474 |
 | `presets-everywhere` | M | `fx-preset-change` | MODEL `ops.rs`, FX-UI, the user store | **open: Q1, Q2** | t3904–t3907 |
 | `detached-windows` | M | — | SHELL | **open: Q1, Q2** | t3901–t3903 |
-| `scopes` | M | v2d's 2.6 | GPU (a tap pass), PLAYER, SHELL | answered A8 | t3400–t3412 |
+| `scopes` | M | — (v2d is merged); not beside `export-into-surface` | GPU (`engine.rs`, `display.wgsl`), `compose_queue.rs`, `fx_thumbs.rs`, SHELL | answered A8; implementation-ready 2026-11-24 | t3400–t3405, t3410–t3412 |
 | `memory-breakdown` | M | — | `kt-time` `mem.rs`, kt-gpu `memory.rs`, wgpu's `counters`, SHELL | answered B12; implementation-ready 2026-11-24 | t3962–t3965, t4232–t4234 |
 
 ### Effects, render checks, the rest
@@ -139,7 +139,7 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
 | `chroma-key-upgrade` **v+** | M | — | COLOR-FX, kt-plugin-api + `kt-fx/geom.rs` (one hook), SHELL (the Viewer's badge) | answered A22; implementation-ready 2026-11-24 | t3558–t3567 |
 | `pro-keyer` | L | `chroma-key-upgrade` | COLOR-FX, GPU, `BarrierKernel::held` | answered A22 | t3585–t3590 |
 | `temporal-barrier-3dnr` **v+** | L | `track-stream-stage` (STREAM) | STREAM, GPU, `plugins/fx-video-camera` | answered A21 | t3545–t3551 |
-| `download-library` | L | own-data-dir | LIBRARY, `kt-text`, the release build | answered B3 | t3850–t3869 |
+| `download-library` **v+** (stage 4) | L | — (own-data-dir is merged) | a new crate `kt-library`, `kt-ffmpeg/search.rs`, `kt-text`, `kt-media/generator.rs`, SHELL | answered B3; **Q4 of its proposal holds stage 5 only**; implementation-ready 2026-11-24 | t3850–t3869 |
 | `wasm-plugin-host` | L | — | new crates, GPU (plugin WGSL) | answered B11 | t3957–t3961 |
 | `openfx-host` | L | `wasm-plugin-host` | a host process, GPU interop | answered D4 | t3974–t3979 |
 | `arm-build` | M | — | the Dockerfile, release scripts, CI | answered D5 | t3980–t3982 |
@@ -157,12 +157,10 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
 - **`export-into-surface` is A13**: D6 of `export-host-copy` held it back on "wgpu offers none of that"; wgpu 30 imports dma-bufs. What stays
   unprovable without his card is in its D12; C11's text in `owner-checks.md` takes one sentence more (there).
 - The five changes whose questions had not been put to him are Q66–Q74 now (and flatpak Q75).
-- **Stale heads.** The `tasks.md` of `frame-format-variants`, `multicam`, `ripple-and-trim-modes`, `geometry-fx-flex`,
-  `magic-wand-mask`, `preview-canvas-and-gizmos`, `subtitles-and-text-editing`, `pro-keyer`, `temporal-barrier-3dnr`
-  and `scopes` still say "until the owner answers"; he did (A8, A9, A11, A17, A18, A20–A22, A24, A26). Their owner is
-  spec-features.
-- **One test number is reserved twice:** t3947, by `title-word-effects` and `motion-driven-params`. The second to be
-  applied renumbers. The other collisions this file named are gone.
+- **Stale heads** left: `multicam`, `subtitles-and-text-editing`, `pro-keyer`, `temporal-barrier-3dnr` still say "until the owner
+  answers"; he did (A11, A18, A21, A22). The six read on 2026-11-24 (scopes, download-library, frame-format-variants,
+  ripple-and-trim-modes, geometry-fx-flex, fx-preset-change) are implementation-ready. Their owner is spec-features.
+- t3947 is `motion-driven-params`' alone (`title-word-effects` took t4246). No number is reserved twice.
 
 ## Tests of spec-engine
 

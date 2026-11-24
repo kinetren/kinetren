@@ -229,6 +229,11 @@ The main question of the feature is not algorithmic but two layout questions: wh
 instrument lives (the meter panel / a detached window) and in what units the scale is
 labeled — the second one Vegas has still not resolved.
 
+Decided by the owner (kkt-26.11.20 A8): a window, the preview's frame while playing, the full one on a pause. Change `scopes`,
+implementation-ready 2026-11-24. The preview no longer reads back (preview-throughput D2), so "the readback is already
+paid for" does not hold: the change copies the presented composite without waiting for it, and measures the bytes on
+the paths that show bytes (a GL window, a slow chain).
+
 ## Sources
 
 - DaVinci Resolve 20 Reference Manual, chapter 127 "Viewers, Monitoring, and

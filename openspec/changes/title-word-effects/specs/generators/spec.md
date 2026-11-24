@@ -21,4 +21,4 @@ Why: the owner, kkt-26.11.20b B8 — "что будет если выделен�
 #### Scenario: Twenty words picked one by one
 - **WHEN** twenty words of a crawl are added to one isolating Blur mask one at a time, and another three words to a second slot's mask (a Glow)
 - **THEN** the Blur mask lists twenty spans and its coverage equals the union of the twenty words' glyphs at every frame; the title is laid out once per frame for both masks (the trace counts one layout); the frame cost with twenty spans is within 1.2× of one span
-- **TEST** t3947 (`src/libs/kt-text/tests/range_coverage.rs`)
+- **TEST** t4246 (`src/libs/kt-text/tests/range_coverage.rs`)
