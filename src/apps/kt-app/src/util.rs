@@ -200,6 +200,10 @@ impl IndexService {
                     }
                 }
             }
+            // the folder's stamps and its size in the list, while this lane has the folder at hand
+            if let Some((_, db)) = db.as_ref() {
+                db.folder().flush();
+            }
             Pump::More
         });
         IndexService { tx, stop, errors, lane }

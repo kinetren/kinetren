@@ -5268,7 +5268,7 @@ fn press_esc(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>) {
 }
 
 /// A click at a screen point (press and release in one frame batch).
-fn click_at(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>, pos: egui::Pos2) {
+pub(crate) fn click_at(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>, pos: egui::Pos2) {
     h.event(egui::Event::PointerMoved(pos));
     h.event(egui::Event::PointerButton {
         pos,

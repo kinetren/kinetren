@@ -532,7 +532,18 @@ fn t3837_a_full_folder_says_so_once_and_rests() {
     f.set_free_for_tests(Some(1 << 40));
     f.set_protect_for_tests(Some(Duration::ZERO));
     f.set_cap(3000);
-    let told = || cache_folder::take_notices().into_iter().filter(|n| matches!(n, Notice::Full { folder, .. } if *folder == root)).count();
+    // what it says is what the folder held, not what was left of it
+    let told = || {
+        let n: Vec<u64> = cache_folder::take_notices()
+            .into_iter()
+            .filter_map(|n| match n {
+                Notice::Full { folder, bytes } if folder == root => Some(bytes),
+                _ => None,
+            })
+            .collect();
+        assert!(n.iter().all(|b| *b >= 2000), "{n:?}");
+        n.len()
+    };
     for i in 0..3 {
         result(&f, &format!("results/v3/dev/frames/s{i}.mkv"), 1000);
     }

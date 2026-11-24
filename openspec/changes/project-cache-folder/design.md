@@ -322,6 +322,8 @@ a moment whose final frame is held needs none, any other recomputes it from the 
 - **A locked sidecar is left without counting a try**: deleting it under its holder is what t872's SIGBUS was
   made of. Garbage goes at once, another error after three tries.
 - **The disk takes a segment's bytes before its commit**, so the prerender asks for room ahead of each frame.
+- **Where a folder lies and why is said in its row of Preferences**, not in Diagnostics: that window stands at
+  its height limit, and one more line made it grow by itself (t918).
 - **The folder carries a `.gitignore` of `*`**: a `.kt` project is made for git, the old sidecar was three
   names a person had to ignore by hand.
 - **A project file inside the user's data folder** (an unnamed recovery) caches as an untitled one.

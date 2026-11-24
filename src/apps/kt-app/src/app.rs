@@ -8385,17 +8385,6 @@ impl KtApp {
                 ui.weak(tr(k::perf::VIDEO_FX_NONE));
             }
         }
-        // where the project's caches lie, and why elsewhere (project-cache-folder D8); known since a lane
-        // opened the folder, the disk is not asked
-        if let Some(f) = self.cache_folder().and_then(|p| kt_media::cache_folder::Folder::peek(&p)) {
-            use kt_media::cache_folder::{CloudTool, Place};
-            let at = f.root().display();
-            ui.weak(match (f.place(), f.cloud()) {
-                (Place::NoFiles(why), _) => crate::tf!(k::perf::CACHE_PLACE_ELSEWHERE, at, why),
-                (_, Some(CloudTool::OneDrive)) => crate::tf!(k::perf::CACHE_PLACE_SYNCED, at),
-                _ => crate::tf!(k::perf::CACHE_PLACE, at),
-            });
-        }
         // the disk prerender (render-cache-disk): its hardware encoder, or why it writes nothing here
         match self.player.render_cache().status() {
             Some(Ok(enc)) if !enc.is_empty() => {

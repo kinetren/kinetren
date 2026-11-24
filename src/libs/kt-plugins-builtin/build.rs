@@ -13,7 +13,7 @@ fn hash_file(h: &mut u64, path: &Path) {
         if l.is_empty() || l.starts_with("//") {
             continue;
         }
-        for b in l.bytes().chain([b'\n']) {
+        for b in l.bytes().chain(*b"\n") {
             *h = (*h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3);
         }
     }

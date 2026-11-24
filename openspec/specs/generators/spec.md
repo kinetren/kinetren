@@ -16,7 +16,7 @@ a function of the value), and not the values of the parameters. The dictionary o
 SHALL exist in one place (kt-model), parsing is case-insensitive, garbage gives
 `None`; string values are escaped losslessly. Opening any pseudo-path
 (`synth:`, `gen:`) SHALL go ONLY through the kt-media factory: a broken pseudo-path is an
-honest error, it does not go to FFmpeg, and the sidecar DB is not opened for it. The lookup
+honest error, it does not go to FFmpeg, and the cache folder is not opened for it. The lookup
 of a source by a clip SHALL have one home (`Project::source()`).
 Why: the parsing of `synth:` lived in two copies and diverged by case — a real
 source was silently taken as a missing file.
@@ -31,9 +31,9 @@ source was silently taken as a missing file.
 - **THEN** the factory routes by scheme without regard to case, a broken pseudo-path returns an error, and neither a placeholder nor a call to FFmpeg
 - **TEST** t471b (`src/libs/kt-media/src/factory.rs`)
 
-#### Scenario: A pseudo-path does not touch the sidecar DB
+#### Scenario: A pseudo-path does not touch the cache folder
 - **WHEN** the thumbnail service or the source sync meets `gen:` media
-- **THEN** sqlite is not opened (the DB key is the file's metadata, and a generator has none), and the source is raised by the factory directly
+- **THEN** the folder is not opened (a media's key is its file's bytes, and a generator has none), and the source is raised by the factory directly
 - **TEST** t504 (`src/apps/kt-app/src/layout_tests.rs`)
 
 #### Scenario: An unparsable kind — an error, not silence
@@ -415,7 +415,7 @@ manifest instead of being re-promised by each crate.
 #### Scenario: A generator whose plugin is missing is a named placeholder
 - **WHEN** a project holds media `gen:wobble_grid` with an event carrying values for it, and no
   plugin `wobble_grid` is registered; the project is opened, played and saved
-- **THEN** the factory raises a placeholder source labelled with the id, FFmpeg and the sidecar DB
+- **THEN** the factory raises a placeholder source labelled with the id, FFmpeg and the cache folder
   are not touched, one notice names the id, and the saved file keeps the path and the values
 - **TEST** t973b (`src/libs/kt-engine/tests/plugin_missing.rs`)
 
@@ -612,7 +612,7 @@ The Waveform, Spectrum and Level rings generators SHALL draw what the audio trac
 "Hears track" row sounds like, from an analysis series of each FILE on that track. The series has one
 record per audio burst (the RMS of each channel, the peak, 16 log bands and 32 waveform points) and
 SHALL be a pure function of the file's decoded sound. It SHALL be computed in the background from a
-short-lived source of the job's own, kept behind one store seam (today the sidecar, cleared when the
+short-lived source of the job's own, kept behind one store seam (the media index, whose entry is another when the
 file changes), and keyed by the file. The generator's state SHALL carry its FEED, built by
 `gen_sources`: the pieces of series it hears, in its own material time. A series that arrives, a moved
 or replaced event, or another track SHALL retune the source and move the frame's keys (`src_rev`, the
@@ -623,7 +623,7 @@ plain material time, not the mix after effects (owner question Q55).
 Why: `v26.10` G5, the audio-reactive group; the orchestrator's choice of option (a), 2026-11-20.
 
 #### Scenario: The series is pure and kept by the file
-- **WHEN** a 2 s 1 kHz sine is analysed twice, stored in a sidecar, read back, and the file changes
+- **WHEN** a 2 s 1 kHz sine is analysed twice, stored in the media index, read back, and the file changes
 - **THEN** one record per burst, the same bytes twice, the level of a −9 dBFS RMS sine, the store gives the same hash without opening the file, a changed file has none, a stop keeps nothing
 - **TEST** t3714 (`src/libs/kt-media/tests/listen.rs`)
 

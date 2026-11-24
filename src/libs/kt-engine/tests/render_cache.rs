@@ -215,7 +215,7 @@ fn t3808_the_composite_paths_version_follows_its_code() {
         for line in std::fs::read_to_string(f).unwrap().lines() {
             let l = line.trim();
             if !l.is_empty() && !l.starts_with("//") {
-                for b in l.bytes().chain([b'\n']) {
+                for b in l.bytes().chain(*b"\n") {
                     h = (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3);
                 }
             }
@@ -298,7 +298,11 @@ fn t3833_each_projects_frames_lie_in_its_own_folder() {
     // what the bars draw is there
     let (runs, _) = b.final_video_runs();
     for t in runs.iter().flat_map(|r| (r.start..r.end).step_by(b.video_grid().frame_step() as usize)) {
-        assert!(b.kept_picture_reader(Tick(t))().is_some(), "the bars draw a dropped moment {t}");
+        if b.kept_picture_reader(Tick(t))().is_none() {
+            // dropped since the bars were asked: they must not draw it now
+            let (now, _) = b.final_video_runs();
+            assert!(!now.iter().any(|r| r.contains(&t)), "the bars draw a dropped moment {t}");
+        }
     }
 }
 

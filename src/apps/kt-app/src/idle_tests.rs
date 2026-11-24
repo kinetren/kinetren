@@ -590,3 +590,97 @@ fn t3822_a_paused_mosh_on_one_device_costs_nothing() {
     assert!(next_repaint(&h) > Duration::from_secs(3600), "a program at rest asks for a frame in {:?}", next_repaint(&h));
     assert_eq!(snapshot(), last, "the rest after the pointer ran work");
 }
+
+/// Test t3843 (project-cache-folder D3): after a prerender wrote into a full folder — its oldest segments
+/// replaced, the notice told — the program at rest, and with the pointer moving over the preview, walks no
+/// cache folder, drops nothing, reads and writes nothing, composes and submits nothing, and asks no frame.
+/// - **PATH** the heavy showcase opens → Space plays a lap → Space stops → the mouse rests, then moves over
+///   the preview → nothing redraws or works by itself once the writes are done
+#[test]
+fn t3843_the_program_at_rest_after_cyclic_writing_costs_nothing() {
+    use kt_media::cache_folder::{Folder, Tenant};
+    use kt_time::work::{count, Work};
+    crate::plugins::install();
+    let mut h = rest_harness();
+    if matches!(h.state().player.video_backend(), kt_engine::VideoBackendStatus::Missing) {
+        eprintln!("skipped: no wgpu adapter");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("kt-t3843-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let root = kt_media::cache_folder::beside(&dir.join("film.kt"));
+    let folder = Folder::open(&root).unwrap();
+    folder.set_protect_for_tests(Some(Duration::ZERO));
+    let app = h.state_mut();
+    app.player.set_preview_quality(kt_media::Quality { width: 160, height: 90 });
+    folder.set_cap(8 * 160 * 90 * 4);
+    let p = kt_model::demo::demo_project(kt_model::demo::DemoSources::Generators);
+    app.model = kt_model::TimelineModel::new(p);
+    app.model_rev += 1;
+    app.sync_media_sources();
+    app.push_project_to_player();
+    app.player.seek(kt_time::Tick(4 * 90_000));
+    app.player.render_cache().set_heavy_for_tests(Some(1));
+    app.player.set_render_cache(Some(kt_engine::render_cache::Config {
+        codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
+        root: root.clone(),
+        made: kt_engine::render_cache::Made::of(60),
+        base: None,
+        cap: None,
+    }));
+    // a stretch longer than the folder holds is measured slow: the prerender writes it in a cycle
+    let step = app.player.video_grid().frame_step();
+    let start = app.player.video_grid().align_floor(kt_time::Tick(4 * 90_000)).0;
+    let deadline = kt_time::test_deadline();
+    while folder.counts(Tenant::Frames).2 == 0 {
+        for k in 0..30 {
+            h.state().player.note_preview_cost(kt_time::Tick(start + k * step), 1_000_000_000, (160, 90));
+        }
+        h.state().player.render_cache().kick();
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(std::time::Instant::now() < deadline, "the folder never wrote in its cycle: {:?}", folder.known_sizes());
+    }
+    // every moment is heavy to this test's threshold, and the prerender would walk on to the project's end
+    h.state().player.render_cache().set_heavy_for_tests(Some(u64::MAX));
+    h.state().player.render_cache().kick();
+    let snapshot = || {
+        (
+            (folder.walks_for_tests(), folder.counts(Tenant::Frames), folder.known_sizes()),
+            count(Work::Composite),
+            count(Work::DeviceSubmit),
+            count(Work::PrefetchPass),
+        )
+    };
+    let (mut last, mut still) = (snapshot(), 0);
+    // the notice of the full folder stands in the status line some seconds: its going is the last frame
+    while still < 25 || h.state().status.is_some() || !h.state().player.render_cache().settled() || h.state().incomplete_since.is_some() || h.state().meter.is_active() {
+        if h.state().incomplete_since.is_some() {
+            // the harness hears no wake: the frame whose sources came is asked again here
+            h.state_mut().preview_key = None;
+        }
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+        let now = snapshot();
+        still = if now == last { still + 1 } else { 0 };
+        last = now;
+        assert!(std::time::Instant::now() < deadline, "the prerender never came to rest");
+    }
+    for i in 0..60 {
+        h.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(600.0 + (i % 30) as f32 * 4.0, 200.0)));
+        h.step();
+    }
+    assert_eq!(snapshot(), last, "a moving pointer walked, dropped, composed or submitted");
+    for _ in 0..6 {
+        h.step();
+    }
+    assert!(
+        next_repaint(&h) > Duration::from_secs(3600),
+        "a program at rest asks for a frame in {:?}: {:?}",
+        next_repaint(&h),
+        h.ctx.repaint_causes()
+    );
+    assert_eq!(snapshot(), last, "the rest after the pointer ran work");
+    let _ = std::fs::remove_dir_all(&dir);
+}

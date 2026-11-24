@@ -1209,6 +1209,14 @@ impl RenderCache {
         known.is_some_and(|k| self.holds(k))
     }
 
+    /// The folder's stamps, once the prerender came to rest or ends.
+    fn flush(&self) {
+        let store = self.store.lock().unwrap().as_ref().map(|(_, s)| s.clone());
+        if let Some(s) = store {
+            s.folder.flush();
+        }
+    }
+
     /// Does the open store still hold it? The cycle may have dropped its segment since.
     fn holds(&self, key: DiskKey) -> bool {
         self.store.lock().unwrap().as_ref().is_some_and(|(_, s)| s.holds(key))
@@ -1355,6 +1363,7 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
         let seen = rc.wake.seen();
         if stop.load(Ordering::Acquire) {
             commit(&rc, &mut seg);
+            rc.flush();
             return;
         }
         rc.news.store(false, Ordering::Release);
@@ -1433,6 +1442,7 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
             if worked {
                 trace::ev(Ev::RenderCache).aux(rc::STOPPED).b(rc::why::DONE).emit();
                 worked = false;
+                rc.flush();
             }
             rc.settled.store(true, Ordering::Release);
             rc.wake.wait_since(seen);

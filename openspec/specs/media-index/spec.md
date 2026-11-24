@@ -4,7 +4,7 @@
 
 Media sources and all their upkeep: the system FFmpeg through dlopen, ownership of the decoder by
 one thread, the cache of bursts as the only truth about coverage, prefetch along the playback grid,
-the sidecar index DB (peaks, thumbnails, batch index, analysis), and offline analysis of the material — so that
+the media index (peaks, thumbnails, batch index, analysis) and the project's cache folder, and offline analysis of the material — so that
 not a single UI gesture generates a decode on demand.
 
 ## Requirements
@@ -297,7 +297,7 @@ on one frame gave 885 coverage requests under the mutex on every pass.
 - **TEST** t287 (`src/libs/kt-engine/tests/scheduler.rs`)
 
 ### Requirement: Timeline scroll/zoom does not generate decode requests
-Waveforms SHALL be read from the peak pyramid (memory/DB), thumbnails — from the strip in the sidecar DB,
+Waveforms SHALL be read from the peak pyramid (memory/DB), thumbnails — from the strip in the media index,
 warmth bars — from the coverage of the cache; while there is no index — placeholders. The keys of the thumbnails SHALL
 be quantized from the ZERO OF THE FILE (the common cache of the bin and the timeline). Everything the thumbnail worker may "fail to get"
 (the duration, decoding of a key) SHALL publish the failure, so that a repeated request is not queued; the thumbnail sources are kept in an LRU, and not reset wholesale.
@@ -312,7 +312,7 @@ decode and a bloated DB.
 
 #### Scenario: The peak pyramid is exact and survives reopening
 - **WHEN** the pyramid is built and the project is opened again
-- **THEN** the levels equal the naive recomputation; the repeated opening reads from the DB without decode
+- **THEN** the levels equal the naive recomputation; the repeated opening reads the entries without decode
 - **TEST** t15 (`src/libs/kt-media/tests/index_db.rs`)
 
 #### Scenario: Peaks without a DB and thumbnails for media added later
@@ -327,7 +327,7 @@ decode and a bloated DB.
 
 #### Scenario: A peak pass stops when it is told to
 - **WHEN** the stop is asked before each burst and says yes after ten
-- **THEN** ten bursts are read, and nothing of the pass reaches the sidecar
+- **THEN** ten bursts are read, and nothing of the pass reaches the media index
 - **TEST** t1741 (`src/libs/kt-media/tests/index_db.rs`)
 
 #### Scenario: Negative thumbnail caches
@@ -1210,7 +1210,7 @@ default (BT.601, the format's range) SHALL leave the conversion context untouche
 those of every former build; the matrix and range SHALL be part of the context's key. RGB, grey and
 palette pictures keep swscale's own conversion. Primaries are read and reported, not converted.
 Disk caches holding decoded pixels SHALL carry a version that moves with the conversion: the
-sidecar's thumbs (`THUMB_PIXELS_VERSION`, the older ones dropped on the first new write) and the
+media index's thumbs (`THUMB_PIXELS_VERSION`, the older ones dropped on the first new write) and the
 reel strips (`STRIP_ROW_VERSION`).
 Why: found-defects 697 — every source was converted as BT.601, so a BT.709 HD file (most cameras and
 phones) showed shifted colours in the preview and the export (source-colour-matrix design D1–D4).
@@ -1236,6 +1236,6 @@ phones) showed shifted colours in the preview and the export (source-colour-matr
 - **TEST** t2893 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`)
 
 #### Scenario: Thumbs of an older pixel version are not read
-- **WHEN** a sidecar holds thumbs and a size written without a pixel version, and a new thumb is then written
+- **WHEN** the media index holds thumbs and a size written under an older pixel version, and a new thumb is then written
 - **THEN** the size reads as absent until the new write, which drops every older thumb of the media and keeps the new one
 - **TEST** t2894 (`src/libs/kt-media/tests/index_db.rs`)

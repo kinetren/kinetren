@@ -257,7 +257,9 @@ pub fn disk_space(dir: &std::path::Path) -> Option<(u64, u64)> {
     disk_space_sys(dir)
 }
 
+// the fields' widths differ between unix systems
 #[cfg(unix)]
+#[allow(clippy::unnecessary_cast)]
 fn disk_space_sys(dir: &std::path::Path) -> Option<(u64, u64)> {
     use std::os::unix::ffi::OsStrExt;
     let c = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;

@@ -50,7 +50,7 @@
 - [x] 2.6 t985 (`user_store.rs:1252–1284`): the project folder holds `edit.kt` and `kinetren-cache/`;
       `showcase.rs:40` and `dist_guard.rs:86` follow; kt-app's t1831, t2519, t476, t504, t640, t411, t1740 read
       and kept green
-- [ ] 2.7 `rusqlite` out of `kt-media/Cargo.toml:23` and the workspace `Cargo.toml:96`;
+- [x] 2.7 the tests of kt-media, kt-app, kt-cli; `rusqlite` stays in kt-media for the import alone (design D10)
       `cargo test -p kt-media -p kt-app -p kt-cli`; clippy; commit "project-cache-folder 2: the media index
       and the reels are files"
 
@@ -74,16 +74,16 @@
 
 ## 5. Telemetry, kt-cli, Preferences, notices
 
-- [ ] 5.1 tenant records in `kt-time/src/trace.rs` (bytes, hits, misses, drops with reasons); extend
+- [x] 5.1 tenant records in `kt-time/src/trace.rs` (bytes, hits, misses, drops with reasons); extend
       `kt-cli trace cache` (`trace_query.rs:130`); `kt-cli cache <project> size|prune|clear` and
       `--cache-dir`; t3841
-- [ ] 5.2 `Notice.action` (`app.rs:77`) and the cycle's notice once per session per folder
-- [ ] 5.3 Preferences section "Persistent cache" (`prefs_window.rs`, beside FFmpeg): the folders, sizes,
+- [x] 5.2 `Notice.action` (`app.rs:77`) and the cycle's notice once per session per folder
+- [x] 5.3 Preferences section "Persistent cache" (`prefs_window.rs`, beside FFmpeg): the folders, sizes,
       Delete, the cap; `k::prefs` keys in every catalog; the section list in `welcome_prefs_tests.rs:290`;
       `reach_tests`, `layout_tests`, font tests; t3842; planned live scenario `cache_folder` with a screenshot
       per step
-- [ ] 5.4 the idle check on the heavy showcase: at rest nothing scans or trims; t3843
-- [ ] 5.5 media-index `design.md` (why no SQLite, the class walk), kt-media and kt-engine `CLAUDE.md`; What's
+- [x] 5.4 the idle check on the heavy showcase: at rest nothing scans or trims; t3843
+- [x] 5.5 media-index `design.md` (why no SQLite, the class walk), kt-media and kt-engine `CLAUDE.md`; What's
       new line ("a project's caches live in a `kinetren-cache` folder beside it; Preferences shows what they
       take"); commit; the report's "Найдено, не исправлено"
 

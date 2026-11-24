@@ -20,6 +20,17 @@ pub struct CacheRow {
     pub bytes: u64,
     pub cap: u64,
     pub full: bool,
+    /// Why it lies elsewhere than beside the project, or what else a person should know of its place.
+    pub place: Option<Place>,
+}
+
+/// What the row says of the folder's place.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Place {
+    /// The project's folder takes no files: what it answered.
+    Elsewhere(String),
+    /// Inside a folder a cloud tool uploads whole.
+    Synced,
 }
 
 #[derive(Default)]
@@ -49,7 +60,12 @@ fn read_rows() -> Vec<CacheRow> {
                 None => r.bytes,
             };
             let projects: Vec<PathBuf> = r.projects.iter().filter(|p| p.exists()).cloned().collect();
+            let place = match live.as_ref().map(|f| f.place()) {
+                Some(cache_folder::Place::NoFiles(why)) => Some(Place::Elsewhere(why.clone())),
+                _ => (cache_folder::synced(&r.folder) == Some(cache_folder::CloudTool::OneDrive)).then_some(Place::Synced),
+            };
             Some(CacheRow {
+                place,
                 orphan: projects.is_empty() && !r.projects.is_empty(),
                 full: bytes >= cap || live.is_some_and(|f| f.is_full()),
                 folder: r.folder,
@@ -116,6 +132,11 @@ impl crate::app::KtApp {
         }
     }
 
+    /// A folder's cap, set by the person.
+    pub(crate) fn set_cache_cap(&mut self, folder: PathBuf, cap: u64) {
+        self.cache_job(move || set_cap(&folder, cap));
+    }
+
     /// The window closed: the next showing reads again.
     pub(crate) fn caches_closed(&mut self) {
         self.start.caches.rows = None;
@@ -141,8 +162,7 @@ impl crate::app::KtApp {
         for (i, row) in rows.iter().enumerate() {
             ui.add_space(4.0);
             let path = row.folder.display().to_string();
-            let r = ui.add(egui::Label::new(egui::RichText::new(&path).small()).wrap());
-            crate::widgets::field_probe::note(&format!("prefs.cache.{i}"), r.rect);
+            ui.add(egui::Label::new(egui::RichText::new(&path).small()).wrap());
             ui.horizontal_wrapped(|ui| {
                 if row.orphan {
                     ui.colored_label(crate::app::HINT_ERROR, tr(k::prefs::CACHE_NO_PROJECT));
@@ -156,6 +176,15 @@ impl crate::app::KtApp {
                 let size = crate::render_dialog::size_text(row.bytes);
                 ui.label(if row.full { crate::tf!(k::prefs::CACHE_FULL, size) } else { size });
             });
+            match &row.place {
+                Some(Place::Elsewhere(why)) => {
+                    ui.add(egui::Label::new(crate::tf!(k::prefs::CACHE_ELSEWHERE, why)).wrap());
+                }
+                Some(Place::Synced) => {
+                    ui.weak(tr(k::prefs::CACHE_SYNCED));
+                }
+                None => {}
+            }
             ui.horizontal_wrapped(|ui| {
                 let mut gb = row.cap as f64 / 1e9;
                 let num = crate::widgets::NumRow {
@@ -176,8 +205,7 @@ impl crate::app::KtApp {
                 }
                 // saved when the edit is done, not at every step of a drag
                 if r.drag_stopped() || r.lost_focus() {
-                    let (folder, cap) = (row.folder.clone(), (gb * 1e9) as u64);
-                    self.cache_job(move || set_cap(&folder, cap));
+                    self.set_cache_cap(row.folder.clone(), (gb * 1e9) as u64);
                 }
                 let r = ui.button(tr(k::prefs::CACHE_DELETE));
                 crate::widgets::field_probe::note(&format!("prefs.cache.{i}.delete"), r.rect);
@@ -193,5 +221,12 @@ impl crate::app::KtApp {
         if let Some(folder) = deleted {
             self.cache_job(move || delete(&folder));
         }
+    }
+}
+
+#[cfg(test)]
+impl CachesUi {
+    pub fn rows_for_tests(&self) -> Vec<CacheRow> {
+        self.rows.clone().unwrap_or_default()
     }
 }

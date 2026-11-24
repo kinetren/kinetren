@@ -251,7 +251,6 @@ pub struct Folder {
     base: Option<PathBuf>,
     place: Place,
     cap: AtomicU64,
-    cloud: Option<CloudTool>,
     inner: Mutex<Inner>,
     pub(crate) paths: Mutex<crate::index::PathMap>,
     /// The untitled folder's owner lock, held for the process's life.
@@ -335,8 +334,7 @@ impl Folder {
                 .filter(|f| f.try_lock().is_ok()),
             _ => None,
         };
-        let cloud = synced(&root);
-        if cloud == Some(CloudTool::Dropbox) {
+        if synced(&root) == Some(CloudTool::Dropbox) {
             kt_dirs::mark_unsynced(&root);
         }
         let cap = registry::cap(&root).unwrap_or(DEFAULT_CAP);
@@ -345,7 +343,6 @@ impl Folder {
             base,
             place,
             cap: AtomicU64::new(cap),
-            cloud,
             inner: Mutex::default(),
             paths: Mutex::default(),
             _owner: owner,
@@ -685,7 +682,7 @@ impl Folder {
             self.note_drop(t, entry, u.bytes, why);
         }
         if any {
-            self.say_full(left);
+            self.say_full(used);
             self.save_stamps(true);
         }
         left <= target
@@ -866,11 +863,6 @@ impl Folder {
         lock(&self.inner).counted.is_some()
     }
 
-    /// The cloud tool whose folder it lies in.
-    pub fn cloud(&self) -> Option<CloudTool> {
-        self.cloud
-    }
-
     /// Per tenant: bytes, hits, misses and drops into the trace (at the first count and at the end).
     pub fn trace_sizes(&self) {
         let sizes = self.known_sizes();
@@ -939,6 +931,9 @@ impl Folder {
 
     /// The stamps and the registry's size of this folder, written now (the project's close).
     pub fn flush(&self) {
+        if !lock(&self.inner).dirty {
+            return;
+        }
         self.save_stamps(true);
         self.trace_sizes();
         if lock(&self.inner).counted.is_some() {
