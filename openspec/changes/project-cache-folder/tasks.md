@@ -60,7 +60,8 @@
       device class = adapter name + backend + driver), the app's root at `app.rs:913–924` and kt-cli's
       `Config` (`main.rs:1149–1156`); `<data>/render-cache` deleted at the first start; writes through the
       folder's `ask_room`
-- [ ] 3.2 the key without the build: `durable_hash` (`:639`) plus the decoder major, each kernel's version and
+- [ ] 3.2 (after `durable-moment-key`; its `disk_key` is `moment_key`, and the terms below join `disk_key`, never `moment_key`)
+      the key without the build: `durable_hash` (`:639`) plus the decoder major, each kernel's version and
       WGSL hash, and `COMPOSITE_PATH_VERSION` with its recorded hash of the composite code outside the kernels;
       the build salt (`render_cache_build`, `app.rs:12053`, `main.rs:1097`) leaves the key; a stale entry is a
       miss removed when met; t3808, t3833, t3834; t2980 and t2981 rewritten to their new scenarios
