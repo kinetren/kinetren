@@ -8,7 +8,7 @@
 ## 0. Notes first
 
 - [x] 0.1 proposal, design, class walk, deltas `video-plan`, `media-index`
-- [ ] 0.2 the "before" runs of the measurement on a release build, saved beside this file's report
+- [x] 0.2 the "before" runs of the measurement on a release build, saved beside this file's report
 - [x] 0.3 t4108 written first and seen RED for the design's reason (the probe key of an evicted moment)
 
 ## 1. The identity (kt-cache, kt-media, the worker)
@@ -45,7 +45,7 @@
 - [x] 4.2 a moment waiting for its recheck is held for 200 ms, the prefetch nudges `compose_queue`'s recheck, the
       order from the playhead outward (`player.rs:1942`); t4113
 - [x] 4.3 t4112 (the loop end to end, row 965's as a test)
-- [ ] 4.4 the measurement's table in the report and in `video-plan/design.md`; the audit's cut 1 text and row 965's
+- [x] 4.4 the measurement's table in the report and in `video-plan/design.md`; the audit's cut 1 text and row 965's
       cause corrected; rows 1061–1063 closed
-- [ ] 4.5 What's new ("a loop that plays from its finished frames no longer keeps its sources in memory"); the crate
+- [x] 4.5 What's new ("a loop that plays from its finished frames no longer keeps its sources in memory"); the crate
       notes; commit; the report's "Найдено, не исправлено"

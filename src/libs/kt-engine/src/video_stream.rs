@@ -913,15 +913,14 @@ impl StreamInput for ClipStream<'_> {
 }
 
 /// The stage's key for frame time `t` without running it (a probe plan, structured-telemetry): an
-/// empty frame of the layer's size and the key the kernel names; `None` — the kernel cannot say.
+/// empty frame of the layer's size and the key the kernel names; `None` — the kernel cannot say. `pts` is the frame's own time.
 pub(super) fn key_only(
     clip: &VideoClip,
     st: &StreamStage,
     grid: &FpsGrid,
     quality: Quality,
     dq: Quality,
-    t: Tick,
-    pts: Tick,
+    (t, pts): (Tick, Tick),
     cache: &BurstCache,
 ) -> Option<(Option<Arc<VideoFrame>>, u64)> {
     let cs = ClipStream::new(clip, st, grid, quality, None, &|of| cache.idents(of));

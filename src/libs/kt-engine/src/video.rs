@@ -2555,7 +2555,7 @@ fn layer_src<'a>(
     let streamed = match (&clip.stream, clip.nest) {
         (Some(st), None) => Some(
             ctx.probe
-                .then(|| stream::key_only(clip, st, ctx.grid, quality, dq, t, src_pts, cache))
+                .then(|| stream::key_only(clip, st, ctx.grid, quality, dq, (t, src_pts), cache))
                 .flatten()
                 .map(|(f, key)| (f, key, None))
                 .unwrap_or_else(|| {
