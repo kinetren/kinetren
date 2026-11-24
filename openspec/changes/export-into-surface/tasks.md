@@ -9,7 +9,8 @@
 ## 0. Notes first
 
 - [x] 0.1 proposal, design (D1–D14, class walk D13), deltas `export`, `video-plan`, `telemetry`
-- [ ] 0.2 `export-host-copy` 0.2 and 3.2 closed (his answer is A13; the idle check) and the change archived
+- [x] 0.2 `export-host-copy` closed and archived: 0.2 is his A13; its 3.2, the idle check while the prerender
+      writes and after, is 5.1's here
 - [ ] 0.3 the F-EXP note of hardware encoding (`docs/features/export/pipeline/hardware-encoder-selection.md`) gains what others do with
       the encoder's surface (Resolve, OBS's dma-buf path, FFmpeg's hwmap) and this design's verdict
 

@@ -53,19 +53,21 @@
 
 ## 3. v1c — the windows
 
-- [ ] 3.1 FX window: the event and its partners in one editor, the form beside it (split remembered)
-- [ ] 3.2 morpher window: the purple Source-swap node, both vectors as lanes (t244/t218 rewritten)
+- [x] 3.1 FX window: the event and its partners in one editor (3.10); the form stays under the graph, where
+      his "не скролить" put the whole width at its service (fx-form-width)
+- [x] 3.2 morpher window: the purple Source-swap node, both vectors as lanes (v1b: t2994, t2995)
 - [x] 3.3 track window: the key box with a dashed wire into its compressor (`ChainEdit.keys`); a
       composition instance's chain already uses the editor (the head is its parameters)
 - [x] 3.4 context boxes: the layers over the event bottom up (`Project::layers_over`, the render's
       `windows_on`) and its track's stage with its key, read-only, double click opens their window;
       kept per model revision; t2996, live `node_graph`. Tab peek waits for the key table
 - [x] 3.5a `widgets::chain_strip` removed — the three windows call `node_editor::chain_graph` (v1b)
-- [ ] 3.5 the remaining the live scenarios that clicked crumbs follow the editor
-      (`vhs_sound`, `stream_sound`, `camera_mic`, morpher ones); new live `morph_pair`
-- [ ] 3.6 cost at rest: t3003, live `idle` with both windows open on the heavy showcase (t3006); load
-      on a pause, hover and with the windows open — numbers in the report
-- [ ] 3.7 specs merged, What's new, commit; prune; the orchestrator runs `finish.sh` on the stage
+- [x] 3.5 the remaining the live scenarios that clicked crumbs follow the editor
+      (`vhs_sound`, `stream_sound`, `camera_mic`, morpher ones); new live `morph_pair`: green in the
+      finish.sh of stages 22–24
+- [x] 3.6 cost at rest: t3003, t3006 (the event's and the morpher's windows open together, the harness),
+      live `idle` with the effects and the track window on the heavy showcase; a branched graph t3221
+- [x] 3.7 specs merged (the archive), What's new, commit; prune; the orchestrator runs `finish.sh` on the stage
 
 - [x] 3.8 found on the way: a single-lane SOUND chain (an audio event, an audio track) laid its nodes
       in the slot the layout never read — v1b drew no nodes there; wrapping wires between chip bands
@@ -93,11 +95,11 @@
 
 ## 5. Follow-ups named by his answers (separate changes)
 
-- [ ] 5.0 `track-device-sound` (Q5): a device on a video track sounds on the audio track(s) picked in
+- [x] 5.0 `track-device-sound` (Q5, archived): a device on a video track sounds on the audio track(s) picked in
       its form (design D9)
 
 ## 6. v2 — a separate change, proposed after v1 is in his hands
 
-- [ ] 6.1 propose `fx-graph-dag`: slot ids and edges in the model and `.kt` (a line writes today's
+- [x] 6.1 propose `fx-graph-dag` (built: v2a–v2d): slot ids and edges in the model and `.kt` (a line writes today's
       bytes), Merge/Split, mask and key sockets fed by any node, the DAG in `video_plan` and the audio
       node chain through the one plan, a line graph byte for byte; its OTIO-loss row

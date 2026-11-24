@@ -156,7 +156,7 @@ rules 9, 13, 17.
 
 Take, in two stages: v1 a Blender-style node editor (fit, collapse, groups, mute, viewer, link-drag
 add) that shows and edits today's chains with picture and sound sockets; v2 branches and merges the
-engine executes through the one plan. Design: `openspec/changes/fx-graph/design.md`.
+engine executes through the one plan. Design: `openspec/changes/archive/2026-11-24-fx-graph/design.md`.
 
 ## Sources
 

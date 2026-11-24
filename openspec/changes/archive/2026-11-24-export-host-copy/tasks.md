@@ -7,7 +7,8 @@
 
 - [x] 0.1 proposal, design (D1–D8, class walk D7), deltas `export`, `video-plan`, `telemetry`;
       `openspec validate export-host-copy --strict`
-- [ ] 0.2 his answer Q1 in `docs/user-feedback.md` and `docs/owner-checks.md` (orchestrator)
+- [x] 0.2 his answer Q1: kkt-26.11.20 A13, "Сделать сейчас" — the zero-copy path (D6) is the change
+      `export-into-surface`
 
 ## 1. Measure every move
 
@@ -29,6 +30,7 @@
 ## 3. The prerender
 
 - [x] 3.1 `render_cache` writer asks the layout; `SegmentWriter` takes planes; t3317
-- [ ] 3.2 idle-load check on the heavy showcase while the prerender runs and after (owner rule)
+- [x] 3.2 idle-load check on the heavy showcase while the prerender runs and after (owner rule): moved into
+      `export-into-surface` 5.1, which writes the same writer again and runs it there
 - [x] 3.3 kt-gpu `CLAUDE.md`: "a new encoder input format gets its exact layout in `yuv.rs` and the pass";
       What's new line ("exports on a card spend less processor time")

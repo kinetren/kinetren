@@ -49,10 +49,10 @@ merge. These changes are marked **v+**.
 | Change | State |
 |---|---|
 | `project-cache-folder`, `durable-moment-key` | archived |
-| `export-host-copy` | built but for 0.2 (his answer is A13) and 3.2 (the idle check): close and archive; its D6 is `export-into-surface` |
-| `disk-bytes-once` | 4 of 4: archive |
-| `stream-picture-stays` | built; 2.4 (the compute generator's twin) is "not this change's shape" by its own text: it moves to found-defects; 4.2 is row 663's closing and the archive |
-| `fx-graph` | v1a–v1d merged. 3.5–3.6 (live `vhs_sound`, `stream_sound`, `camera_mic`, `morph_pair`; idle with both windows open) go into v2d's live work; 3.1–3.2 are built as 3.10 and v1d; 5.0 is the archived `track-device-sound`; 6.1 is `fx-graph-dag`. The executor marks them and archives |
+| `export-host-copy` | archived 2026-11-24 (0.2 = A13, 3.2 = `export-into-surface` 5.1) |
+| `disk-bytes-once` | archived 2026-11-24 |
+| `stream-picture-stays` | archived 2026-11-24; 2.4 is found-defects 909 |
+| `fx-graph` | archived 2026-11-24 (t3006 in the harness closes 3.6) |
 | `loop-play-latency-hold` | 13 of 16; a wine probe and the owner's repeat: an owner check, not a slot |
 | `window-chrome`, `track-device-sound` and the rest of stages 22–24 | archived |
 
