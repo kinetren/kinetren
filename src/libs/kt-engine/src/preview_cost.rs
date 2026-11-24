@@ -70,7 +70,7 @@ impl PreviewCosts {
         let mut best = (i64::MIN, f64::MAX);
         for (&(t, sw, sh), s) in &self.at {
             let px = sw as f64 * sh as f64;
-            let far = if (sw, sh) == (w, h) { -1.0 } else { (px / want).ln().abs() };
+            let far = if (sw, sh) == (w, h) { -1.0 } else { (px / want).max(want / px) };
             if best.0 == t && far >= best.1 {
                 continue;
             }

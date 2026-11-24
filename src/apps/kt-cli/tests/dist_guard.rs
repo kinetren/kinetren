@@ -1217,6 +1217,9 @@ fn t1671_a_test_does_not_bound_its_wait_by_the_clock() {
         ("libs/kt-time/src/shutdown.rs", "t0.elapsed() < Duration::from_secs(5)"),
         ("apps/kt-app/src/exit_watch.rs", "Instant::now() + Duration::from_millis(20)"),
         ("libs/kt-engine/tests/decode_storm.rs", "t0.elapsed() < kt_time::shutdown::WAIT"),
+        // the exit watcher's moment as the program sets it: what ends under it is the check (found-defects 972)
+        ("libs/kt-engine/tests/close_segment.rs", "Instant::now() + std::time::Duration::from_secs(8)"),
+        ("libs/kt-gpu/tests/exit_hook.rs", "Instant::now() + Duration::from_millis(1200)"),
     ];
     fn walk(d: &Path, out: &mut Vec<PathBuf>) {
         for e in std::fs::read_dir(d).unwrap().flatten() {

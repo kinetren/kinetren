@@ -396,6 +396,16 @@ fn prerender(player: &Player, moments: &[Tick]) {
     }
 }
 
+/// Wait until the writes of `n` moments are in the trace: a picture is found on disk before its record
+/// is made (found-defects 975).
+fn told(player: &Player, n: usize) {
+    let deadline = kt_time::test_deadline();
+    while player.render_cache().counts().0 < n as u64 {
+        assert!(Instant::now() < deadline, "the writes were never told: {:?}", player.render_cache().counts());
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 /// The moments the bars draw as playing without work.
 fn bright(player: &Player, moments: &[Tick]) -> usize {
     let (runs, _) = player.final_video_runs();
@@ -604,7 +614,10 @@ fn t3201_a_heavy_run_is_one_segment_from_its_start() {
         made: kt_engine::render_cache::Made::of(60),
         cap: None,
     }));
-    let items = kt_time::trace::testing::capture(|| prerender(&p, &moments));
+    let items = kt_time::trace::testing::capture(|| {
+        prerender(&p, &moments);
+        told(&p, moments.len());
+    });
     let stores: Vec<(u64, u64)> = kt_time::trace::testing::recs(&items)
         .iter()
         .filter(|r| r.ev == kt_time::trace::Ev::RenderCache as u16 && r.aux == kt_time::trace::render_cache::STORE)
@@ -775,6 +788,7 @@ fn t3600_a_run_known_by_one_moment_is_one_segment() {
             assert!(Instant::now() < deadline, "the prerender never wrote the run: {:?}", p.render_cache().counts());
             std::thread::sleep(Duration::from_millis(20));
         }
+        told(&p, moments.len());
     });
     let stores: Vec<(u64, u64)> = kt_time::trace::testing::recs(&items)
         .iter()
