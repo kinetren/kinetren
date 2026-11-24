@@ -45,7 +45,7 @@
 
 - [x] 4.1 Project settings → Sound, "Match loudness…", the stage in the meters column, the report; kt-cli export's lines; i18n ×5; t3922, t3923; live `render_norms`
 - [x] 4.2 the limiter effect's hint (sample peaks)
-- [ ] 4.3 the load check: playing the heavy showcase with the stage on, paused with it on (nothing)
+- [x] 4.3 (release: 1.8 ms of a second of sound under the ceiling, 3.5 ms at +12 dB of noise; `idle` with `--program` green: a pause runs and wakes nothing) the load check: playing the heavy showcase with the stage on, paused with it on (nothing)
 
 ## 5. Close
 

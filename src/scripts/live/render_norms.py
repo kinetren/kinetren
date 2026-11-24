@@ -9,7 +9,7 @@ PATH (ui-reach spec):
 2. right click a dialogue event → "Match loudness…" → Dialogue → Match: both lines' levels move, one Undo
    step;
 3. the row under the meters → "Match the program" → the row shows the gain;
-4. an event is made louder → the row says "changed since measured" → "Match the program" → the mark goes;
+4. the matched event gets its old level back → the row says "changed since measured" → "Match the program" → the mark goes;
 5. File → Render… → Render… → the result reads "Sound — 0 outside the norm".
 """
 import json
@@ -90,9 +90,10 @@ def main(out):
 
             # 4) an edit
             app.expect(not app.has_probe("program.changed", tries=1), "nothing changed yet")
-            app.right_click(app.x_at(5 * 90000), app.lane_y("audio", 0, frac=0.6))
-            app.click_probe("clip.menu.reset_gain", "Reset gain in the loud event's menu")
+            app.right_click(app.x_at(2 * 90000), app.lane_y("audio", 0, frac=0.6))
+            app.click_probe("clip.menu.reset_gain", "Reset gain in the matched event's menu")
             app.expect(app.until(lambda: app.has_probe("program.changed", tries=1), timeout=30), "the row says it changed")
+            app.expect(app.has_probe("program.win_changed"), "the window says it under the gain, with no scroll")
             app.step("changed", "changed since measured")
             app.click_probe("program.match", "Match the program again")
             app.expect(app.wait_gone("program.changed", timeout=120), "the mark went")

@@ -683,16 +683,17 @@ fn mosh_lines(v: &str) -> f64 {
     keys.iter().position(|k| *k == v).unwrap_or_else(|| panic!("--mosh-lines takes one of {keys:?}")) as f64
 }
 
-/// `kt-cli showcase <out.kt> --sources <dir> [--heavy] [--mosh|--mosh-behind] [--mosh-lines N] [--force]`. `--heavy` lays Slowed, VHS
+/// `kt-cli showcase <out.kt> --sources <dir> [--heavy] [--mosh|--mosh-behind] [--mosh-lines N] [--program] [--force]`. `--heavy` lays Slowed, VHS
 /// Tape and Camera ISP over both instances of the reel: the project of the idle-load guard (idle-cpu).
 /// `--mosh` puts Datamosh at the head of every styled montage cut (gpu-arbiter), `--mosh-behind` after
 /// its first look (stream-input-order), `--mosh-lines` codes its stream at N lines (stream-round-trips:
-/// the 1080-line Datamosh of found-defects 145).
+/// the 1080-line Datamosh of found-defects 145), `--program` puts a +6 dB program stage on the master
+/// (loudness-norms).
 pub fn run(args: &[String], force: bool) -> i32 {
     let out = args.get(1).filter(|a| !a.starts_with("--"));
     let dir = args.iter().position(|a| a == "--sources").and_then(|i| args.get(i + 1));
     let (Some(out), Some(dir)) = (out, dir) else {
-        eprintln!("usage: kt-cli showcase <out.kt> --sources <dir> [--heavy] [--mosh|--mosh-behind] [--mosh-lines N] [--force]");
+        eprintln!("usage: kt-cli showcase <out.kt> --sources <dir> [--heavy] [--mosh|--mosh-behind] [--mosh-lines N] [--program] [--force]");
         return 2;
     };
     let src = match scan(dir) {
@@ -707,6 +708,9 @@ pub fn run(args: &[String], force: bool) -> i32 {
     if behind || args.iter().any(|a| a == "--mosh") {
         let lines = args.iter().position(|a| a == "--mosh-lines").and_then(|i| args.get(i + 1)).map(|v| mosh_lines(v));
         add_mosh(&mut p, behind, lines);
+    }
+    if args.iter().any(|a| a == "--program") {
+        p.program = Some(kt_model::ProgramStage { gain_db: 6.0, measured: None });
     }
     if let Err(e) = p.validate() {
         eprintln!("showcase project is invalid: {e:?}");

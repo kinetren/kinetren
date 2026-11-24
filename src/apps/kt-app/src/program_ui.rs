@@ -148,7 +148,7 @@ impl KtApp {
             tr(k::loudness::PROGRAM_TITLE),
             crate::window_shell::Kind::Tool,
         )
-        .width(360.0, [300.0, 110.0])
+        .size([440.0, 250.0], [300.0, 200.0])
         .show(ctx, |ui| {
             crate::widgets::window_body(ui, |ui| {
                 let r = ui.checkbox(&mut on, tr(k::loudness::STAGE_ON));

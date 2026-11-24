@@ -155,6 +155,8 @@ Not taken: a memo of the measurement (the stage stores it), a −14 factory rend
 - The match needs no window of its own per kind: one dialog, its last pick in the store.
 - Clipped samples are not a finding of their own: the true peak over the ceiling is at each of them.
 - 4.2: no parameter has a hint of its own, so the limiter effect's row says it in its name ("Sample-peak ceiling").
+- The program window opened fitted to its content without a stage and did not grow when the stage came: its gain and
+  the "changed" line lay under the fold. Found by the live scenario; it has a size of its own, and the scenario asks.
 
 ## Rejected
 
