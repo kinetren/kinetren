@@ -36,19 +36,19 @@ merge. These changes are marked **v+**.
 | LIBRARY | `kt-app` `ffmpeg_setup.rs` → `library/`, `kt-ffmpeg/src/search.rs`, `kt-dirs` |
 | TESTS | `kt-time` test helpers, `.config/nextest.toml`, `scripts/live/kt_live.py`, `apps/kt-cli/tests/dist_guard.rs` |
 
-## Running now (2026-11-24, evening; orch `c298f81f`)
+## Running now (2026-11-25, orch after the merges of `persistent-cache`, `shared-events` 1.1 + row 835, `loudness-norms`)
 
 | Change | Executor | Areas | What is left |
 |---|---|---|---|
-| `persistent-cache` (branch `persistent-cache`, e34a27ae) | mosh-sharp | CACHE, PLAYER, DECODE (`copy.rs`), SHELL (section 4) | the interface, the spec delta, the measurement; rows 972, 834 |
-| `loudness-norms` (base: branch `render-loudness-norms`) | features-slow | EXPORT, DIALOG | all; row 1002 after it |
-| `shared-events` | fx-graph | MODEL (all of it) | all; sections that write `worker.rs`, `player.rs` after `persistent-cache` |
+| row 1068 (`cached-final-render` 1.1), then ★ `export-into-surface` (A13), all sections | mosh-sharp | EXPORT, GPU (`surface.rs`, `engine.rs`, `yuv.wgsl`), kt-ffmpeg muxer, `hw_trial` | all; ★ `device-decode-sources` after it (the same files) |
+| row 1067 (`track-stream-stage` 1.0), then ★ `shared-events` | fx-graph | MODEL (all of it), `video.rs`, `audio.rs`, `worker.rs`, `player.rs` signatures | sections 1.2 on; nothing holds section 3 any more |
+| rows 1002, 911, 837, then 907, then `chroma-key-upgrade` | features-slow | `user_store.rs`, `kt-media/generator.rs`, live scripts; then COLOR-FX | all |
 
 ## Built: to archive, not to build
 
 | Change | State |
 |---|---|
-| `project-cache-folder`, `durable-moment-key` | archived |
+| `project-cache-folder`, `durable-moment-key`, `persistent-cache`, `loudness-norms` | archived |
 | `export-host-copy` | archived 2026-11-24 (0.2 = A13, 3.2 = `export-into-surface` 5.1) |
 | `disk-bytes-once` | archived 2026-11-24 |
 | `stream-picture-stays` | archived 2026-11-24; 2.4 is found-defects 909 |

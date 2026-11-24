@@ -30,8 +30,10 @@ a row; it does not close the row.
 | C8 | 2026-11-20, kt26.11.24-af14db35 | **Shapes generators.** Polygon, star, arrow, border frame, lower-third plate, progress bar: does each look right over footage (the frame around a shape is transparent)? | F-TXT-009 → gen-shapes (t3709–t3710, live `gen_shapes`); executor features-slow |
 | C9 | 2026-11-20 | **Ripple across an edit point** (his answer: "запиши на будущее чтобы я проверил"). When ripple editing ships: delete a piece on track 1 while a music bed on track 3 spans the cut — the program refuses, highlights the bed and says "split it or ripple affected tracks only". Does it read right? | kkt-26.11.20 A9 → change `ripple-and-trim-modes` Q1 a |
 | C10 | 2026-11-20 | **D3D11VA on a real Windows card.** Under wine the Windows path compiles and refuses with its reason; a real card is needed to prove the hardware decode. If he runs the Windows zip: does the log name D3D11VA? | found-defects 775 → branch `d3d11va-segment-decode` (merged); executor fx-graph |
-| C11 | 2026-11-22 | **Render through dma-buf on his card** (when A13 lands). Render a region with `KT_EXPECT_HW=vaapi` and send the trace: does the frame go into VAAPI without a copy through memory? There is no VAAPI device on the build machine, only a fake driver. | kkt-26.11.20 A13 → change `export-host-copy`; executor mosh-sharp |
+| C11 | 2026-11-22 | **Render through dma-buf on his card** (when A13 lands). Render a region on the card with `KT_EXPECT_HW=vaapi` and send the trace. The log's last lines say how many frames were handed to the encoder on the card, or why not. Look at the result: torn blocks or old frames inside new ones would be the one defect the program cannot see itself. There is no VAAPI device on the build machine, only a fake driver. | kkt-26.11.20 A13 → change `export-into-surface` D12; executor mosh-sharp |
 | C12 | 2026-11-24, stage 24's release | **What the sound-reactive generators hear.** Waveform, Spectrum and Level rings read the FILE on the chosen audio track, not the track after its volume, effects and fades: a fade-out leaves the spectrum moving. Is that what he wants, or should the picture follow the sound as it is heard? (Following it makes a render compute its sound first.) | F-TXT-011 → archive `2026-11-21-gen-audio-reactive` design D1 (the orchestrator chose the file; its "Q55" was never put to him, Q55 in chat was the persistent cache) |
+| C13 | 2026-11-25, when `hdr-sources-to-sdr` 1–4 lands | **HDR clip from a phone beside an ordinary one.** Put an HDR phone clip next to an SDR one of the same scene: is white as bright as it should be, are the highlights kept, does skin keep its colour? | change `hdr-sources-to-sdr` (spec-engine, 365afcf0) |
+| C14 | 2026-11-25, stage 24's release | **The persistent cache on his card.** The disk next to the preview quality: do heavy 4K files get a copy by themselves at rest, does play get smoother after it, does the processor load bother him? Measured only on a software renderer with libx264 copies. Send the trace folder. | kkt-26.11.22 D1, A10, B1 → archived `persistent-cache`; executor mosh-sharp |
 
 ## Questions waiting for his decision
 
@@ -51,6 +53,9 @@ Asked in chat together, his items quoted whole. Numbers start at Q66: the branch
 | Q74 | 2026-11-24 | `auto-ducking-by-role` Q1: what counts as a title section | `openspec/changes/auto-ducking-by-role/proposal.md` |
 | Q75 | 2026-11-24 | `flatpak-flathub` Open Questions 1–6 | `openspec/changes/flatpak-flathub/` |
 | Q76 | 2026-11-24 | `claude/youtube-channel-specs` (five designs of 2026-11-20, Q55–Q65 inside): merge it? Its `loudness-target` keeps the norm in the render settings, against his B6 | spec-features' report of 2026-11-24 |
+| Q77 | 2026-11-25 | `download-library` Q4: where the signed list of downloads lives and who keeps its key (holds stage 5 only) | `openspec/changes/download-library/proposal.md` |
+| Q78 | 2026-11-25 | `ripple-and-trim-modes` Q2: do markers and named areas move with the "track" mode (A9 answered Q1 only) | `openspec/changes/ripple-and-trim-modes/proposal.md` |
+| Q79 | 2026-11-25 | `ripple-and-trim-modes` Q3: does dragging an event ripple while the mode is on | the same |
 
 ## Answered
 
