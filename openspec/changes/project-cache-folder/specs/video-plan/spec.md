@@ -3,8 +3,9 @@
 ### Requirement: Slow moments are prerendered at rest as hardware-encoded video and played from it
 The preview SHALL keep complete composites of slow moments on disk under a DURABLE key: the plan key's
 inputs (every field the executor's plan key hashes) with each frame's per-process content serial replaced
-by what determines the frame across processes — a file's path, size and modification time, a generator's
-values (`src_rev`), a stream stage's own key plus the identities of the project's files — salted by the
+by what determines the frame across processes — the identity of its source (a file's name, size and modification
+time as it was opened, a generator's values; capability `media-index`, change `durable-moment-key`), a stream stage's
+own key, which mixes the identities of the sources it reads; a moment with a source whose identity does not outlive the process is neither written nor read — salted by the
 store's format and the device class (the folder `results/v<FORMAT>/<device class>/`), and keyed further by
 the decoder's major, the versions of the kernels that ran (each plugin's version and its WGSL text's hash)
 and `COMPOSITE_PATH_VERSION` (bumped by any change of the composite code outside the kernels), not by the

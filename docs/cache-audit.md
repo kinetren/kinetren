@@ -127,8 +127,8 @@ In order of bytes saved.
 2. **The decode size above the preview's.** At a 1920×1080 preview the sources decoded at 2578×1080. A zooming
    chain asks for the larger size (R.46), and every layer's frame then costs 1.8× its pixels in the window.
    - A held final frame needs neither, so cut 1 removes most of it.
-   - A cap of the decode step at the preview's size plus what the visible zoom needs is a second, separate
-     question. It is not cut here: R.46's step is held by tests (t309, t632).
+   - A cap of the decode step at the preview's size plus what the visible zoom needs was put to the owner.
+     **Closed by his D7:** the sizes stay; the final-frame cache is the answer (below).
 3. **The upload cache on a software rasterizer.** On llvmpipe its 256 MB an engine (140–264 MB measured) is a
    second copy of the burst cache in RAM.
    - Cut: size it by the frame being resolved and the next, on a device of type CPU only.
@@ -172,14 +172,23 @@ the other on the same `heavy.kt` (`showcase --heavy`, footage in `/dev/shm`), ll
 - **Cut 1** (the decode window skips moments held on disk, the want counted without them): no change in
   these runs. A debug build at 1080 completes no moment, and the disk prerender writes only at rest, so no
   moment was on disk. It acts where the prerender holds moments: the owner's machine after a rest.
-  The kept composites in MEMORY are not cut: their key is the decoded frames' content serials, and leaving
-  their frames out of the want lost them (found-defects 965: 21 V-fps fell to 2). The 7.9 GB window on a
+  The kept composites in MEMORY are not cut here: their key is the decoded frames' content serials, and leaving
+  their frames out of the want lost them (found-defects 965: 21 V-fps fell to 2); designed as `durable-moment-key`. The 7.9 GB window on a
   1080 linear play is the frames of moments nothing holds yet; this cut does not touch it.
 - **Cut 3** (a CPU device keeps two frames of uploads): 265 → 28 MB on the loop, 140 → 102 MB on the
   linear run.
 - **Cut 4** (the window's engine on a card fills no read-back memo): not measurable here (llvmpipe is a CPU
   device, where the memo stays); its bound was 64 MB.
-## Cut 2 as a design question: decoding above the preview's size
+## Cut 2: closed by the owner (D7, kkt-26.11.22 line 10)
+
+The owner's answer: "я вообще не понимаю проблему. у тебя есть кэш рендера - ты его декодируешь как видео и
+отображаешь - дальше что не так?" So **R.46 and R.62 stay as they are**: no option below is taken and no test of
+theirs moves. What he expects is the final-frame cache: a held stretch decodes the cached video and shows it, and its
+sources are not decoded at any size. That is built by `project-cache-folder` and then `persistent-cache` (mosh-sharp),
+and in memory by `durable-moment-key` (below). A stretch not held yet still decodes its sources once, at the sizes
+of R.46 and R.62. The analysis that led to the question is kept for the record.
+
+### The question as it was asked: decoding above the preview's size
 The orchestrator took cuts 1, 3 and 4 (mosh-sharp) and asked the owner about cut 5 (answered: D6, final frames only). Cut 2 changes rules the owner
 set himself (R.46, R.62), so it is a question for him, not a cut.
 **What decides the decode size today.** One function per clip, `clip_decode_quality` (`kt-engine/src/video.rs:983`):
@@ -233,3 +242,12 @@ cannot show — not above the file's native size, and not above (preview size ×
 > - **(c)** (b) plus the step per stretch instead of per clip (R.46 rejected this: two cache keys a clip, bars
 >   that flap at the threshold).
 > - **(d)** Keep both rules; rely on cut 1 (held moments decode nothing).
+
+## Final frames in memory stop holding the decoded ones (designed 2026-11-24)
+
+Cut 1's other half. The memo's key contained each decoded frame (its serial, 0 for one not decoded), so a kept composite was
+found only while its sources were decoded too. `openspec/changes/durable-moment-key` gives a moment one key, the disk's
+and the memory's, that names a frame by its source's identity; then the decoded-frame cache leaves out every moment
+held final. Expected on the 640×360 loop above: the frames kind from 1158 MB to its base (512–576 MB), no decode after
+the loop is kept. Row 965's cause is corrected there: the serials come back after a decode (t2152); the key moved
+because the frame was absent when the memo was asked.

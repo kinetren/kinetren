@@ -13,10 +13,10 @@ Why: the owner's F2 and D3 — the system is reached where its elements live, no
 - **PATH** double-click the crawl title → its form → the "Simulation" section → "Add" → "Letters", solver "Spring", driver "Edit's speed" → faint home marks appear on the preview letters → Space over the braking → the letters run ahead and settle back
 - **TEST** t3972 (`src/apps/kt-app/src/reach_tests.rs`), planned live scenario `simulated_elements`
 
-#### Scenario: A mask follows a tracker with inertia
-- **WHEN** the person opens a tracked mask's panel and adds a simulation on its vertices with the spring solver
-- **THEN** the mask's edge lags behind a fast move of the tracked point and settles; the overlay shows the tracked homes
-- **PATH** select the masked event → the mask panel → the "Simulation" section → "Add" → "Vertices", solver "Spring" → the tracked homes show as dots → play over the fast move → the edge trails the dots and settles
+#### Scenario: A mask follows its moving shape with inertia
+- **WHEN** the person opens the panel of a mask that moves by keys (or follows a tracker) and adds a simulation on its vertices with the spring solver
+- **THEN** the mask's edge lags behind a fast move and settles; the overlay shows the homes
+- **PATH** select the masked event → the mask panel → the "Simulation" section → "Add" → "Vertices", solver "Spring" → the homes show as dots → play over the fast move → the edge trails the dots and settles
 - **TEST** t3988 (`src/apps/kt-app/src/reach_tests.rs`)
 
 #### Scenario: An emitter's particles are drawn by one pass

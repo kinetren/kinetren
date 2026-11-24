@@ -89,8 +89,9 @@ change hosts it. Its kinds lie side by side in the cache folder:
 - `media/<content id>/copy-<quality>.mkv`: heavy sources' copies.
 
 **The keys.**
-- Frames are keyed by `render_cache::durable_hash`. It covers the plan's fields without content serials,
-  `Leaves::digest` of the files' identities and the generators' values. A frame's key covers its whole plan.
+- Frames are keyed by `kt_engine::moment_key`, the one key of a moment in memory and on disk (change
+  `durable-moment-key`, 2026-11-24, built before section 3: it replaces `durable_hash`, `Leaves` and `FileIds`, takes
+  each source's identity from the cache and never asks the disk). A frame's key covers its whole plan.
 - **No stage results** (the owner's D1, kkt-26.11.22 line 4: "делай кеш имменно финального превью а не на
   каком-то конкретном этапе цепочки fx"). The 2026-11-22 layout had a `layers/` kind (a layer's picture after
   a heavy node, a track stage's or a reel's output) keyed by the sub-plan; it is withdrawn. An edit anywhere
