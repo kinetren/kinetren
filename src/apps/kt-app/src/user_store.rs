@@ -527,7 +527,7 @@ impl Workspace {
     }
 }
 
-fn workspace_path() -> PathBuf {
+pub fn workspace_path() -> PathBuf {
     store_dir().join("workspace.json")
 }
 
@@ -568,10 +568,6 @@ pub fn load_workspace_at(path: &std::path::Path) -> Workspace {
     w
 }
 
-pub fn save_workspace(w: &Workspace) {
-    save_workspace_at(&workspace_path(), w);
-}
-
 pub fn save_workspace_at(path: &std::path::Path, w: &Workspace) {
     if w.readonly {
         return; // file newer than ours — we do not rewrite what we do not understand
@@ -601,8 +597,17 @@ pub fn save_workspace_at(path: &std::path::Path, w: &Workspace) {
     if let Some(d) = path.parent() {
         let _ = std::fs::create_dir_all(d);
     }
-    // by the same code as the project: a break midway leaves no stump
-    let _ = kt_otio::write_atomic(path, &format!("{doc:#}\n"));
+    write_record(path, &format!("{doc:#}\n"));
+}
+
+/// Write a record of conveniences: tmp + rename, WITHOUT fsync — a break midway leaves no stump, and a
+/// lost record costs nothing, while two fsyncs stall their thread for seconds on a busy disk (t985 took
+/// 90 s with `write_atomic`; the workspace's held a close for 21 s, found-defects 831).
+fn write_record(path: &std::path::Path, text: &str) {
+    let tmp = path.with_extension("json.tmp");
+    if std::fs::write(&tmp, text).is_ok() {
+        let _ = kt_otio::replace_file(&tmp, path);
+    }
 }
 
 // ---- between-projects records (welcome-window-and-tour) -------------------
@@ -905,13 +910,7 @@ impl StartStore {
         if let Some(d) = path.parent() {
             let _ = std::fs::create_dir_all(d);
         }
-        // tmp + rename, WITHOUT fsync: a break midway leaves no stump, and these records are
-        // conveniences — a lost recent list costs nothing, while two fsyncs per open stall the
-        // UI thread for seconds on a busy disk (t985 took 90 s with `write_atomic`)
-        let tmp = path.with_extension("json.tmp");
-        if std::fs::write(&tmp, format!("{doc:#}\n")).is_ok() {
-            let _ = kt_otio::replace_file(&tmp, &path);
-        }
+        write_record(&path, &format!("{doc:#}\n"));
     }
 
     fn save_recent(&mut self) {

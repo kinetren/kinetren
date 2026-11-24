@@ -1344,6 +1344,6 @@ took it from the project and the disk, which may already be ahead of the decoder
 - **TEST** t4110 (`src/libs/kt-cache/src/lib.rs`)
 
 #### Scenario: What a source answers for its identity
-- **WHEN** one file is opened twice, copied under another name, touched and opened again, and removed after it was opened; a generator is opened, retuned and retuned back, and given another heard series; two placeholders are raised
-- **THEN** the two opens agree; the copy and the touched file differ; the removed file keeps its answer; the generator's identity moves with its values and returns with them, and moves with the series; the placeholders differ from each other and are not durable
+- **WHEN** one file is opened twice, copied under another name, touched and opened again, and removed after it was opened; a source's file is replaced under its path and a read then asks a second decoder; a generator is opened, retuned and retuned back, and given another heard series; two placeholders are raised
+- **THEN** the two opens agree; the copy and the touched file differ; the removed file keeps its answer; the source keeps one decoder, and every frame it gives is the old file's; the generator's identity moves with its values and returns with them, and moves with the series; the placeholders differ from each other and are not durable
 - **TEST** t4111 (`src/libs/kt-media/tests/identity.rs`)
