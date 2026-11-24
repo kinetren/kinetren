@@ -9,7 +9,7 @@
 - The disk prerender (`render-cache-disk`, spec video-plan "Slow moments are prerendered at rest…"): whole composites
   under a durable key, segments of hardware-encoded H.264, written at rest by the player.
 - The project's cache folder (`project-cache-folder`, spec-engine): `<project folder>/kinetren-cache/` with `media/`,
-  `reels/`, `results/v<FORMAT>/<device class>/{frames,history}`, `mix/`; the folder's cycle with a notice (B2).
+  `reels/`, `results/v<FORMAT>/<device class>/frames/`, `mix/v<FORMAT>/`, `media/<id>/copy-*.mkv`; the folder's cycle with a notice (B2).
 - The owner, D1 (`kkt-26.11.22` lines 4–5): "делай кеш имменно финального превью а не на каком-то конкретном этапе
   цепочки fx".
 
@@ -66,7 +66,7 @@ by the number of stages and serves no picture by itself. Walked across every sto
 | `results/…/layers/` (revision 3, designed, never built) | yes — the picture after a heavy node | removed |
 | `results/…/frames/` (the disk prerender, built) | no — the final composite | kept, the store's main kind |
 | `media/<id>/copy-*.mkv` (designed) | no — a decoded source at the preview's size | kept |
-| `results/…/history/` (`durable-history-and-mix`) | a stream effect's reference state per node (Datamosh), not a picture of a stage | named to spec-engine for the D2 audit |
+| `results/…/history/` (was `durable-history-and-mix`) | a stream effect's reference state per node (Datamosh) | removed by the owner's D6 (`kkt-26.11.22` line 9, "Только финальные кадры"): no history on disk
 | `mix/` (`durable-history-and-mix`) | no — the final mix | not this change |
 | reel strips `reels/` | the reel's own final frames, small | not this change |
 | memory: burst cache, kept composites, present memo, stream memo, kept mix | burst cache = decoded sources; stream memo = per node | spec-engine's D2 audit |

@@ -72,7 +72,7 @@ nothing of `layers/` was built, and after this revision the persistent cache hol
 - kt-ffmpeg: `MuxConfig` per-frame timestamps (found-defects 823), MKV with audio stream copy, all-intra.
 - kt-app: the switch, badges, a Diagnostics row per kind (bytes, hits, writes); i18n ×5.
 - `project-cache-folder` (spec-engine) owns the layout; its `results/…/layers/` goes (told to spec-engine
-  2026-11-23); `frames/`, `history/` (`durable-history-and-mix`), `mix/` and `media/<id>/copy-*.mkv` stay.
+  2026-11-23); `frames/`, `mix/` and `media/<id>/copy-*.mkv` stay (`history/` went by the owner's D6, 2026-11-23).
 - No project format change. Idle: writing happens at rest only within the prerender's existing rule.
 
 ## Questions to the owner
