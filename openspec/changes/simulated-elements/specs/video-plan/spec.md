@@ -18,5 +18,5 @@ numbers, not pixels.
 
 #### Scenario: A simulated title's letters are placed by the plan, from the source's atlas
 - **WHEN** one reel holding a title with a spring set is placed twice at two outer speeds, and the same title without a set is composed beside it
-- **THEN** the two instances read one glyph atlas from the source and give two plans with two keys and two pictures; at rest poses the sprite title, with plate, shadow, stroke and fill, equals the source's raster of the title without a set within the stored frames' tolerance; the title without a set keeps its plan key and bytes
+- **THEN** the two instances read one glyph atlas from the source and give two plans with two keys and two pictures; at rest poses the sprite title, with plate, a widely blurred shadow, stroke and fill over overlapping letters, equals the source's raster of the title without a set within the stored frames' tolerance; a turned letter's shadow keeps its direction; after a text edit no frame draws the new letters from the old atlas; the title without a set keeps its plan key and bytes
 - **TEST** t4107 (`src/libs/kt-engine/tests/simulated_elements.rs`)
