@@ -15,7 +15,8 @@ projects in it.
 - **What it holds:** the media index, the reel previews, the persistent cache, the heard mix and the list
   of earlier renders. Each SHALL have a place of its own.
 - **The persistent cache SHALL be one store** under `results/v<FORMAT>/<device class>/`: the FINAL frames
-  (the disk prerender) and the stream history, with heavy sources' copies under the media's content id. It
+  (the disk prerender), with heavy sources' copies under the media's content id. It SHALL NOT store a stream
+  stage's history. It
   SHALL keep no picture of a stage inside a chain or a layer before the composite.
   - Frames SHALL be keyed by `durable_hash` over the moment's whole plan, plus the decoder's major, the versions and WGSL hashes of the kernels
     that ran and `COMPOSITE_PATH_VERSION`. The whole build SHALL NOT be in the key.
@@ -77,8 +78,8 @@ user's folder (project-cache-folder D1–D5). kkt-26.11.20b line 2 ("СУТЬ �
 - **TEST** t3831, t3832 (`src/libs/kt-media/tests/cache_folder.rs`)
 
 #### Scenario: A full folder writes in a cycle and says so once
-- **WHEN** a folder with a small cap holds history, mix runs, picture results and media entries of several ages, new picture results keep arriving, a write meets `ENOSPC` from a test file system, and the loop being played was used a moment ago
-- **THEN** each write first drops the entries of the lowest value per byte among the results, the mix and the copies (a cheap old frame before a costly Datamosh checkpoint), then reels and media by last use, the loop's frames stay, the `ENOSPC` write recounts the room, drops and succeeds on its retry, one notice names the folder for the session, and at rest nothing is scanned or dropped
+- **WHEN** a folder with a small cap holds mix runs, picture results, copies and media entries of several ages, new picture results keep arriving, a write meets `ENOSPC` from a test file system, and the loop being played was used a moment ago
+- **THEN** each write first drops the entries of the lowest value per byte among the results, the mix and the copies (a cheap old frame before a costly one), then reels and media by last use, the loop's frames stay, the `ENOSPC` write recounts the room, drops and succeeds on its retry, one notice names the folder for the session, and at rest nothing is scanned or dropped
 - **TEST** t3835, t3836, t3837 (`src/libs/kt-media/tests/cache_folder.rs`)
 
 #### Scenario: A moved, saved or copied project keeps what it can

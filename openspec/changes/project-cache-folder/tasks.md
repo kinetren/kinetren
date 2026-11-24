@@ -87,5 +87,5 @@
       new line ("a project's caches live in a `kinetren-cache` folder beside it; Preferences shows what they
       take"); commit; the report's "Найдено, не исправлено"
 
-After section 3, `persistent-cache` (final frames, copies, the value measure) and `durable-history-and-mix` (history,
+After section 3, `persistent-cache` (final frames, copies, the value measure) and `durable-history-and-mix` (the
 mix) can start; they use `ask_room`, the header and the key of this change.

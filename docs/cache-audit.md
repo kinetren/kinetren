@@ -110,7 +110,7 @@ makes the cache redundant.
 | Media index (sidecar) | `<project>.ktindex.db` (SQLite) | source facts: peaks, packet index, thumbnails, posters, loudness, sync | media path | none | 1.1 MB after the runs | no: waveforms and thumbnails are drawn from it (invariant 8) |
 | Reel previews (disk tier) | the same sidecar | **final** of a reel at thumbnail size | (reel, revision, media fingerprint) | 48 frames a reel | — | no: thumbnail size |
 | Compiled pipelines, pass times | `<data>/shader-cache/` | the driver's pipeline blobs, measured pass times | adapter, driver | 64 MB, 8192 lines | — | no: per machine, not results |
-| Planned: Datamosh history on disk (`durable-history-and-mix`) | `kinetren-cache/results/…/history/` | **stage**: LZ4 of exact stream entries | durable key | the folder's cycle | not built | partly: a moment held final needs no history. The history serves only a seek or an edit into a moment not yet held |
+| Withdrawn: Datamosh history on disk | — | stage | — | — | — | removed by the owner's D6 (final frames only) |
 | Planned: mix runs (`durable-history-and-mix`) | `kinetren-cache/mix/` | **final** sound | durable key | the folder's cycle | not built | no (sound) |
 | Withdrawn: layer results (`persistent-cache` `layers/`) | — | stage | — | — | — | removed by D1 |
 
@@ -140,9 +140,9 @@ In order of bytes saved.
 5. **Datamosh history kept on disk (`durable-history-and-mix`, planned).** With the final frames on disk, a
    played stretch needs no history. The history is needed again only when the person seeks or edits into a
    moment not held.
-   - Not cut: the owner ordered it built (A14, "build now").
-   - It is a question for him: keep the disk history, or keep only the final frames and recompute the history
-     from the cut on a miss. Recomputing costs the walk from the cut.
+   - **Cut by the owner (D6, kkt-26.11.22 line 9): "Только финальные кадры".** No history on disk; on a miss it
+     is recomputed from the cut. `durable-history-and-mix` keeps only the mix tier (revised 2026-11-24), and the
+     `history/` kind left `project-cache-folder`'s layout.
 6. **Keep:**
    - the present memo, the kept final mix, the disk prerender: the final caches D1 asks for;
    - the stream and front memos in memory: the computing state of a stage that cannot run without its past;
@@ -158,7 +158,7 @@ In order of bytes saved.
 
 ## Cut 2 as a design question: decoding above the preview's size
 
-The orchestrator took cuts 1, 3 and 4 (mosh-sharp) and asks the owner about cut 5. Cut 2 changes rules the owner
+The orchestrator took cuts 1, 3 and 4 (mosh-sharp) and asked the owner about cut 5 (answered: D6, final frames only). Cut 2 changes rules the owner
 set himself (R.46, R.62), so it is a question for him, not a cut.
 
 **What decides the decode size today.** One function per clip, `clip_decode_quality` (`kt-engine/src/video.rs:983`):

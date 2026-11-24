@@ -1,6 +1,6 @@
 # Proposal: project-cache-folder
 
-> DESIGN (spec session, 2026-11-20; revised 2026-11-22; 2026-11-23: final frames only, the owner's D1). The owner decided the direction (kkt-26.11.20 A14)
+> DESIGN (spec session, 2026-11-20; revised 2026-11-22; 2026-11-23: final frames only, the owner's D1; 2026-11-24: no history, D6). The owner decided the direction (kkt-26.11.20 A14)
 > and answered its questions (kkt-26.11.20b B2): one folder per project folder, cyclic writing with a notice
 > when it cannot take more. Code starts on the orchestrator's go. Tests reserved: t3824–t3843, t3808.
 > Base: `orch-26-11-01` at `5e7a8ea9`.
@@ -17,7 +17,7 @@ What the program keeps today, and where:
 | Media index: peaks, packet index, thumbnails, posters, loudness, sync offsets | ONE SQLite file beside the project, `film.kt` → `film.ktindex.db` (+ `-wal`, `-shm`) | none |
 | Reel previews (strips, frames, peaks) | the same SQLite file | 48 frames a reel, pruned to the reels in use |
 | The preview's disk prerender (video segments) | `<data>/render-cache/v2-<build>/<device>/`, the user's data folder, shared by every project | 2 GiB in total |
-| Datamosh history, the heard mix (designed: `durable-history-and-mix`) | planned beside the prerender in `<data>` | planned 1 GiB |
+| the heard mix (designed: `durable-history-and-mix`) | planned beside the prerender in `<data>` | planned 1 GiB |
 | Compiled pipelines, pass times | `<data>/shader-cache/` | 4 files, 8192 lines |
 
 Four things follow from that layout:
@@ -33,9 +33,10 @@ Four things follow from that layout:
   the projects in that folder, with one place per cache. It holds:
   - `media/` — per media file, by its content;
   - `reels/` — the reel previews;
-  - the persistent cache ("Постоянный кэш", the owner's B1, change `persistent-cache`) as one store of three
-    kinds: `results/v<FORMAT>/<device class>/{frames, history}` (the FINAL preview frames, the prerender moved
-    from `<data>`; the Datamosh history) and `media/<content id>/copy-*.mkv` (heavy sources' copies). It keeps
+  - the persistent cache ("Постоянный кэш", the owner's B1, change `persistent-cache`) as one store of two
+    kinds: `results/v<FORMAT>/<device class>/frames/` (the FINAL preview frames, the prerender moved from
+    `<data>`) and `media/<content id>/copy-*.mkv` (heavy sources' copies). The Datamosh history is not stored
+    (the owner's D6, kkt-26.11.22 line 9: "Только финальные кадры"). It keeps
     no result of a stage inside a chain: the owner's D1 (kkt-26.11.22 line 4), "делай кеш имменно финального
     превью а не на каком-то конкретном этапе цепочки fx". One key layout (`durable_hash` plus the decoder major, the kernels' versions and
     `COMPOSITE_PATH_VERSION`; not the build) and one order by value per byte (design D1b);
@@ -102,8 +103,7 @@ Four things follow from that layout:
   - 4: the bars still draw what the stores hold;
   - 5: each tenant is written by the lane that writes it today, never the UI thread;
   - 8: waveforms and thumbnails come from the media tenant;
-  - 11: the export reads no tenant except the lossless history tier, as `durable-history-and-mix`
-    decides.
+  - 11: the export reads no tenant.
 - No project format change.
 - The durability capability's rule that the program writes no file into the person's project tree
   (posters, R.58) is amended by the owner's decision for this one folder.
