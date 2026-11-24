@@ -193,7 +193,7 @@ fn t3208_the_keys_see_the_wiring() {
         let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
         warm(&vr, &cache, t);
         let plan = vr.frame_plan(&cache, t, kt_media::Quality { width: W, height: H });
-        kt_engine::render_cache::durable_hash(&plan)
+        kt_engine::moment_key::moment_key(&plan)
     };
     kt_plugins_builtin::install();
     let fx = vec![FxInstance::blur(6), duotone(), merge(BlendMode::Screen, 1.0)];

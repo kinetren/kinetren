@@ -15,7 +15,7 @@ use kt_media::{Quality, VideoFrame};
 use kt_model::{ClipKind, MediaId, Project};
 use kt_time::{FpsGrid, Tick};
 
-use crate::video_plan::{Cam3d, FramePlan, GpuExecError, LayerSrc, PlanLayer, VideoGpuExec};
+use crate::video_plan::{Cam3d, FramePlan, GpuExecError, LayerSrc, Leaf, PlanLayer, VideoGpuExec};
 
 #[path = "video_stream.rs"]
 mod stream;
@@ -739,6 +739,9 @@ pub struct VideoRenderer {
     /// The player's decoded-frame cache bound (frames-cache-growth): the pacing's order is a
     /// quarter of it as it is NOW — the ledger moves the cap after this shared build was made.
     stream_cap: Option<Arc<dyn Fn() -> usize + Send + Sync>>,
+    /// What its player's sources decode (durable-moment-key D3): a stream's order names its history as its
+    /// plans do. `None` — a private cache's renderer.
+    idents: Option<kt_cache::IdentReader>,
     /// The time index of `clips` (frame-work-by-edit): every per-frame question asks it.
     index: LayerIndex,
     /// The reel instances among `clips` (the coverage bars ask them, not every event).
@@ -1517,10 +1520,7 @@ impl VideoRenderer {
                     material_end,
                     stream: if nest.is_none() { stream } else { None },
                     src_rev: if procedural {
-                        // a kind that hears nothing keeps its former revision, byte for byte
-                        let text = format!("{:?}|{:?}", c.r#gen, c.gen_auto);
-                        let text = if heard == 0 { text } else { format!("{text}|{heard}") };
-                        xxhash_rust::xxh3::xxh3_64(text.as_bytes())
+                        kt_media::generator::gen_rev(&c.r#gen, &c.gen_auto, heard)
                     } else {
                         0
                     },
@@ -1687,6 +1687,7 @@ impl VideoRenderer {
             stream_view: Default::default(),
             stream_pacing: None,
             stream_cap: None,
+            idents: None,
             index,
             placements,
         }
@@ -1734,6 +1735,19 @@ impl VideoRenderer {
             sub.set_stream_cap(cap.clone());
         }
         self.stream_cap = Some(cap);
+    }
+
+    /// The reader of what the player's sources decode (`BurstCache::ident_reader`), for this renderer and
+    /// its reels.
+    pub fn set_source_idents(&mut self, idents: kt_cache::IdentReader) {
+        for sub in self.nests.values_mut() {
+            sub.set_source_idents(idents.clone());
+        }
+        self.idents = Some(idents);
+    }
+
+    fn ident_look(&self) -> impl Fn(&[SourceId]) -> Vec<Option<kt_cache::SourceIdent>> + '_ {
+        move |of| self.idents.as_ref().map_or_else(|| vec![None; of.len()], |r| r(of))
     }
 
     /// The most positions a stream stage of the last `frame_plan` (its reels and track stages
@@ -1837,7 +1851,7 @@ impl VideoRenderer {
     /// One stage's advance to moment `t` (the body of `stream_advance`).
     fn stream_advance_clip(&self, cache: &BurstCache, c: &VideoClip, t: Tick, quality: Quality) -> bool {
         let Some(st) = &c.stream else { return false };
-        let cs = stream::ClipStream::new(c, st, &self.grid, quality, Some(cache));
+        let cs = stream::ClipStream::new(c, st, &self.grid, quality, Some(cache), &|of| cache.idents(of));
         let cs = if self.stream_view.load(std::sync::atomic::Ordering::Relaxed) { cs.with_view(&self.stream_memo) } else { cs };
         let n = cs.pos(t);
         let needs = st.kernel().needs(&st.values, &cs, n, &self.stream_memo).len();
@@ -1872,7 +1886,7 @@ impl VideoRenderer {
         self.active(t)
             .filter_map(|c| match (&c.stream, c.nest.and_then(|k| self.nests.get(&k))) {
                 (Some(st), None) => {
-                    let cs = stream::ClipStream::new(c, st, &self.grid, quality, None);
+                    let cs = stream::ClipStream::new(c, st, &self.grid, quality, None, &self.ident_look());
                     Some(st.kernel().checkpoints(&st.values, &cs, cs.pos(t)))
                 }
                 (_, Some(sub)) => Some(sub.stream_checkpoints(clip_inner_tick(c, t, &self.grid), clip_decode_quality(c, quality))),
@@ -1900,7 +1914,7 @@ impl VideoRenderer {
             want.positions += s.positions.len();
             want.lap_bytes += per * s.positions.len();
             want.per_position = want.per_position.max(per);
-            let cs = stream::ClipStream::new(s.clip, s.stage, s.grid, s.quality, None);
+            let cs = stream::ClipStream::new(s.clip, s.stage, s.grid, s.quality, None, &self.ident_look());
             want.checkpoint_bytes += 2 * per * s.stage.kernel().checkpoints(&s.stage.values, &cs, s.last);
         }
         want
@@ -1911,7 +1925,7 @@ impl VideoRenderer {
         for c in self.active(t) {
             match (&c.stream, c.nest.and_then(|k| self.nests.get(&k))) {
                 (Some(st), None) => {
-                    let cs = stream::ClipStream::new(c, st, &self.grid, quality, None);
+                    let cs = stream::ClipStream::new(c, st, &self.grid, quality, None, &self.ident_look());
                     let pos = cs.pos(t);
                     let s = out.entry((self as *const VideoRenderer as usize, c.id)).or_insert_with(|| {
                         let sq = stream::stream_quality(c, st, quality);
@@ -2045,7 +2059,7 @@ impl VideoRenderer {
         // a STREAM stage replaces the source: the order is the stream frames its kernel
         // still needs at the codec's size, and nothing at the ordinary quality (D5)
         if let Some(st) = c.stream.as_deref() {
-            let cs = stream::ClipStream::new(c, st, &self.grid, quality, None);
+            let cs = stream::ClipStream::new(c, st, &self.grid, quality, None, &self.ident_look());
             let needs = st.kernel().needs(&st.values, &cs, cs.pos(t), &self.stream_memo);
             match self.pacing() {
                 Some(p) => cs.order(cs.window(&needs, p.order_bytes), out),
@@ -2369,12 +2383,6 @@ impl VideoRenderer {
         self.plan_with(cache, t, quality, true)
     }
 
-    /// The probe plan and the leaves its durable key needs (render-cache-disk D1): what each frame's
-    /// per-process content serial stands for. `render_cache::disk_key` makes the key of the two.
-    pub fn probe_durable(&self, cache: &BurstCache, t: Tick, quality: Quality) -> (FramePlan<'_>, crate::render_cache::Leaves) {
-        crate::render_cache::with_leaves(|| self.plan_with(cache, t, quality, true))
-    }
-
     fn plan_with(&self, cache: &BurstCache, t: Tick, quality: Quality, probe: bool) -> FramePlan<'_> {
         let ctx = PlanCtx {
             probe,
@@ -2547,7 +2555,7 @@ fn layer_src<'a>(
     let streamed = match (&clip.stream, clip.nest) {
         (Some(st), None) => Some(
             ctx.probe
-                .then(|| stream::key_only(clip, st, ctx.grid, quality, dq, t, src_pts))
+                .then(|| stream::key_only(clip, st, ctx.grid, quality, dq, t, src_pts, cache))
                 .flatten()
                 .map(|(f, key)| (f, key, None))
                 .unwrap_or_else(|| {
@@ -2556,19 +2564,21 @@ fn layer_src<'a>(
         ),
         _ => None,
     };
-    // the durable key's leaf (render-cache-disk D1): what this frame's content serial stands for
-    // across processes — the file's identity, a generator's values; a stream stage reads other files
-    if clip.nest.is_none() {
-        crate::render_cache::note_leaf(source.0, Some(clip.media), clip.src_rev, clip.stream.is_some());
-    }
-    let (frame, content) = if clip.nest.is_some() {
-        (None, 0) // the subtree's input is assembled below
+    // the frame, its serial and what names it whether or not it is there, in ONE look
+    // (durable-moment-key D2): the identity is the cache's, never the renderer's — while a retune waits
+    // on the worker the cache answers the old frames under their old name
+    let drawn = clip.src_rev != 0;
+    let (frame, content, leaf) = if clip.nest.is_some() {
+        (None, 0, Leaf::default()) // the subtree's input is assembled below
     } else if let Some((f, key, _)) = &streamed {
-        (f.clone(), *key)
+        let durable = clip.stream.as_deref().is_some_and(|st| stream::durable(clip, st, cache));
+        (f.clone(), *key, Leaf { key: *key, durable, drawn, stream: true })
     } else {
-        match cache.get_video_stamped(source, Some(dq), cache_idx) {
-            Some((f, serial)) => (Some(f), serial),
-            None => (None, 0),
+        let (got, ident) = cache.get_video_leaf(source, Some(dq), cache_idx);
+        let leaf = Leaf::frame(ident, dq.width, dq.height, drawn);
+        match got {
+            Some((f, serial)) => (Some(f), serial, leaf),
+            None => (None, 0, leaf),
         }
     };
     // BLENDING (R.37 C5) is done HERE, in the plan's common code: the executor
@@ -2589,7 +2599,9 @@ fn layer_src<'a>(
         Some(_) if streamed.is_some() => (frame, None),
         Some((pts, k)) => {
             let idx = video_cache_idx(pts);
-            let (nb, nb_content) = match cache.get_video_stamped(source, Some(dq), idx) {
+            let (nb, nb_ident) = cache.get_video_leaf(source, Some(dq), idx);
+            let nb_leaf = Leaf::frame(nb_ident, dq.width, dq.height, drawn);
+            let (nb, nb_content) = match nb {
                 Some((f, serial)) => (Some(f), serial),
                 None => (None, 0),
             };
@@ -2598,7 +2610,7 @@ fn layer_src<'a>(
             let both = frame.is_some() && nb.is_some();
             (
                 blend_frames(frame, nb, k).filter(|_| both),
-                Some(crate::video_plan::LayerBlend { cache_idx: idx, k, content: nb_content }),
+                Some(crate::video_plan::LayerBlend { cache_idx: idx, k, content: nb_content, leaf: nb_leaf }),
             )
         }
     };
@@ -2684,6 +2696,7 @@ fn layer_src<'a>(
         source,
         cache_idx,
         content,
+        leaf,
         src_scale,
         input,
         fx,
@@ -2747,6 +2760,7 @@ fn track_stage_layer<'a>(
         source: nest_source_id(kt_model::track_source_media(st.id)),
         cache_idx: t.0,
         content: revision,
+        leaf: Default::default(),
         src_scale: 1,
         input: crate::video_plan::LayerInput::Nest(Box::new(crate::video_plan::NestSrc {
             seq: kt_model::track_source_media(st.id),

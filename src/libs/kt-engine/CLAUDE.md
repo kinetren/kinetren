@@ -186,23 +186,24 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   moment waiting on it is tried again only next lap. `KT_RENDER_AHEAD=off`
   for an A/B. t2334–t2336, t2920, t2921, t2925.
 - **Slow moments are prerendered to disk at rest and played from it** (render-cache-disk,
-  `render_cache.rs`; the owner's "Сам в фоне", kkt-26.11.17 S5). The key is DURABLE: `durable_hash` of
-  the probe plan (every field kt-gpu's `plan_hash` hashes but the content serials and the input
-  frame's presence) mixed with the leaves `layer_src` notes while `probe_durable` builds it
-  (`note_leaf`: a file's path/size/mtime, a generator's `src_rev`, every file for a stream stage); its
+  `render_cache.rs`; the owner's "Сам в фоне", kkt-26.11.17 S5). Its key is the moment's ONE
+  key (`moment_key`, durable-moment-key), the memory's too: it names each frame by its LEAF — the identity
+  of what the source decodes, asked of the CACHE together with the frame, and the decode size; a stream
+  stage's kernel key — never by whether it is decoded now. **A field that makes another picture is hashed in
+  `moment_key.rs` and nowhere else.** Never take an identity from the renderer: while a retune waits on the
+  worker the cache still answers the old frames, and their old name is what keeps the picture honest
+  (t4109). A plan with a frame whose name dies with the process has no disk key (`FramePlan::durable`). Its
   SALT is what makes the pixels, not the build (project-cache-folder D1b, `Made`): the decoder's major,
   the plugins that run in the plan (their crates' source hashes, `kt-plugins-builtin/build.rs`, and WGSL),
   `COMPOSITE_PATH_VERSION` (the hash of `composite-path.txt`'s files — **a new file that can change a
-  composite's pixel goes into that list**, t3808). The device and its driver are the folder. **A new field `plan_hash` hashes is
-  hashed by `durable_hash` too**, and a new input of a leaf's picture that a content serial stood for
-  reaches `note_leaf`, or a stale picture comes back from disk after a restart. The pictures are
+  composite's pixel goes into that list**, t3808). The device and its driver are the folder. The pictures are
   SEGMENTS in the project's cache folder (`results/`, written in that folder's cycle; a frame of another
   salt is a miss and its segment goes when met) of hardware-encoded video (render-cache-codec, the owner's kkt-26.11.18b U4): the host's
   `Config::codec` (`kt_media::segment`), hardware encoders only, every frame a keyframe, a manifest of
   codec, encoder and keys; no hardware encoder → the store writes nothing and `status()` says why; one
   `render-cache-read` thread owns the readers (invariant 5). Tests use `RawSegments`. Reads before composing:
   the producer (before its decoded check), `show_kept`, the bytes path (`disk_bytes`); a restored moment
-  is kept under `restored_key(present, durable)`. Writes only by the player's `render-cache` thread at
+  is kept under its present key. Writes only by the player's `render-cache` thread at
   rest: moments the cost map measured at least half a frame period and their unmeasured neighbours,
   after `QUIET` with no `note_input`, never while playing or under an export's vote; its decodes at
   `Thumbnail`, its device work at class `background`. No export reads it. With no `Config` (tests,

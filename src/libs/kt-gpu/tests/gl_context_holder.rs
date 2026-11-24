@@ -121,6 +121,7 @@ fn layer_plan(w: u32, h: u32) -> kt_engine::FramePlan<'static> {
         source: kt_cache::SourceId(1),
         cache_idx: 0,
         content: 1,
+        leaf: Default::default(),
         src_scale: 1,
         input: kt_engine::video_plan::LayerInput::Frame(Some(fr)),
         fx: kt_engine::LayerChain::Owned(Vec::new()),

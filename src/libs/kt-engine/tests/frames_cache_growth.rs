@@ -236,3 +236,37 @@ fn t3605_held_moments_neither_decode_nor_count() {
     assert!(cut < whole, "the want sized after the skip: {} MB of {} MB", cut >> 20, whole >> 20);
     assert!(cut >= 3 * 150 * frame + 3 * 150 * frame / 8, "still the unheld half and its eighth: {} MB", cut >> 20);
 }
+
+/// t4114 (durable-moment-key D4): the held moments are not counted on every pass: a 600-moment loop that
+/// fills one by one is counted at each sixteenth, at its lap's end and once more when one is lost, and the
+/// last want is a count made then.
+#[test]
+fn t4114_the_held_moments_are_not_counted_on_every_pass() {
+    let p = stack(1);
+    let vr = VideoRenderer::new(&p);
+    let q = Quality { width: 640, height: 360 };
+    let step = vr.grid.frame_step();
+    let moments = 500i64;
+    let region = (0, moments * step);
+    let l = ledger(64 << 30);
+    let cache = Arc::new(BurstCache::with_ledger(CacheConfig::default(), l));
+    let mut sizing = FramesSizing::default();
+    for n in 0..=moments {
+        let held = |t: Tick| t.0 < n * step;
+        size_frames_cache(&vr, &cache, q, Some(region), 1, 0, (&held, n as usize), &mut sizing);
+    }
+    let filled = sizing.counts_for_tests();
+    assert!(filled <= 18, "counted {filled} times over the fill");
+    sizing.lap();
+    size_frames_cache(&vr, &cache, q, Some(region), 1, 0, (&|_| true, moments as usize), &mut sizing);
+    let lapped = sizing.counts_for_tests();
+    assert!(lapped <= filled + 1);
+    // the lap that counted everything held asks the base; one lost is counted at once
+    let lost = |t: Tick| t.0 != 7 * step;
+    let cap = size_frames_cache(&vr, &cache, q, Some(region), 1, 0, (&lost, moments as usize - 1), &mut sizing);
+    assert_eq!(sizing.counts_for_tests(), lapped + 1, "a lost moment is counted at once");
+    let one = kt_engine::loop_frame_bytes_except(&vr, q, region, usize::MAX, &lost);
+    assert_eq!(one, 640 * 360 * 4, "one moment's frames");
+    assert_eq!(cap, cache.max_video_bytes());
+    assert_eq!(cap, CacheConfig::default().max_video_bytes, "the loop held final wants the base");
+}

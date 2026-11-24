@@ -82,7 +82,8 @@ index and size to different files (t1457, t1574, t1607).
 
 - kt-gpu: `plan_hash` goes; `plan_key(plan) = moment_key(plan) ^ forms_revision` (memory only: which form a run takes
   is the process's).
-- Disk: `disk_key(plan) -> Option<u64>` = `moment_key`; `None` when a leaf is 0 or not durable, so a placeholder's
+- Disk: `disk_key(plan) -> Option<DiskKey>` = `moment_key` and the rows as the curves gave them (a process
+  cannot change its curve arithmetic, so the memory leaves them out), salted as `project-cache-folder` says; `None` when a leaf is 0 or not durable, so a placeholder's
   picture is never written. `FORMAT`, the decoder major, the kernels and `COMPOSITE_PATH_VERSION` are added by
   `project-cache-folder` (3.2) to `disk_key`, not to `moment_key`. `FramePlan` gains `durable: bool`, folded while the plan
   is built, sub-plans included.
@@ -106,6 +107,11 @@ another file relinked under the same media id, and `StreamMemo` and the front me
   (a retune applied in between): the history is missing, as any absent frame.
 - `key_only` receives the cache for the snapshot and reads no frame of it.
 - Memo keys move once; no picture does.
+
+**Found while building it (t4116):** the COMPILED SCHEDULE of a stage (`PlanCell`, one per stage and size) holds
+the names of its positions too. A replaced file rebuilds no renderer (the plan is indifferent to the source), so the
+stage kept the old file's names after the identities had changed, and read part of the old history. The cell is keyed
+by the identities as well; two stand per size while a retune is between the renderer and the worker.
 
 ## D4. The held moments leave the window
 

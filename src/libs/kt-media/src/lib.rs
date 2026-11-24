@@ -79,8 +79,38 @@ pub struct VideoFrame {
 /// Media source. Implementations: `FfmpegSource` (feature `ffmpeg`, M3),
 /// synthetic sources (tests). Exactly one MediaWorker thread owns an instance
 /// (invariant no. 5) — hence `&mut self` and only `Send`.
+/// What a source decodes, named across its frames (durable-moment-key D1): the same key — the same
+/// bytes for the same (index, size).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SourceIdent {
+    pub key: u64,
+    /// The key means the same in another process (a file, a generator's values); `false` — a number of
+    /// this one.
+    pub durable: bool,
+}
+
+impl SourceIdent {
+    /// A name nothing else has.
+    pub fn once() -> SourceIdent {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        SourceIdent { key: xxhash_rust::xxh3::xxh3_64_with_seed(&n.to_le_bytes(), 0x6f6e_6365), durable: false }
+    }
+
+    /// A name by what the text says.
+    pub fn of(text: &str) -> SourceIdent {
+        SourceIdent { key: xxhash_rust::xxh3::xxh3_64(text.as_bytes()), durable: true }
+    }
+}
+
 pub trait MediaSource: Send {
     fn info(&self) -> &MediaInfo;
+    /// What it decodes NOW: asked when it is opened and after each applied retune, on the thread that
+    /// owns it. `None` — it cannot say (a placeholder, a file whose metadata could not be read): its
+    /// frames are named by a number of this process. Never reads the disk.
+    fn identity(&self) -> Option<SourceIdent> {
+        None
+    }
     /// Sample-accurate: burst `idx` covers the source's samples [idx*1024, (idx+1)*1024).
     fn read_audio_burst(&mut self, idx: i64) -> Result<AudioBurst, MediaError>;
     fn read_video_frame(

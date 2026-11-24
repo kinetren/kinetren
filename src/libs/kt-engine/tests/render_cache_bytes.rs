@@ -28,7 +28,6 @@ fn player(root: &std::path::Path) -> Option<(Player, Vec<Tick>)> {
         codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
         root: root.to_path_buf(),
         made: kt_engine::render_cache::Made::of(60),
-        base: None,
         cap: None,
     }));
     let grid = player.video_grid();

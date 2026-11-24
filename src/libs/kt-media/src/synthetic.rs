@@ -201,6 +201,11 @@ impl MediaSource for SyntheticSource {
         &self.info
     }
 
+    fn identity(&self) -> Option<crate::SourceIdent> {
+        let eof = (self.video_eof, self.audio_eof);
+        Some(crate::SourceIdent::of(&format!("synth|{:?}|{:?}|{eof:?}|{:?}", self.pattern, self.info, self.video_fps)))
+    }
+
     fn read_audio_burst(&mut self, idx: i64) -> Result<AudioBurst, MediaError> {
         if idx < 0 {
             return Err(MediaError::OutOfRange);
@@ -333,6 +338,10 @@ impl CheckerSource {
 impl MediaSource for CheckerSource {
     fn info(&self) -> &MediaInfo {
         &self.info
+    }
+
+    fn identity(&self) -> Option<crate::SourceIdent> {
+        Some(crate::SourceIdent::of(&format!("checker|{:?}|{:?}", self.info, self.native)))
     }
 
     fn read_audio_burst(&mut self, idx: i64) -> Result<AudioBurst, MediaError> {

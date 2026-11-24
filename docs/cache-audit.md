@@ -172,8 +172,9 @@ the other on the same `heavy.kt` (`showcase --heavy`, footage in `/dev/shm`), ll
 - **Cut 1** (the decode window skips moments held on disk, the want counted without them): no change in
   these runs. A debug build at 1080 completes no moment, and the disk prerender writes only at rest, so no
   moment was on disk. It acts where the prerender holds moments: the owner's machine after a rest.
-  The kept composites in MEMORY are not cut here: their key is the decoded frames' content serials, and leaving
-  their frames out of the want lost them (found-defects 965: 21 V-fps fell to 2); designed as `durable-moment-key`. The 7.9 GB window on a
+  The kept composites in MEMORY were not cut here: their key held the decoded frames' content serials, 0 for a
+  frame not decoded, so a kept composite was found only while its sources were decoded too (found-defects 965:
+  21 V-fps fell to 2). `durable-moment-key` gave the moment one key and cut them. The 7.9 GB window on a
   1080 linear play is the frames of moments nothing holds yet; this cut does not touch it.
 - **Cut 3** (a CPU device keeps two frames of uploads): 265 → 28 MB on the loop, 140 → 102 MB on the
   linear run.
