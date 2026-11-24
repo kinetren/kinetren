@@ -188,10 +188,11 @@ fn t3201_highlights_blurred_and_laid_back() {
 #[test]
 fn t3208_the_keys_see_the_wiring() {
     let t = Tick(SPAN / 2);
+    // one cache for every project: the same frame under the same name, the wiring alone differs
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    warm(&VideoRenderer::new(&project(vec![clip(1, 0, vec![], vec![], BlendMode::Normal)])), &cache, t);
     let key = |p: &Project| {
         let vr = VideoRenderer::new(p);
-        let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
-        warm(&vr, &cache, t);
         let plan = vr.frame_plan(&cache, t, kt_media::Quality { width: W, height: H });
         kt_engine::moment_key::moment_key(&plan)
     };

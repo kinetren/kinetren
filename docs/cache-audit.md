@@ -106,7 +106,7 @@ makes the cache redundant.
 
 | Cache | Where today | Holds | Key | Bound | Measured | Final-frame store |
 |---|---|---|---|---|---|---|
-| Disk prerender (`render_cache.rs`) | `<data>/render-cache/v2-<build>/<device>/` | **final** composites, hardware-encoded segments | `durable_hash` + build salt | 2 GiB for all projects | 12 KB after each run: it writes only at rest, and a debug run never rests. render-cache-disk measured 30 MB for 54 heavy moments (≈ 0.55 MB a moment) | it IS the final-frame store; `project-cache-folder` moves it beside the project |
+| Disk prerender (`render_cache.rs`) | `kinetren-cache/results/` | **final** composites, hardware-encoded segments | `moment_key` + what makes the pixels (`Made`) | 2 GiB for all projects | 12 KB after each run: it writes only at rest, and a debug run never rests. render-cache-disk measured 30 MB for 54 heavy moments (≈ 0.55 MB a moment) | it IS the final-frame store; `project-cache-folder` moves it beside the project |
 | Media index (sidecar) | `<project>.ktindex.db` (SQLite) | source facts: peaks, packet index, thumbnails, posters, loudness, sync | media path | none | 1.1 MB after the runs | no: waveforms and thumbnails are drawn from it (invariant 8) |
 | Reel previews (disk tier) | the same sidecar | **final** of a reel at thumbnail size | (reel, revision, media fingerprint) | 48 frames a reel | — | no: thumbnail size |
 | Compiled pipelines, pass times | `<data>/shader-cache/` | the driver's pipeline blobs, measured pass times | adapter, driver | 64 MB, 8192 lines | — | no: per machine, not results |
