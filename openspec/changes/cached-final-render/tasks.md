@@ -12,7 +12,7 @@
 
 ## 1. Names
 
-- [ ] 1.1 `adopt_sources` in every offline cache (D1); t4138 (red today: two exports of two projects with one media id and Posterize before Datamosh in one process); row 1068 closed; commit alone
+- [x] 1.1 (change-free branch `adopt-sources`, 2026-11-25) `adopt_sources` in every offline cache (D1); t4138 (red today: two exports of two projects with one media id and Posterize before Datamosh in one process); row 1068 closed; commit alone
 - [ ] 1.2 `Plugin::{reads_time, reads_progress}`, the `false` answers; `picture_key`, `shape`; t3335, t4139; `cargo test -p kt-plugin-api -p kt-engine` and the plugin crates; commit
 
 ## 2. The file

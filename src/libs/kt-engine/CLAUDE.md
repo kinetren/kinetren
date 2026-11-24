@@ -216,6 +216,9 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   dropped in a running program commits it (t3611). What changes the state it looks up notifies its wake: a
   composite's cost, Play, pause, a published build, a quality (found-defects 974); a look-up the person broke off is
   made again at their rest, and `set_notify` tells the interface when the bars may be brighter.
+- **An offline job adopts its sources' names** (`export::adopt_sources`, found-defects 1068, t4138, guard t3613):
+  every `BurstCache` of its own, before the first decode, with the renderer told of them. A memo of the process (the
+  stream fronts) is keyed by what a cache says of its sources; one that says nothing is keyed by a media id.
 - **The preview's source copies** (`copies.rs`, persistent-cache D3, t3443, t3444, t3446, t3449): the player's
   `source-copies` thread alone picks each file's copy for the preview's decode size, swaps it in and makes a missing
   one at rest (class background, a short-lived source: invariant 5). A swap is `MediaParts::swap_picture`, never

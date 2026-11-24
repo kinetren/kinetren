@@ -87,6 +87,12 @@ impl ListenService {
         self.lane.kick();
     }
 
+    /// The file of `key` came back or was replaced: its series is asked again, at the next ask.
+    pub fn forget(&self, key: &str) {
+        self.project.lock().unwrap().1.remove(key);
+        kt_engine::listen::forget(key);
+    }
+
     /// A series arrived since the last call: the player's generators are to be resynced.
     pub fn take_fresh(&self) -> bool {
         self.fresh.swap(false, Ordering::AcqRel)

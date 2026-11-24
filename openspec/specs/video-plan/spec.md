@@ -1828,6 +1828,12 @@ decoded, so a kept composite was found only while its sources were decoded too; 
 - **THEN** each time the stage reads the new file, its compiled schedule included (the renderer is not rebuilt): the picture equals a fresh renderer's over a fresh memo
 - **TEST** t4116 (`src/libs/kt-engine/tests/moment_key.rs`)
 
+#### Scenario: A render never shows another render's file
+- **WHEN** two projects whose media has the same id are rendered one after the other in one process, a Datamosh with a slot in front of it in both, on the serial and the pipelined path
+- **THEN** every frame of the second is what it is alone; every offline job with a frame cache of its own (exports, reel strips, posters, effect cells, the command line's measures) adopts its sources' names before it decodes
+- **TEST** t4138 (`src/libs/kt-engine/tests/moment_key.rs`)
+- **TEST** t3613 (`src/apps/kt-cli/tests/dist_guard.rs`)
+
 ### Requirement: The persistent cache keeps the final preview frame only
 The persistent cache SHALL keep on disk two kinds of entry only: whole composites of moments as the preview shows
 them (frames) and copies of heavy sources. It SHALL NOT write the picture of a layer, a node, a stream stage, a track

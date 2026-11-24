@@ -367,6 +367,93 @@ fn t4116_a_relinked_file_starts_a_new_history() {
     }
 }
 
+/// Test t4138 (found-defects 1068): two renders of two projects whose media has the same id, a Datamosh with
+/// a slot in front of it in both, in one process: the second is what it is alone, frame for frame, on the
+/// serial and the pipelined path. The front memo is the process's, and without the files' names its entries
+/// answered for the other file.
+#[test]
+fn t4138_a_render_never_shows_another_renders_file() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) || gpu().is_none() || kt_plugin_api::compute::host().is_none() {
+        eprintln!("skipped: no device");
+        return;
+    }
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    kt_engine::video::install_stream_front(kt_gpu::stream_front_engine);
+    let mut p = project();
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    let mut mosh = FxInstance::plugin("datamosh").expect("datamosh");
+    for (name, v) in [("lines", 0.0), ("before", 6.0), ("mosh", 1.0), ("gop", 12.0), ("sharp", 0.0)] {
+        assert!(mosh.set_param(name, v), "{name}");
+    }
+    let mut a = clip(1, 0, 1);
+    a.opacity = 1.0;
+    a.duration = Tick(30_000);
+    let mut b = clip(2, 0, 1);
+    b.opacity = 1.0;
+    (b.start, b.duration, b.source_in) = (Tick(30_000), Tick(45_000), Tick(90_000));
+    b.fx = vec![FxInstance::plugin("posterize").unwrap(), mosh];
+    p.clips = vec![a, b];
+    p.normalize();
+    p.validate().unwrap();
+
+    #[derive(Default)]
+    struct Frames(Vec<Vec<u8>>);
+    struct Copy;
+    impl kt_engine::export::ExportConverter for Copy {
+        type Frame = Vec<u8>;
+        fn convert(&mut self, rgba: &[u8], out: &mut Vec<u8>) -> std::io::Result<()> {
+            out.clear();
+            out.extend_from_slice(rgba);
+            Ok(())
+        }
+    }
+    impl kt_engine::export::ExportSink for Frames {
+        type Frame = Vec<u8>;
+        type Converter = Copy;
+        fn converter(&self) -> std::io::Result<Copy> {
+            Ok(Copy)
+        }
+        fn alloc_frame(&self) -> std::io::Result<Vec<u8>> {
+            Ok(Vec::new())
+        }
+        fn write_video(&mut self, f: &Vec<u8>) -> std::io::Result<()> {
+            self.0.push(f.clone());
+            Ok(())
+        }
+        fn write_audio(&mut self, _: &[f32]) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let never = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let range = Some((Tick(30_000), Tick(75_000)));
+    let srcs = |seed: u32| vec![(MediaId(1), Box::new(Tex::new(seed)) as Box<dyn MediaSource>)];
+    let render = |pipelined: bool, seed: u32| -> Vec<Vec<u8>> {
+        let mut out = Frames::default();
+        let b = kt_gpu::testkit::backends();
+        if pipelined {
+            kt_engine::export::render_pipelined_budget(&p, srcs(seed), srcs(seed), Q, range, &b, &never, None, 64 << 20, &mut out).unwrap();
+        } else {
+            kt_engine::export::render_raw_video_range_with(&p, srcs(seed), Q, range, &b, &never, |_| {}, |f| {
+                out.0.push(f.to_vec());
+                Ok(())
+            })
+            .unwrap();
+        }
+        out.0
+    };
+    for pipelined in [false, true] {
+        kt_engine::video::front_memo().clear();
+        let alone = render(pipelined, 23);
+        kt_engine::video::front_memo().clear();
+        let other = render(pipelined, 5);
+        assert_ne!(other, alone, "scene guard: the other file is another picture");
+        assert!(!other.is_empty());
+        assert!(render(pipelined, 23) == alone, "the render shows the pictures of the one before it (pipelined {pipelined})");
+        // the same file again is the same file
+        assert!(render(pipelined, 23) == alone);
+    }
+}
+
 /// A player over the demo project whose decoded frames of a loop do not fit the base of its cache.
 fn loop_player(opacity: f32) -> Option<(Player, Project, Vec<Tick>)> {
     let exec = gpu()?;
