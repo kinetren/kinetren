@@ -1358,7 +1358,7 @@ pub fn chain_graph(
     {
         let snd = sound(pend.lane);
         let pk = if snd { crate::fx_registry::PickKinds::Audio } else { crate::fx_registry::PickKinds::from(false) };
-        let arm_pv = preview.as_deref_mut().filter(|_| !snd).and_then(|p| p.place_arm(ctx.chain, pend.from).then_some(p));
+        let arm_pv = preview.filter(|_| !snd).and_then(|p| p.place_arm(ctx.chain, pend.from).then_some(p));
         let rows = edit.presets.rows;
         match crate::fx_registry::fx_picker_at(ui, pending_id, pend.at, pk, query, rows, hover, arm_pv) {
             Some(crate::fx_registry::Picked::Fx(f)) => op = Some(Op::Branch { lane: pend.lane, from: pend.from, items: vec![(f, false, Vec::new())], fx_in: Vec::new() }),
