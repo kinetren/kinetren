@@ -1,7 +1,7 @@
 # Proposal: temporal-barrier-3dnr
 
-> DESIGN ONLY (spec session, 2026-11-20). Code starts on the owner's word after his answers to the
-> questions at the end. Tests reserved: t3545–t3557.
+> DESIGN, revision 2 (2026-11-25), base `fc60a5d9`: implementation-ready. The owner answered Q1–Q2 (A21). Code starts on the
+> orchestrator's go. Tests: t3545–t3551, t4253.
 
 ## Why
 
@@ -16,24 +16,13 @@ flicker) were moved here. The owner chose the real recursive filter and asked fo
 
 ## What Changes
 
-- **A temporal kernel contract** (`kt-plugin-api`): a video kernel whose output at material frame N is a
-  recursion over its own previous state, declared with its warm-up `W` (from the filter's decay) and its
-  anchor grid `G`; optional spatial passes before (on every history frame) and after (on the shown frame).
-  The kernel is pure: the state at an anchor is a cold recursion over the W frames before it, so the bytes
-  do not depend on where playback started.
-- **Hosted by the existing history machinery**: the stream stage's memo, checkpoints, walks after a seek,
-  pacing and on-device history carry a temporal kernel as they carry a codec; the slots in front of it feed
-  it (stream-input-order). Steady play costs one recursion step per frame; a seek walks at most `W + G`
-  frames.
-- **The camera ISP's 3DNR**: after demosaic, before the YUV stages — luma and chroma recursions with their
-  own motion thresholds, a detector blur, strength; the state kept at 16-bit precision on the device (an
-  8-bit recursion sticks: its dead band freezes small differences forever). The "view" gains "3DNR motion
-  map". Its mis-tuning gives the trails.
-- **Rolling shutter** (a temporal kernel with W = 1 and no recursion: rows read between frames N−1 and N by
-  readout time) and **mains flicker** (no history: a function of the frame's material time and the row's
-  readout time) join the ISP's sensor block.
-- **The registry**: a temporal plugin declares the class `Temporal`; a temporal kernel on another class, or
-  without its warm-up, is refused.
+- **The camera ISP's 3DNR**: between the lens corrections and the YUV stages, luma and chroma recursions over the previous OUTPUT with their own motion
+  thresholds and a detector blur; a 16-bit state on the device. Its mis-tuning gives the trails he named.
+- **Rolling shutter** by readout time, **mains flicker** by frequency and depth, in the same change (Q2 a).
+- **A slot that keeps a history is a stream stage**: the camera declares a stream kernel that is active when a temporal row is on, and is cut
+  into a front (run on every history frame), the recursion and a back. The machinery of Datamosh's history hosts it; with the rows off the camera is the barrier it was.
+- **A split of one take does not restart the filter**: the history reaches into the event it continues.
+- The trail is at most 64 frames (Q1 a).
 
 ## Capabilities
 
@@ -43,29 +32,23 @@ flicker) were moved here. The owner chose the real recursive filter and asked fo
 
 ### Modified Capabilities
 
-- `plugins`: the `Temporal` class and the temporal kernel contract.
+- `plugins`: a stream kernel may be active by its values and may cut its slot in three.
 - `video-plan`: a temporal slot is a history stage inside the chain, hosted like a stream stage; anchors on
   the material grid; preview and export identical.
 - `video-fx`: the camera ISP's 3DNR, rolling shutter and flicker; their rows and view.
 
 ## Impact
 
-- kt-plugin-api: `TemporalKernel { warm, grid, pre, step, post }` with its GPU pass graph (word passes for
-  the 16-bit state), `VideoClass::Temporal`.
-- kt-engine: `StreamStage` hosts `Codec` or `Temporal`; anchors and warm-up in `needs`; the front memo and
-  checkpoints reused; keys include the anchor.
-- kt-gpu: state textures (R32Uint words), the step and the motion-map passes, the walk on the compute host.
-- `src/plugins/fx-video-camera`: the ISP split into pre / temporal / post when 3DNR or rolling shutter is
-  on; new rows; presets ("phone low light" with trails).
-- Format: new `camera_isp` rows raise the file by content (an older build would drop them on save).
-- Idle: on a pause the shown frame's walk runs once and is kept; at rest nothing walks.
-- Sound: the camera's microphone half exists (`camera_isp_sound`); a video denoiser has no sound of its own.
-- Feature note: F-FX-017.
+- kt-plugin-api: `StreamKernel::{active, split}`, `StreamLayout::continues`, `HeldStreamOut::Rgba`. kt-model: `is_stream`. kt-engine: `StreamStage`'s split.
+  kt-gpu: the RGBA form of a held picture.
+- `src/plugins/fx-video-camera`: three internal plugins by pass ranges, the recursion, rows, presets, the panel's blocks, i18n ×5.
+- Format: the next free version by content. Sound: none of its own (the microphone half exists). Idle: nothing walks at rest. Note: F-FX-017.
 
 ## Questions to the owner
 
-Decided (2026-11-20, `kkt-26.11.20` A21, his Q36–Q37): Q1 (a), the trail capped at 64 frames; Q2 (a), rolling
-shutter and flicker in the same change.
+Decided (2026-11-20, `kkt-26.11.20.txt` line 32, A21): "Q36/Q37 3DNR: «64 кадра + rolling shutter и мерцание (Recommended)»" — Q1 (a), the trail capped at 64
+frames; Q2 (a), rolling shutter and flicker in the same change. Read again on 2026-11-25 with I1 ("шумодав может быть временной, пространственный … хромо-шлейфы"):
+right. No open question.
 
 The questions as asked:
 

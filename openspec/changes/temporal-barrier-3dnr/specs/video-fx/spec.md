@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: The camera's 3DNR is a recursive filter with a motion detector, luma and chroma apart
-The camera ISP SHALL offer a temporal noise reduction after demosaic: per pixel the luma and the chroma are
+The camera ISP SHALL offer a temporal noise reduction between its lens corrections and its YUV stages: per pixel the luma and the chroma are
 each blended with the previous OUTPUT by the strength, gated by their own motion confidence from the
 blurred difference to the previous output and their own threshold; the state SHALL be kept at 16-bit
 precision. Its mis-tuning SHALL produce trails behind moving objects, longer in chroma when the chroma

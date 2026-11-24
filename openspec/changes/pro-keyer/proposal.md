@@ -1,7 +1,7 @@
 # Proposal: pro-keyer
 
-> DESIGN ONLY (spec session, 2026-11-20). Code starts on the owner's word after his answers to the
-> questions at the end. Tests reserved: t3585–t3599.
+> DESIGN, revision 2 (2026-11-25), base `fc60a5d9`: implementation-ready after `chroma-key-upgrade`. The owner answered Q1–Q2 (A22). Code
+> starts on the orchestrator's go. Tests: t3585–t3590, t4254.
 
 ## Why
 
@@ -51,23 +51,16 @@ ML runtime or model weights in the program. A neural matte may come later as an 
 
 ## Impact
 
-- kt-plugin-api: `BarrierKernel::held(p) -> Option<HeldFrame { material_tick }>`; the pass graph's second
-  input `Held`.
-- kt-engine: `clip_frame_keys` returns the held frame key with the layer's keys (the order and the read, one
-  function; the frame-blending precedent), the content serial in the layer key.
-- kt-gpu: the pass graph (~12 passes: linearize, plate pyramid down/up, screen-ness, core clip + choke H/V +
-  fill, edge band, combine, shadow, spill/restore, delinearize), word passes where precision matters.
-- `src/plugins/fx-video-color`: the `pro_keyer` plugin, rows, presets ("Green, uneven", "Blue, hair").
-- kt-app: the keyer's panel (a pipeline like the ISP's), the plate frame chosen by "Use this frame".
-- Format: a new kind; the file version by content (an older build reads a `Missing` slot — the plugin rule
-  keeps it — so no version rise is needed; rows round-trip).
-- Idle: per frame while playing; nothing at rest.
+- kt-plugin-api: `BarrierKernel::held`, `Slot::Held`. kt-engine: `held_keys` beside every asker of a leaf's keys, `LayerSrc.held`, `moment_key`.
+- kt-gpu: `Slot::Held` in the graph's executor. `src/plugins/fx-video-color`: `pro_keyer`, rows, presets ("Green, uneven", "Blue, hair").
+- kt-app: the pipeline panel, the Viewer's chips, "Use this frame as the plate", i18n ×5.
+- Format: a new plugin kind (an older build shows it missing and keeps it); no version rise. Idle: per shown frame only.
 
 ## Questions to the owner
 
-Decided (2026-11-20, `kkt-26.11.20` A22, his Q46–Q47): Q1 (a), a clean plate made from each frame, "Use this frame"
-holds one; Q2 (a), light wrap later, with inputs from other layers. The greenscreen under it is on the new model for
-every key (change `chroma-key-upgrade` D8).
+Decided (2026-11-20, `kkt-26.11.20.txt` line 33, A22): "Q38/Q39/Q46/Q47 keyer: "Все ключи на новую модель"". His words answer Q38 (the model of every chroma key, `chroma-key-upgrade`); for Q46 and Q47 the registry
+took the recommended options: Q1 (a), a clean plate made from each frame, "Use this frame" holds one; Q2 (a), light wrap later. Read again on 2026-11-25: nothing in his answer contradicts
+either, and his B4 (whole above) names uneven backgrounds, hair, shadows and spill, which stage D2–D5 each take. No open question.
 
 The questions as asked:
 

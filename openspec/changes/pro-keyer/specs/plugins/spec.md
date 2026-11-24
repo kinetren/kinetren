@@ -11,3 +11,8 @@ Why: invariant 4 (the order equals the read); the frame-blending precedent.
 - **WHEN** a Pro Keyer with a held plate at material 2.0 s plays from 10 s, is exported in chunks, and the plate tick is moved
 - **THEN** the prefetch and the composite ask the same plate key, the export chunk holds it, a moved tick changes the layer key and the picture; a barrier without a held frame has the plan it had
 - **TEST** t3588 (`src/libs/kt-engine/tests/held_frame.rs`)
+
+#### Scenario: The held frame is of the source as the keyer sees it
+- **WHEN** a Geometry node and a colour effect with a curve stand before a Pro Keyer with a held plate; a Datamosh is put before it; the keyer stands on a track, on a composition's instance and in an arm of an event's graph
+- **THEN** the plate is the held moment through those two slots with the curve at that moment; with the Datamosh, on the track and on the instance the held plate is refused in words and the generated one works; in the arm it works
+- **TEST** t4254 (`src/libs/kt-engine/tests/held_frame.rs`)
