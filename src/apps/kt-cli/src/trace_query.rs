@@ -484,7 +484,7 @@ fn memory(run: &Run) -> String {
     o
 }
 
-/// The program's trace directory: `KINETREN_DATA_DIR`, else the data directory.
+/// The program's trace directory, read: `KINETREN_DATA_DIR`, else the data directory.
 fn default_dir() -> std::path::PathBuf {
     if let Some(d) = std::env::var_os("KINETREN_DATA_DIR") {
         return std::path::PathBuf::from(d).join("trace");

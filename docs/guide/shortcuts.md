@@ -171,6 +171,10 @@ The mask keys work only while nothing else has the keyboard focus.
 | drag across the bin background | select cards with a frame; <kbd>Ctrl</kbd> or <kbd>Shift</kbd> adds to the selection |
 | double-click a generator card | its parameters |
 | click / drag / cross on a slot of the effect chain | select / reorder / remove |
+| drag from the dot on a node's right to empty space | start a branch of the effect chain: the picker opens there |
+| drag a wire onto a dot / off a Foreground, Key or Matte dot | connect / disconnect |
+| drop a node on a wire | put the effect on that wire |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+click a node | show the picture after it; <kbd>Esc</kbd> brings the whole picture back |
 | double-click a parameter label | reset the parameter to its default |
 | the pipette beside a colour, then a click anywhere in the program | take the colour of the screen under the pointer (the preview's frame, a thumbnail); <kbd>Esc</kbd> puts the pipette down |
 | drag the crosshair on the preview (an effect with a centre selected in its window) | move the effect's centre; with a curve on it, the key at the playhead |

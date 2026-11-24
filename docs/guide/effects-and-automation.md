@@ -13,6 +13,31 @@ chain** move chains between events (curves included). The first slot of a video 
 
 ![The video effect gallery](../images/video-fx.webp)
 
+### Branches and Merge
+
+The chain is a graph of nodes, and it can branch. Every node has a dot on its right (its
+output) and on its left (its input):
+
+- drag from an output to **empty space**: the picker opens there, and the effect you pick
+  starts a branch — a row under the chain. A node that does not reach **Out** is dim and is
+  not applied;
+- **Merge** is the first row of the picker. It stands before Out with the chain as its
+  **Background**; the branch you dragged from goes to its **Foreground**. Its **Mode** and
+  **Mix** are in the node: the blend modes of tracks for a picture, Sum or Crossfade for
+  sound. A third dot, **Matte**, takes a branch whose brightness (or transparency, or the
+  inverse of either) says where the Foreground shows;
+- drop a wire on a dot to connect it; pull a wire off a Foreground or Matte dot to take it
+  off; drop a wire that comes from an unused branch on **Out** to make that branch the result;
+- drop a node on a wire to put it there; in a chain that branches the picker adds after the
+  selected node;
+- a compressor on a sound chain has a **Key** dot: wire a branch into it and it reacts to
+  that branch.
+
+Each gesture is one step of Undo. Slowed+Reverb, Datamosh or a pitch effect in a branch reads
+the footage a second time — the node says *Reads the source again*, and the event shows a
+second line of what is ready over its own. A layer makes at most four reads and holds at most
+four branches at once; the first Geometry always stands before the first branch.
+
 The picker is a gallery: each video effect and each preset variant is previewed on the
 event's own frame. Type to filter.
 

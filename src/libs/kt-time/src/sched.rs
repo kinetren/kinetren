@@ -776,27 +776,43 @@ pub fn stats() -> Stats {
     }
 }
 
+struct AnswerSt<T> {
+    value: Option<T>,
+    /// The job's side is gone: nothing more comes.
+    gone: bool,
+}
+
 /// A result a job hands back to whoever asked (the UI takes it in a later frame, or waits a grace).
 pub struct Answer<T> {
-    slot: Arc<(Mutex<Option<T>>, Condvar)>,
+    slot: Arc<(Mutex<AnswerSt<T>>, Condvar)>,
 }
 
 /// The job's side of an [`Answer`].
 pub struct Reply<T> {
-    slot: Arc<(Mutex<Option<T>>, Condvar)>,
+    slot: Arc<(Mutex<AnswerSt<T>>, Condvar)>,
 }
 
 impl<T> Reply<T> {
     pub fn send(self, v: T) {
         let (m, cv) = &*self.slot;
-        *m.lock().unwrap_or_else(|e| e.into_inner()) = Some(v);
+        m.lock().unwrap_or_else(|e| e.into_inner()).value = Some(v);
+        cv.notify_all();
+    }
+}
+
+impl<T> Drop for Reply<T> {
+    /// Sent or not, nothing more comes: a waiter of an abandoned answer (its job superseded, cancelled
+    /// or panicked) is told at once.
+    fn drop(&mut self) {
+        let (m, cv) = &*self.slot;
+        m.lock().unwrap_or_else(|e| e.into_inner()).gone = true;
         cv.notify_all();
     }
 }
 
 impl<T> Answer<T> {
     pub fn new() -> (Answer<T>, Reply<T>) {
-        let slot = Arc::new((Mutex::new(None), Condvar::new()));
+        let slot = Arc::new((Mutex::new(AnswerSt { value: None, gone: false }), Condvar::new()));
         (Answer { slot: slot.clone() }, Reply { slot })
     }
 
@@ -805,9 +821,9 @@ impl<T> Answer<T> {
     pub fn take_within(&self, grace: Duration) -> Option<T> {
         let (m, cv) = &*self.slot;
         let mut g = m.lock().unwrap_or_else(|e| e.into_inner());
-        if g.is_none() && !grace.is_zero() {
+        if g.value.is_none() && !grace.is_zero() {
             let until = Instant::now() + grace;
-            while g.is_none() {
+            while g.value.is_none() && !g.gone {
                 let now = Instant::now();
                 if now >= until {
                     break;
@@ -815,12 +831,13 @@ impl<T> Answer<T> {
                 g = cv.wait_timeout(g, until - now).unwrap_or_else(|e| e.into_inner()).0;
             }
         }
-        g.take()
+        g.value.take()
     }
 
     /// The reply was dropped unsent (the job was cancelled or panicked).
     pub fn abandoned(&self) -> bool {
-        Arc::strong_count(&self.slot) == 1 && self.slot.0.lock().map(|g| g.is_none()).unwrap_or(true)
+        let g = self.slot.0.lock().unwrap_or_else(|e| e.into_inner());
+        g.gone && g.value.is_none()
     }
 }
 

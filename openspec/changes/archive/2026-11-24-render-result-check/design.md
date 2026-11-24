@@ -15,6 +15,11 @@
 SHALL be the range's samples: the last burst is cut to the range's end, not dropped and not padded (the encoder's own
 1024-sample frame may pad inside the codec; `ffprobe`'s duration then differs by less than one AAC frame).
 
+**As built.** The video half of `ExportStats` was the number of frames ASKED, not written (`export_pipeline::run`
+put `total` there): it could not have differed. Both are counted in the writer now, where the sink takes them.
+On every range t3998 asks the pairs are equal, so his 412672 was the progress row of a burst not yet written
+when the total was already the range's, not a file short of its end.
+
 ## D2. What the window says
 
 Equal (always, unless there is a defect): as today, one number each. Different: a line in the final block in the

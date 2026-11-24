@@ -1604,14 +1604,14 @@ the whole edit in view; with the effects window open, 280 ms.
 - **TEST** t1912 (`src/apps/kt-app/src/frame_cost_tests.rs`)
 
 #### Scenario: A frame's processor time does not follow the project
-- **WHEN** ten frames run with 20000 events outside the view, or 1000 files in the bin, against a small project
-- **THEN** they cost the UI thread less than one and a half times as much
+- **WHEN** ten frames run with 200000 events outside the view, or 4000 files in the bin, against a small project
+- **THEN** they cost the UI thread less than three times as much with the events and less than five with the files (bounds past a loaded machine's noise: found-defects 176)
 - **PATH** open a long edit with hundreds of files in the bin → move the mouse along a track, then over the bin → Diagnostics → Performance reads the same "UI frame" at the start of the edit, at its end and zoomed out
 - **TEST** t1913 (`src/apps/kt-app/src/frame_cost_tests.rs`)
 
 #### Scenario: An open window does not follow the project
-- **WHEN** the effects and the project settings windows are open over 20000 events outside the view
-- **THEN** ten frames cost the UI thread less than one and a half times what they cost over a small project
+- **WHEN** the effects and the project settings windows are open over 200000 events outside the view
+- **THEN** ten frames cost the UI thread less than three times what they cost over a small project
 - **PATH** double click an event → its effects window opens → move the mouse over it and over the preview → the program draws as fast as without the window
 - **TEST** t1914 (`src/apps/kt-app/src/frame_cost_tests.rs`)
 
@@ -1899,3 +1899,22 @@ Why: the owner, v26.10 U10.
 - **THEN** the hidden groups slide into view; the "more" menu lists only what is still outside
 - **PATH** narrow the window → hover the toolbar → turn the wheel → the row slides left, Render and Search come into view
 - **TEST** t3938 (`src/apps/kt-app/src/window_fill_tests.rs`), live `window_chrome`
+
+### Requirement: A window the window manager never took is asked for again
+On X11 the program SHALL look for its own window until a window manager has taken it, and SHALL ask to map
+it again while it is unmapped and no `WM_STATE` stands on it, at most once a second for two minutes; the
+journal SHALL say how many times it asked. A window on screen, minimized or managed is never asked for.
+Why: found-defects 830, 954 — openbox drops a map request that comes while it starts, and the program then
+ran for ten minutes with no window on screen.
+
+#### Scenario: What counts as lost
+- **WHEN** the window is missing, mapped, unmapped but managed, or unmapped and unmanaged on the root
+- **THEN** only the last is lost
+- **PATH** minimize Kinetren's window from the panel → it stays minimized: the program asks for it no more
+- **TEST** t3726 (`src/apps/kt-app/src/map_watch.rs`)
+
+#### Scenario: A window manager that drops the first request
+- **WHEN** the window manager ignores the program's first map request
+- **PATH** start Kinetren while the desktop's window manager is still starting → within a second or two the window is on screen
+- **THEN** the window comes on screen and the journal names the asks
+- **TEST** live `map_lost` (`src/scripts/live/map_lost.py`)

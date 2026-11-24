@@ -536,7 +536,7 @@ pub fn load_workspace() -> Workspace {
 }
 
 pub fn load_workspace_at(path: &std::path::Path) -> Workspace {
-    let Ok(text) = std::fs::read_to_string(path) else { return Workspace::default() };
+    let Ok(text) = crate::later::read(path) else { return Workspace::default() };
     let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
         // a broken file does not bring the programme down and does not eat the work: it will be
         // moved aside to `.broken` on the first write
@@ -594,20 +594,8 @@ pub fn save_workspace_at(path: &std::path::Path, w: &Workspace) {
     if let Some(on) = w.geom_controls {
         doc["geom_controls"] = serde_json::json!(on);
     }
-    if let Some(d) = path.parent() {
-        let _ = std::fs::create_dir_all(d);
-    }
-    write_record(path, &format!("{doc:#}\n"));
-}
-
-/// Write a record of conveniences: tmp + rename, WITHOUT fsync — a break midway leaves no stump, and a
-/// lost record costs nothing, while two fsyncs stall their thread for seconds on a busy disk (t985 took
-/// 90 s with `write_atomic`; the workspace's held a close for 21 s, found-defects 831).
-fn write_record(path: &std::path::Path, text: &str) {
-    let tmp = path.with_extension("json.tmp");
-    if std::fs::write(&tmp, text).is_ok() {
-        let _ = kt_otio::replace_file(&tmp, path);
-    }
+    // no fsync: two of them held a close for 21 s on a busy disk (found-defects 831)
+    crate::later::write(path, format!("{doc:#}\n"), false);
 }
 
 // ---- between-projects records (welcome-window-and-tour) -------------------
@@ -754,7 +742,7 @@ pub fn project_key(p: &std::path::Path) -> PathBuf {
 }
 
 fn read_record(path: Option<&std::path::Path>) -> (Option<serde_json::Value>, FileState) {
-    let Some(text) = path.and_then(|p| std::fs::read_to_string(p).ok()) else {
+    let Some(text) = path.and_then(|p| crate::later::read(p).ok()) else {
         return (None, FileState::default());
     };
     match serde_json::from_str::<serde_json::Value>(&text) {
@@ -907,10 +895,9 @@ impl StartStore {
         }
         let mut doc = body;
         doc["version"] = serde_json::json!(RECORDS_VERSION);
-        if let Some(d) = path.parent() {
-            let _ = std::fs::create_dir_all(d);
-        }
-        write_record(&path, &format!("{doc:#}\n"));
+        // tmp + rename, WITHOUT fsync: a break midway leaves no stump, and these records are
+        // conveniences — a lost recent list costs nothing (t985 took 90 s with `write_atomic`)
+        crate::later::write(&path, format!("{doc:#}\n"), false);
     }
 
     fn save_recent(&mut self) {
@@ -1251,6 +1238,7 @@ mod records_tests {
     /// or next to it (no sidecar written by the poster).
     #[test]
     fn t985_posters_render_into_the_store_never_into_the_project_folder() {
+        crate::alone::own_process!();
         crate::plugins::install();
         let store = tmp("t985p-store");
         let projects = tmp("t985p-projects");

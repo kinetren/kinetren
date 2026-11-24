@@ -1629,8 +1629,10 @@ impl Registry {
                     (Some(VideoClass::PointWise | VideoClass::Barrier), Gpu::Warp(_)) => {
                         return refuse("a warp map from a plugin that is not a geometry plugin");
                     }
-                    (Some(VideoClass::PointWise | VideoClass::Barrier), Gpu::None) if m.decl.builtin => {
-                        return refuse("a built-in point-wise or barrier plugin without a GPU kernel");
+                    // whoever offers it: the device is the one executor of a frame, and a stage with no
+                    // text there ended the preview's thread at its first frame (one-process-tests)
+                    (Some(VideoClass::PointWise | VideoClass::Barrier), Gpu::None) => {
+                        return refuse("a point-wise or barrier plugin without a GPU kernel");
                     }
                     (Some(VideoClass::Geometry | VideoClass::PointWise), Gpu::Barrier) => {
                         return refuse("a barrier GPU graph on a plugin that is not a barrier");

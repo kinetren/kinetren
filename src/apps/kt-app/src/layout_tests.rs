@@ -6430,7 +6430,7 @@ fn t356_repeated_notice_still_marks_unread() {
     // a project write error arrives as a warning, exactly
     let app = h.state_mut();
     app.notices.clear();
-    app.project_path = Some(unwritable_path("save"));
+    app.project_path = Some(unwritable_path("t356"));
     app.model_rev += 1;
     app.dirty_content = true;
     app.save();
@@ -12806,6 +12806,9 @@ pub(crate) fn harness_news_template() -> (Harness<'static, KtApp>, NewsScene) {
 #[test]
 fn t680_reel_preview_keys_are_per_instance() {
     use kt_model::*;
+    // the previews' lane is held: both requests are seen queued, however soon a worker would take one
+    let held = kt_time::sched::Vote::new(kt_time::sched::why::PLAYING);
+    held.set(true);
     let (mut h, s) = harness_news_template();
 
     // without overrides both editions share ONE key: projects that
@@ -19965,6 +19968,33 @@ fn t1604_a_failed_render_says_what_failed() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Test 3998b (render-result-check D2): a finished render whose written numbers fell short of the
+/// announced ones says both numbers of each pair; one that ended at its totals says neither.
+#[test]
+fn t3998b_a_short_render_says_both_numbers() {
+    let texts = |stats: kt_engine::export::ExportStats| -> Vec<String> {
+        let mut h = harness_lang(Lang::En);
+        scripted_render(h.state_mut());
+        h.state_mut().render_job.as_mut().unwrap().on_result(Ok(stats));
+        for _ in 0..3 {
+            h.step();
+        }
+        shown_texts(&h)
+    };
+    let full = kt_engine::export::ExportStats {
+        video_frames: 517,
+        announced_video: 517,
+        audio_frames: 413_364,
+        announced_audio: 413_364,
+        ..Default::default()
+    };
+    let said = texts(kt_engine::export::ExportStats { video_frames: 516, audio_frames: 412_672, ..full.clone() });
+    assert!(said.iter().any(|t| t == "frames written: 516 of 517"), "{said:?}");
+    assert!(said.iter().any(|t| t == "sound written: 412672 of 413364 samples"), "{said:?}");
+    let said = texts(full);
+    assert!(!said.iter().any(|t| t.contains(" written: ")), "a full render says a difference: {said:?}");
+}
+
 /// Test 965 (hw-encode-context D6): the encoder list offers a device encoder only with its device,
 /// and the progress row names the device.
 ///
@@ -21378,7 +21408,11 @@ fn t2903_the_window_states_the_size_and_the_prediction() {
     let mut h = harness_lang(Lang::En);
     // four seconds to render: an edit length with no event (as a foreign file's trailing gap)
     let mut p = h.state().model.project().clone();
-    p.timeline_end = Some(kt_time::Tick(4 * 90_000));
+    // the render's range starts after the moment the preview has shown: on a warm executor (another
+    // test of the process compiled its pipelines) that one is measured
+    let from = 2 * 90_000;
+    p.timeline_end = Some(kt_time::Tick(from + 4 * 90_000));
+    p.region = Some(kt_model::Region { start: kt_time::Tick(from), end: kt_time::Tick(from + 4 * 90_000) });
     h.state_mut().model = kt_model::TimelineModel::new(p);
     h.state().player.set_preview_quality(kt_media::Quality { width: 640, height: 360 });
     render_settings_scene(&mut h);
@@ -21397,7 +21431,7 @@ fn t2903_the_window_states_the_size_and_the_prediction() {
     // the range plays: every frame of it measured at 4 ms of device time at 640×360
     let step = 90_000 / 25;
     for i in 0..cost.frames as i64 {
-        h.state().player.note_preview_cost(kt_time::Tick(i * step), 4_000_000, (640, 360));
+        h.state().player.note_preview_cost(kt_time::Tick(from + i * step), 4_000_000, (640, 360));
     }
     h.step();
     let cost = h.state().render_cost();
@@ -22328,6 +22362,7 @@ fn t3830_an_untitled_project_caches_its_media() {
 ///   set to 2 GB: its size shows against it, marked full
 #[test]
 fn t3842_preferences_list_the_cache_folders() {
+    crate::alone::own_process!();
     use crate::i18n::{k, tr};
     use egui_kittest::kittest::Queryable;
     use kt_media::cache_folder::{Folder, registry};

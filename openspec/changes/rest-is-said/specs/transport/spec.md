@@ -7,8 +7,8 @@ Why: found-defects 960 — 398 passes in 40 s on a pause, for a source that neve
 had the rule, the near part did not (rest-is-said D6).
 
 #### Scenario: A source that never answers, and one that answers late
-- **WHEN** a paused preview stands on a Datamosh whose source never answers for 5 s after its requests are out; then the source answers one frame at a time
-- **THEN** no pass runs in the 5 s; each frame runs a pass, and the moment comes out complete
+- **WHEN** a paused preview stands on a Datamosh whose source holds every read, and the prefetch has parked with its requests out; a quiet window passes; then the source answers one frame at a time
+- **THEN** no pass runs in the window; each frame runs a pass, and the moment comes out complete
 - **TEST** t4123 (`src/libs/kt-engine/tests/decode_storm.rs`)
 
 #### Scenario: The preview's own wait is not lost

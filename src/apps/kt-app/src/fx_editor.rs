@@ -39,6 +39,8 @@ pub struct FxEditor {
     /// The leading “Geometry” node at the moment of opening (R.62): “Cancel”
     /// returns it too — it is part of the same strip.
     pub geo_backup: Vec<(ClipId, kt_model::EventGeometry, usize, Vec<kt_model::ParamCurve>)>,
+    /// The chains' wiring at the moment of opening (fx-graph-dag).
+    pub wire_backup: Vec<(ClipId, Vec<kt_model::SlotInputs>)>,
     /// Overrides of the reel instance at the moment of opening (R.63 item 12):
     /// “Composition parameters” moved as the HEAD into this window, so
     /// “Cancel” must return them too — otherwise the window would roll back half
@@ -74,6 +76,9 @@ pub struct FxEditor {
     pub pair_active: Option<ClipId>,
     pub open: bool,
 }
+
+/// The left margin of a chain's body in the effects window: past the window's resize edge (8 points).
+const BODY_MARGIN: f32 = 10.0;
 
 impl KtApp {
     /// Open the FX window. A window that already shows this chain (through its anchor
@@ -148,6 +153,11 @@ impl KtApp {
             .filter_map(|id| self.model.clip(*id))
             .map(|m| (m.id, m.fx.clone(), m.fx_auto.clone(), m.fx_bypass.clone(), m.fx_off))
             .collect();
+        let wire_backup = members
+            .iter()
+            .filter_map(|id| self.model.clip(*id))
+            .map(|m| (m.id, m.fx_in.clone()))
+            .collect();
         let gen_backup = members
             .iter()
             .filter_map(|id| self.model.clip(*id))
@@ -192,6 +202,7 @@ impl KtApp {
             picker_query: String::new(),
             inst_query: String::new(),
             backup,
+            wire_backup,
             gen_backup,
             geo_backup,
             ov_backup,
@@ -326,6 +337,8 @@ impl KtApp {
             fx: Option<Vec<FxInstance>>,
             auto: Option<Vec<Vec<kt_model::ParamCurve>>>,
             bypass: Option<Vec<bool>>,
+            /// The chain's wiring (fx-graph-dag): its slots go with it as one step of their own.
+            fx_in: Option<Vec<kt_model::SlotInputs>>,
             off: Option<bool>,
             /// Generator values of the event (R.59, stage 2) — `SetClipGen`.
             r#gen: Option<GeneratorKind>,
@@ -344,6 +357,8 @@ impl KtApp {
         let mut edits: Vec<Edited> = Vec::new();
         let mut revert = false;
         let mut lead_refused = false;
+        // a gesture the graph refused, in words (fx-graph-dag D8)
+        let mut graph_refused: Option<String> = None;
         // the mask lists' requests (shape-masks): applied after the window, under its gesture
         let mut mask_ops: Vec<(crate::maskctl::MaskOwner, Option<Vec<kt_model::Mask>>, crate::masks::ListOut)> =
             Vec::new();
@@ -441,6 +456,8 @@ impl KtApp {
                 {
                     let (mut vf, mut vb, mut va, v_lp) = spliced(&v);
                     let (af, ab, aa, _) = spliced(&a);
+                    let mut links = strip_links(&v);
+                    links.extend(kt_model::fx_strip::links_of(&a.fx_in, af.len(), vf.len()));
                     // what each event held: a side whose vectors did not change sends nothing (the
                     // other side's edit would come back through it — the model mirrors a device)
                     let before = [(vf.clone(), vb.clone(), va.clone()), (af.clone(), ab.clone(), aa.clone())];
@@ -487,6 +504,7 @@ impl KtApp {
                             keys: Vec::new(),
                             lane_of: Some(&mut lanes),
                             master2: Some(&mut a_on),
+                            links: &mut links,
                             viewer: true,
                         },
                         crate::fx_registry::PickKinds::Both,
@@ -538,6 +556,11 @@ impl KtApp {
                         out_a.sel = a_sel;
                     }
                     ed.pair_active = Some(active);
+                    out_v.w = kt_model::fx_strip::wiring_of(&links, &lanes, 0);
+                    out_a.w = kt_model::fx_strip::wiring_of(&links, &lanes, 1);
+                    if let Some(why) = ch.refused.clone() {
+                        graph_refused = Some(why);
+                    }
                     // what changed, per event (an equal command is no edit: both may send)
                     for (out, base, on0, n0, is_v) in [(&mut out_v, 0usize, !v.fx_off, n_v, true), (&mut out_a, n_v, !a.fx_off, n_a, false)] {
                         let was = &before[usize::from(!is_v)];
@@ -545,13 +568,24 @@ impl KtApp {
                         out.ch.bypass = ch.bypass && out.bypass != was.1;
                         out.ch.auto = ch.auto && out.auto != was.2;
                         out.ch.master = out.master != on0;
-                        out.ch.moved = ch.moved.filter(|(f, _)| (*f >= base) && (*f < base + n0)).map(|(f, t)| (f - base, t - base));
-                        out.ch.removed = ch.removed.filter(|i| (*i >= base) && (*i < base + n0)).map(|i| i - base);
+                        out.ch.wires = ch.wires;
+                        out.ch.from = ch.from.as_ref().map(|f| {
+                            let mine = |id: &usize| (base..base + n0).contains(id);
+                            (0..f.len())
+                                .filter(|k| (lanes[*k] == 1) != is_v)
+                                .map(|k| f[k].filter(|id| mine(id)).map(|id| id - base))
+                                .collect()
+                        });
                     }
                     pair_out.insert(vid, out_v);
                     pair_out.insert(aid, out_a);
                     ui.separator();
                 }
+                // no strip beside a chain's body (`v26.10` T8), and a margin past the window's resize edge: a
+                // curve's first key stands at the graph's left edge, and the edge took its click
+                let (indent, vline) = (ui.spacing().indent, ui.visuals().indent_has_left_vline);
+                ui.spacing_mut().indent = BODY_MARGIN;
+                ui.visuals_mut().indent_has_left_vline = false;
                 for (n, id) in members.iter().enumerate() {
                     let Some(clip) = self.model.clip(*id).cloned() else { continue };
                     let mut fx = clip.fx.clone();
@@ -575,6 +609,7 @@ impl KtApp {
                     let mut lead_auto = clip.geometry_auto.clone();
                     let mut lead_rule = clip.geometry.rule;
                     let mut chain_on = !clip.fx_off;
+                    let mut wiring = clip.fx_in.clone();
                     // HEAD of the strip (R.59, stage 2): for an event-generator
                     // it is its SOURCE, the first crumb before the effects —
                     // exactly as the owner asked. The values are edited right here,
@@ -596,8 +631,9 @@ impl KtApp {
                     egui::CollapsingHeader::new(head)
                         .id_salt(("fxgrp", id.0))
                         .default_open(n == 0 || members.len() <= 2)
-                        // no indent and no strip beside the body (`v26.10` T8)
-                        .show_unindented(ui, |ui| {
+                        .show(ui, |ui| {
+                            ui.spacing_mut().indent = indent;
+                            ui.visuals_mut().indent_has_left_vline = vline;
                             // the selected slot and the search row are taken into
                             // local variables: otherwise two fields of the same
                             // `ed` would be borrowed at the same time
@@ -664,6 +700,8 @@ impl KtApp {
                             let (mut fx_s, mut bypass_s, mut auto_s) =
                                 (fx.clone(), bypass.clone(), auto.clone());
                             let mut sel_s = sel_slot;
+                            let mut links_s = strip_links(&clip);
+                            let mut w_s;
                             if let Some(lp) = lead_pos0 {
                                 let lp = lp.min(fx_s.len());
                                 fx_s.insert(lp, lead_node.clone());
@@ -690,9 +728,10 @@ impl KtApp {
                                 auto_s = o.auto;
                                 sel_s = o.sel;
                                 chain_on = o.master;
+                                w_s = o.w;
                                 o.ch
                             } else {
-                                crate::node_editor::chain_graph(
+                                let ch = crate::node_editor::chain_graph(
                                 ui,
                                 ("fxchain", id.0),
                                 crate::widgets::ChainEdit {
@@ -715,6 +754,7 @@ impl KtApp {
                                     keys: Vec::new(),
                         lane_of: None,
                         master2: None,
+                                    links: &mut links_s,
                         viewer: true,
                                 },
                                 clip.kind == ClipKind::Audio,
@@ -729,8 +769,13 @@ impl KtApp {
                                 // an audio chain has no pictures: an audio thumbnail cannot be drawn
                                 // (the owner’s decision)
                                 if clip.kind == ClipKind::Audio { None } else { Some(&mut pv) },
-                            )
+                            );
+                                w_s = kt_model::fx_strip::wiring_of(&links_s, &vec![0; links_s.len()], 0);
+                                ch
                             };
+                            if let Some(why) = ch.refused.clone() {
+                                graph_refused = Some(why);
+                            }
                             ed.picker_query = query;
                             if let Some(t) = ch.open {
                                 open_ctx = Some(t);
@@ -742,24 +787,16 @@ impl KtApp {
                             }
                             // the SLOT MASKS follow their slots (shape-masks): the same move /
                             // removal in the strip's own indices (the lead spliced in, empty)
-                            if (ch.moved.is_some() || ch.removed.is_some()) && !clip.masks.slots.is_empty() {
-                                let mut ms: Vec<Vec<kt_model::Mask>> =
+                            if let Some(from) = ch.from.as_ref()
+                                && !clip.masks.slots.is_empty()
+                            {
+                                let mut was: Vec<Vec<kt_model::Mask>> =
                                     (0..fx.len()).map(|i| clip.masks.slot(i).to_vec()).collect();
                                 if let Some(lp) = lead_pos0 {
-                                    ms.insert(lp.min(ms.len()), Vec::new());
+                                    was.insert(lp.min(was.len()), Vec::new());
                                 }
-                                if let Some((a, b)) = ch.moved
-                                    && a < ms.len()
-                                {
-                                    let x = ms.remove(a);
-                                    ms.insert(b.min(ms.len()), x);
-                                }
-                                if let Some(i) = ch.removed
-                                    && i < ms.len()
-                                {
-                                    ms.remove(i);
-                                }
-                                ms.resize(fx_s.len(), Vec::new());
+                                let mut ms: Vec<Vec<kt_model::Mask>> =
+                                    from.iter().map(|f| f.and_then(|i| was.get(i).cloned()).unwrap_or_default()).collect();
                                 if let Some(li) = fx_s.iter().position(|f| f.is_lead_geometry())
                                     && li < ms.len()
                                 {
@@ -772,8 +809,10 @@ impl KtApp {
                             // the node with its position and curves. The cross on it is a refusal (rule 16):
                             // the node stays in the model, the person gets an error.
                             if lead_pos0.is_some() {
+                                let n_s = fx_s.len();
                                 match fx_s.iter().position(|f| f.is_lead_geometry()) {
                                     Some(li) => {
+                                        w_s = unsplice(w_s, n_s, Some(li));
                                         lead_node = fx_s.remove(li);
                                         if li < bypass_s.len() {
                                             bypass_s.remove(li);
@@ -795,6 +834,7 @@ impl KtApp {
                                     None => lead_refused = true,
                                 }
                             }
+                            wiring = w_s;
                             fx = fx_s;
                             bypass = bypass_s;
                             auto = auto_s;
@@ -1187,6 +1227,8 @@ impl KtApp {
                     {
                         edits.push(Edited {
                             clip: *id,
+                            // a side of a pair whose chain did not move sends nothing (D10)
+                            fx_in: (ch.wires && (ch.fx || wiring != clip.fx_in)).then_some(wiring),
                             fx: (ch.fx || params_changed.base).then_some(fx),
                             auto: (ch.auto || params_changed.curve).then_some(auto),
                             bypass: ch.bypass.then_some(bypass),
@@ -1230,6 +1272,8 @@ impl KtApp {
         // the file, because the name dialog lives in the application
         if let Some(mut block) = preset_save.take() {
             // the leading node is a property of the event and does not go into a chain preset
+            let n = block.slots.len();
+            block.fx_in = kt_model::fx_graph::without(&block.fx_in, n, |i| block.slots[i].fx.is_lead_geometry());
             block.slots.retain(|s| !s.fx.is_lead_geometry());
             self.preset_save = Some(crate::app::PresetSaveDialog {
                 block,
@@ -1274,6 +1318,9 @@ impl KtApp {
         if lead_refused {
             self.refuse(tr(k::fx::LEAD_LOCKED));
         }
+        if let Some(why) = graph_refused {
+            self.refuse(why);
+        }
         // the requests of the graph about the AXIS are applied in one place (R.40 item 15)
         self.apply_axis_req(axis_req);
         if let Some(t) = seek {
@@ -1311,6 +1358,21 @@ impl KtApp {
                 // a sound event the window's own edit took (a tone unticked) has nothing to roll back
                 if self.model.clip(id).is_none() {
                     continue;
+                }
+                // a chain that branches comes back with its wires, as one step (fx-graph-dag)
+                let was = ed.wire_backup.iter().find(|(c, _)| *c == id).map(|(_, w)| w.clone()).unwrap_or_default();
+                let geo = ed.geo_backup.iter().find(|(c, ..)| *c == id).cloned();
+                if self.model.clip(id).is_some_and(|c| c.fx_in != was) || !was.is_empty() {
+                    let mut cmds = vec![
+                        Command::SetFx { id, fx: fx.clone() },
+                        Command::SetFxBypass { id, bypass: bypass.clone() },
+                        Command::SetFxAuto { id, auto: auto.clone() },
+                    ];
+                    if let Some((id, geometry, pos, auto)) = geo {
+                        cmds.push(Command::SetGeometry { id, geometry, pos, auto });
+                    }
+                    cmds.push(Command::SetFxIn { id, fx_in: was });
+                    self.apply_batch(cmds);
                 }
                 self.set_fx_coalesced(id, fx, ed.gesture);
                 self.set_fx_auto_coalesced(id, auto, ed.gesture);
@@ -1391,6 +1453,42 @@ impl KtApp {
             } else {
                 ed.gesture
             };
+            // a chain that branches: its slots and its wires are one command batch, one step
+            // (fx-graph-dag D6); the masks of the slots go with it
+            if let Some(fx_in) = e.fx_in {
+                let Some(c) = self.model.clip(e.clip).cloned() else { continue };
+                let mut cmds = Vec::new();
+                if let Some(fx) = e.fx {
+                    cmds.push(Command::SetFx { id: e.clip, fx });
+                }
+                if let Some(mut bypass) = e.bypass {
+                    while bypass.last() == Some(&false) {
+                        bypass.pop();
+                    }
+                    cmds.push(Command::SetFxBypass { id: e.clip, bypass });
+                }
+                if let Some(mut auto) = e.auto {
+                    while auto.last().is_some_and(|v| v.is_empty()) {
+                        auto.pop();
+                    }
+                    cmds.push(Command::SetFxAuto { id: e.clip, auto });
+                }
+                if let Some((geometry, pos, auto)) = e.geometry {
+                    cmds.push(Command::SetGeometry { id: e.clip, geometry, pos, auto });
+                }
+                cmds.push(Command::SetFxIn { id: e.clip, fx_in });
+                if let Some(at) = slot_masks.iter().position(|(id, _)| *id == e.clip) {
+                    let mut m = c.masks.clone();
+                    m.slots = slot_masks.remove(at).1;
+                    m.canonicalize();
+                    cmds.push(Command::SetMasks { id: e.clip, masks: m });
+                }
+                if let Some(off) = e.off {
+                    cmds.push(Command::SetFxOff { id: e.clip, off });
+                }
+                self.apply_batch(cmds);
+                continue;
+            }
             if let Some(fx) = e.fx {
                 self.set_fx_coalesced(e.clip, fx, gesture);
             }
@@ -1453,9 +1551,9 @@ impl KtApp {
                 && let Some(kind) = c.r#gen.clone()
             {
                 // every event of the generator takes the values, and the sound that goes with them
-                let (remove, add) = self.gen_pair_cmds(c.media, None, &kind);
-                let set = Command::ApplyGenToAll { media: c.media, kind, auto: c.gen_auto.clone() };
-                self.apply_batch(remove.into_iter().chain(std::iter::once(set)).chain(add).collect());
+                let set = Command::ApplyGenToAll { media: c.media, kind: kind.clone(), auto: c.gen_auto.clone() };
+                let cmds = self.with_gen_sound(c.media, None, &kind, set);
+                self.apply_batch(cmds);
             }
         }
         // the slot masks moved with their slots (after `SetFx`, which trimmed them)
@@ -1789,6 +1887,13 @@ pub(crate) fn draw_video_fx_params(
             });
         };
     match f {
+        // a Merge's mode (fx-graph-dag D8): the list of its lane; the mix is the grid's row
+        FxInstance::Merge { mode, .. } => {
+            ui.horizontal(|ui| {
+                ui.label(tr(k::fx::graph::MODE));
+                ch.base |= crate::node_editor::merge_mode_combo(ui, "merge_mode", mode, 140.0);
+            });
+        }
         // the echo's flag row (a plugin slot since plugin-api-stage1, stage 3)
         FxInstance::Plugin(p) if p.id == "delay" => {
             let mut pingpong = p.get("pingpong") == Some(1.0);
@@ -2169,6 +2274,8 @@ struct PairOut {
     auto: Vec<Vec<kt_model::ParamCurve>>,
     sel: crate::widgets::ChainSel,
     master: bool,
+    /// The lane's wiring, the lead in it.
+    w: Vec<kt_model::SlotInputs>,
     ch: crate::widgets::ChainChanged,
 }
 
@@ -2180,6 +2287,7 @@ impl PairOut {
             auto: Vec::new(),
             sel: crate::widgets::ChainSel::Fx(0),
             master,
+            w: Vec::new(),
             ch: crate::widgets::ChainChanged::default(),
         }
     }
@@ -2219,6 +2327,71 @@ fn spliced(c: &kt_model::ClipEvent) -> (Vec<kt_model::FxInstance>, Vec<bool>, Ve
     (fx, bypass, auto, lp)
 }
 
+/// The wires of the chain as the editor shows it: the leading Geometry node spliced in at its place
+/// on the wiring (fx-graph-dag), `spliced`'s indices.
+fn strip_links(c: &kt_model::ClipEvent) -> Vec<kt_model::fx_strip::Links> {
+    let mut w = c.fx_in.clone();
+    let n = c.fx.len();
+    if c.kind == ClipKind::Video {
+        kt_model::fx_graph::insert_lead(&mut w, n, c.geometry_pos.min(n));
+        return kt_model::fx_strip::links_of(&w, n + 1, 0);
+    }
+    kt_model::fx_strip::links_of(&w, n, 0)
+}
+
+/// The wiring the model keeps, of the strip's: the leading Geometry node (slot `lead`) is the
+/// event's field, not a slot.
+fn unsplice(w: Vec<kt_model::SlotInputs>, n: usize, lead: Option<usize>) -> Vec<kt_model::SlotInputs> {
+    match lead {
+        Some(l) => kt_model::fx_strip::without_lead(&w, n, l).unwrap_or_default(),
+        None => w,
+    }
+}
+
+/// `extra` put after the strip slot `at` of an event whose chain branches (the picker's cells; the
+/// click does the same through the node editor). A chain that refuses it stays as it is.
+pub(crate) fn insert_after(c: &mut kt_model::ClipEvent, at: usize, extra: &[FxInstance]) {
+    let (fx, bypass, auto, lead) = spliced(c);
+    let n = fx.len();
+    let mut s = kt_model::fx_strip::Strip::new(&strip_links(c), &vec![0; n]);
+    s.block(0, Some(at), &[], extra.len());
+    if at >= n || s.settle().is_err() {
+        return;
+    }
+    let lead = lead.and_then(|l| s.from.iter().position(|id| *id == l));
+    let fx_in = unsplice(s.wiring(0), s.from.len(), lead);
+    let masks: Vec<Vec<kt_model::Mask>> = (0..n).map(|i| match lead_of(c) {
+        Some(l) if i == l => Vec::new(),
+        Some(l) if i > l => c.masks.slot(i - 1).to_vec(),
+        _ => c.masks.slot(i).to_vec(),
+    }).collect();
+    let keep = || s.from.iter().enumerate().filter(|(k, _)| Some(*k) != lead).map(|(_, id)| *id);
+    let new = c.fx.len() + extra.len();
+    c.masks.slots = keep().map(|id| masks.get(id).cloned().unwrap_or_default()).collect();
+    c.masks.canonicalize();
+    c.fx_bypass = keep().map(|id| bypass.get(id).copied().unwrap_or(false)).collect();
+    c.fx_auto = keep().map(|id| auto.get(id).cloned().unwrap_or_default()).collect();
+    c.fx = keep().filter_map(|id| fx.get(id).or_else(|| extra.get(id.wrapping_sub(n))).cloned()).collect();
+    debug_assert_eq!(c.fx.len(), new);
+    c.fx_in = fx_in;
+    if let Some(l) = lead {
+        c.geometry_pos = l;
+    }
+}
+
+fn lead_of(c: &kt_model::ClipEvent) -> Option<usize> {
+    (c.kind == ClipKind::Video).then(|| c.geometry_pos.min(c.fx.len()))
+}
+
+/// The event's chain cut to a node of its strip (the Viewer's cut), or to its Source.
+pub(crate) fn cut_to(c: &mut kt_model::ClipEvent, from: kt_model::fx_graph::Node) {
+    let v = match from {
+        kt_model::fx_graph::Node::Slot(i) => viewer_of(c, i, lead_of(c)),
+        kt_model::fx_graph::Node::Source => crate::node_editor::Viewer { clip: c.id, keep: Vec::new(), lead_on: true, name: String::new() },
+    };
+    v.cut_event(c);
+}
+
 /// A member's selection in the spliced chain's indices (the lead counted).
 fn splice_sel(sel: crate::widgets::ChainSel, lp: Option<usize>) -> crate::widgets::ChainSel {
     use crate::widgets::ChainSel;
@@ -2229,14 +2402,15 @@ fn splice_sel(sel: crate::widgets::ChainSel, lp: Option<usize>) -> crate::widget
     }
 }
 
-/// The Viewer of strip slot `i` of an event's chain (fx-graph D11): how many of the MODEL's slots
-/// stand up to and with it (the leading Geometry node is a field of the event, not a slot), and its
-/// name for the badge.
+/// The Viewer of strip slot `i` of an event's chain (fx-graph D11): the MODEL's slots that stay —
+/// the node and its ancestors (the leading Geometry node is a field of the event, not a slot) — and
+/// its name for the badge.
 fn viewer_of(c: &kt_model::ClipEvent, i: usize, lead: Option<usize>) -> crate::node_editor::Viewer {
-    let (keep, name) = match lead {
-        Some(lp) if i == lp => (lp, crate::fx_editor::fx_display_name(&c.geometry.node()).to_string()),
-        Some(lp) if i > lp => (i, c.fx.get(i - 1).map(|f| fx_display_name(f).to_string()).unwrap_or_default()),
-        _ => (i + 1, c.fx.get(i).map(|f| fx_display_name(f).to_string()).unwrap_or_default()),
+    let (slot, name) = match lead {
+        Some(lp) if i == lp => (lp.checked_sub(1), crate::fx_editor::fx_display_name(&c.geometry.node()).to_string()),
+        Some(lp) if i > lp => (Some(i - 1), c.fx.get(i - 1).map(|f| fx_display_name(f).to_string()).unwrap_or_default()),
+        _ => (Some(i), c.fx.get(i).map(|f| fx_display_name(f).to_string()).unwrap_or_default()),
     };
+    let keep = slot.map(|t| kt_model::fx_graph::ancestors(&c.fx_in, t)).unwrap_or_default();
     crate::node_editor::Viewer { clip: c.id, keep, lead_on: lead.is_none_or(|lp| i >= lp), name }
 }

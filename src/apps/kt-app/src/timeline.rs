@@ -136,6 +136,8 @@ pub const TPP_MAX: f64 = 2_000_000.0;
 /// audio strip, the kept composites over the green video strip, and the event's line.
 const FINAL_AUDIO: egui::Color32 = egui::Color32::from_rgb(214, 246, 255);
 const FINAL_VIDEO: egui::Color32 = egui::Color32::from_rgb(196, 255, 200);
+/// Between an event's coverage line and the row of a read of it (fx-graph-dag D2), and between rows.
+const READ_ROW_STEP: f32 = 3.0;
 const FINAL_LINE: egui::Color32 = egui::Color32::from_rgb(235, 255, 235);
 const RULER_LADDER: [i64; 10] =
     [900, 4_500, 9_000, 18_000, 45_000, 90_000, 900_000, 5_400_000, 54_000_000, 324_000_000];
@@ -2453,6 +2455,7 @@ impl KtApp {
         // the check took: seconds on a loaded machine, beside the very check it waited for
         // (test-hygiene, found-defects 133/170, live `edit_drag`, `cached_range`, `idle`)
         let final_snapshot = self.coverage_cache.final_runs.clone();
+        let read_rows = self.coverage_cache.per_read.clone();
 
         // ---- global cache strips (port: cyan=audio, green=video) --------
         {
@@ -5028,6 +5031,22 @@ impl KtApp {
                     ],
                     egui::Stroke::new(2.0, egui::Color32::from_rgb(110, 235, 110)),
                 );
+            }
+            // a row per read the event makes beyond its own, over the event's line (fx-graph-dag D2)
+            for (n, row) in read_rows.get(&c.id).into_iter().flatten().enumerate() {
+                let y = clip_rect.bottom() - 1.5 - READ_ROW_STEP * (n + 1) as f32;
+                let whole = [egui::pos2(clip_rect.left(), y), egui::pos2(clip_rect.right(), y)];
+                painter.line_segment(whole, egui::Stroke::new(2.0, egui::Color32::from_black_alpha(150)));
+                crate::widgets::field_probe::note(&format!("clip.{}.read.{n}", c.id.0), egui::Rect::from_two_pos(whole[0], whole[1]).expand(1.0));
+                for run in row {
+                    painter.line_segment(
+                        [
+                            egui::pos2(tick_to_x(run.start).max(clip_rect.left()), y),
+                            egui::pos2(tick_to_x(run.end).min(clip_rect.right()), y),
+                        ],
+                        egui::Stroke::new(2.0, egui::Color32::from_rgb(110, 235, 110)),
+                    );
+                }
             }
             // the part of the event that plays without work, bright over the decoded line
             let fin = match c.kind {

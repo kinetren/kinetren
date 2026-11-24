@@ -1,0 +1,4 @@
+- [x] 1. `journal::Lines`, `later`, the flushes; t3727, t3728
+- [x] 2. `map_watch`, t3726, live `map_lost`; the rig's `wait_wm`
+- [x] 3. `track.py` reads the refusal before its screenshot; t1913, t1914
+- [x] 4. Specs, found-defects 176, 830, 833, 954, 1002, What's new

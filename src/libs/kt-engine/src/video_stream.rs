@@ -467,17 +467,18 @@ fn input_slots(fx: &[kt_model::FxInstance]) -> Vec<usize> {
 /// `project_size` are the composite's, as `layer_src` resolves a camera with them.
 pub(super) fn link_stages(clips: &mut [VideoClip], cams: &[kt_model::CameraEvent], project_size: (u32, u32)) {
     // no stage, no snapshot: a build without a stream stage copies no event (frame-work-by-edit)
-    if clips.iter().all(|c| c.stream.is_none()) {
+    if !clips.iter().any(|c| c.stream.is_some() || c.reads.iter().any(|(_, r)| r.stream.is_some())) {
         return;
     }
     let snapshot: Vec<VideoClip> = clips.to_vec();
     let lite = |c: &VideoClip| {
         let mut c = c.clone();
         c.stream = None;
+        c.reads = Vec::new();
         c
     };
-    for c in clips.iter_mut() {
-        let Some(st) = c.stream.as_mut() else { continue };
+    let link = |c: &mut VideoClip| {
+        let Some(st) = c.stream.as_mut() else { return };
         // this build's own schedules: the stage may be the last build's, copied (edit-without-rebuild)
         st.plans = Default::default();
         // the masks of the slots in front cut them in the front run (found-defects 541): an edit of
@@ -532,6 +533,15 @@ pub(super) fn link_stages(clips: &mut [VideoClip], cams: &[kt_model::CameraEvent
             .zip(&st.second_front)
             .map(|(o, sl)| if sl.iter().any(|&i| o.fx[i].uses_camera()) { cams_key } else { 0 })
             .collect();
+    };
+    for c in clips.iter_mut() {
+        link(c);
+        // a read's stage is linked as its line's (fx-graph-dag D2); the joints are the layer's
+        let (head, tail) = (c.head_ext, c.tail_ext);
+        for (_, r) in c.reads.iter_mut() {
+            (r.head_ext, r.tail_ext) = (head, tail);
+            link(r);
+        }
     }
 }
 

@@ -607,3 +607,467 @@ fn t3237_datamosh_on_a_track_is_refused_with_its_reason() {
     pick(&mut h, "blur", "blur");
     assert_eq!(h.state().model.project().track(v1).unwrap().fx.len(), 1, "an ordinary effect did not land");
 }
+
+// ---- fx-graph-dag v2d: branches and merges ------------------------------------------------------
+
+fn at(name: &str) -> egui::Pos2 {
+    crate::widgets::field_probe::rect_of(name).unwrap_or_else(|| panic!("nothing published “{name}”")).center()
+}
+
+/// The node (its strip index) whose name label is `name`.
+fn node_of(h: &Harness<'_, KtApp>, name: &str) -> usize {
+    let label = node_label(h, name);
+    (0..16)
+        .find(|i| crate::widgets::field_probe::rect_of(&format!("fx.node.{i}")).is_some_and(|r| r.expand(1.0).contains_rect(label)))
+        .unwrap_or_else(|| panic!("“{name}” stands in no node"))
+}
+
+/// A wire let go on the empty space under the graph, then a row of the picker that opens there.
+fn branch(h: &mut Harness<'_, KtApp>, from: &str, search: &str, probe: &str) {
+    let g = crate::widgets::field_probe::rect_of("fx.graph").expect("the graph");
+    let to = egui::pos2(g.center().x, g.bottom() + 12.0);
+    drag(h, at(from), to);
+    pick_row(h, search, probe);
+}
+
+fn pick_row(h: &mut Harness<'_, KtApp>, search: &str, probe: &str) {
+    h.step();
+    h.event(egui::Event::Text(search.to_string()));
+    h.step();
+    h.step();
+    let c = at(probe);
+    h.hover_at(c);
+    h.step();
+    click_at(h, c);
+    h.step();
+}
+
+fn event(h: &Harness<'_, KtApp>) -> ClipEvent {
+    h.state().model.project().clips.iter().find(|c| c.id == ClipId(1)).unwrap().clone()
+}
+
+/// The wiring by names: slot → what its main, second and matte inputs read.
+fn wired(h: &Harness<'_, KtApp>) -> Vec<String> {
+    use kt_model::fx_graph::{Node, Socket, reads_of};
+    let c = event(h);
+    let name = |n: Node| match n {
+        Node::Source => "source".to_string(),
+        Node::Slot(j) => c.fx[j].tag().to_string(),
+    };
+    (0..c.fx.len())
+        .map(|i| {
+            let ins: Vec<String> = reads_of(&c.fx_in, i)
+                .map(|(n, s)| match s {
+                    Socket::Main => name(n),
+                    Socket::Second => format!("fg:{}", name(n)),
+                    Socket::Matte => format!("matte:{}", name(n)),
+                })
+                .collect();
+            format!("{}<{}", c.fx[i].tag(), ins.join(","))
+        })
+        .collect()
+}
+
+fn said(h: &Harness<'_, KtApp>) -> String {
+    h.state().error_status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default()
+}
+
+/// t3218 (fx-graph-dag D8): a wire from a node's output let go on empty space opens the picker
+/// there; the picked effect is a new arm (a row under the trunk, dim until it reaches Out); Merge is
+/// the picker's first row and takes the Output as its Background; a wire onto a Merge's Matte socket
+/// connects it; Slowed picked on the selected arm stands in the arm and is marked as a second read.
+/// Each gesture is one undo step, and "Cancel" of the window gives the line back.
+/// - **PATH** double click an event carrying a Blur → its node editor shows In → Geometry → Blur →
+///   Out → drag a wire from Geometry's output to the empty space below → the picker opens there →
+///   pick Vignette → a second row appears under the trunk with Vignette wired from Geometry → drag
+///   from Blur's output to the empty space → pick Merge → Merge stands before Out with Blur in
+///   Background → drag a wire from Vignette's output onto Merge's Matte socket → it connects →
+///   click Vignette and pick Slowed+Reverb → it stands after Vignette in the arm, marked "Reads the
+///   source again"
+#[test]
+fn t3218_a_branch_a_merge_and_a_matte_by_gestures() {
+    crate::plugins::install();
+    let mut h = fx_harness(vec![FxInstance::blur(3)]);
+    let line = event(&h);
+    let undo0 = h.state().model.undo_depth();
+    let lead = node_of(&h, crate::fx_editor::fx_display_name(&FxInstance::geometry()));
+    branch(&mut h, &format!("fx.out.{lead}"), "vignette", "fxreg.tpl.vignette");
+    assert_eq!(wired(&h), ["vignette<source", "blur<source"], "the arm did not start at the Geometry's output");
+    assert_eq!(h.state().model.undo_depth(), undo0 + 1, "the branch is not one undo step");
+    let (v, b) = (node_of(&h, "Vignette"), node_of(&h, "Blur"));
+    let r = |i: usize| crate::widgets::field_probe::rect_of(&format!("fx.node.{i}")).unwrap();
+    assert!(r(v).top() > r(b).bottom() - 1.0, "the arm is not a row under the trunk: {:?} {:?}", r(v), r(b));
+
+    branch(&mut h, &format!("fx.out.{b}"), "merge", "fxreg.merge");
+    assert_eq!(wired(&h), ["vignette<source", "blur<source", "merge<blur"], "Merge does not stand before Out on the blur");
+    assert_eq!(h.state().model.undo_depth(), undo0 + 2);
+
+    let (v, m) = (node_of(&h, "Vignette"), node_of(&h, "Merge"));
+    drag(&mut h, at(&format!("fx.out.{v}")), at(&format!("fx.matte.{m}")));
+    assert_eq!(wired(&h)[2], "merge<blur,matte:vignette", "the wire did not reach the Matte socket");
+    assert_eq!(h.state().model.undo_depth(), undo0 + 3);
+
+    // the picker's click adds after the selected node of a chain that branches
+    let label = node_label(&h, "Vignette").center();
+    h.hover_at(label);
+    h.step();
+    click_at(&mut h, label);
+    let add = at("fxreg.add");
+    h.hover_at(add);
+    h.step();
+    click_at(&mut h, add);
+    pick_row(&mut h, "slowed", "fxreg.tpl.slowed_reverb");
+    assert_eq!(
+        wired(&h),
+        ["vignette<source", "blur<source", "slowed_reverb<vignette", "merge<blur,matte:slowed_reverb"],
+        "Slowed did not land in the arm"
+    );
+    assert_eq!(h.state().model.undo_depth(), undo0 + 4);
+    let s = node_of(&h, "Slowed+Reverb");
+    assert!(crate::widgets::field_probe::rect_of(&format!("fx.read.{s}")).is_some(), "the second read is not marked");
+    let c = event(&h);
+    assert_eq!(kt_model::fx_graph::read_count(&c.fx, &c.fx_in), 2);
+
+    // four steps back: the line the window opened with, and forward again
+    for _ in 0..4 {
+        h.state_mut().undo();
+    }
+    h.step();
+    assert_eq!(event(&h), line, "four undos did not give the line back");
+    for _ in 0..4 {
+        h.state_mut().redo();
+    }
+    h.step();
+    h.step();
+    // the window's Cancel takes its whole session back, wires with slots
+    let cancel = at("fx.cancel");
+    h.hover_at(cancel);
+    h.step();
+    click_at(&mut h, cancel);
+    h.step();
+    assert_eq!(event(&h), line, "Cancel left the branches");
+}
+
+/// t3219 (fx-graph-dag D8): a wire dragged off a Merge's Foreground disconnects it and the arm, kept,
+/// is drawn dim; a node dropped on a wire of an arm stands on that wire; the cross on a slot of a
+/// chain that branches keeps the wiring (found-defects 903); the key of the table does the same.
+/// - **PATH** an event with Blur on the trunk, Vignette in an arm and a Merge → drag the wire off
+///   Merge's Foreground socket to empty space → Vignette is dim, the picture is the trunk's → drag
+///   from Vignette's output back onto the Foreground socket → drag Glow from the trunk onto the
+///   arm's wire → Glow stands in the arm → click the cross of Merge → Blur is the Output, the arm stays
+#[test]
+fn t3219_disconnect_insert_on_a_wire_and_remove() {
+    use kt_model::fx_graph::{FxIn, SlotInputs};
+    crate::plugins::install();
+    let mut h = fx_harness(vec![FxInstance::blur(3)]);
+    let merge = FxInstance::Merge { mode: MergeMode::Blend(BlendMode::Screen), mix: 1.0 };
+    // vignette(0, source) glow(1, source) blur(2) merge(3: blur, fg vignette)
+    let w = vec![
+        SlotInputs::default(),
+        SlotInputs { main: FxIn::Source, ..Default::default() },
+        SlotInputs::default(),
+        SlotInputs { main: FxIn::Prev, second: Some(FxIn::Slot(0)), matte: None },
+    ];
+    let fx = vec![FxInstance::builtin("vignette"), FxInstance::builtin("glow"), FxInstance::blur(3), merge];
+    assert!(h.state_mut().apply_batch(vec![
+        Command::SetFx { id: ClipId(1), fx },
+        Command::SetFxIn { id: ClipId(1), fx_in: w },
+    ]));
+    h.step();
+    h.step();
+    assert_eq!(wired(&h), ["vignette<source", "glow<source", "blur<glow", "merge<blur,fg:vignette"]);
+    let g = crate::widgets::field_probe::rect_of("fx.graph").unwrap();
+    let undo0 = h.state().model.undo_depth();
+    let m = node_of(&h, "Merge");
+    drag(&mut h, at(&format!("fx.fg.{m}")), egui::pos2(g.center().x, g.bottom() + 12.0));
+    assert_eq!(wired(&h)[3], "merge<blur", "the wire did not come off");
+    assert_eq!(event(&h).fx.len(), 4, "the arm went with its wire");
+    assert_eq!(h.state().model.undo_depth(), undo0 + 1);
+    let v = node_of(&h, "Vignette");
+    drag(&mut h, at(&format!("fx.out.{v}")), at(&format!("fx.fg.{m}")));
+    assert_eq!(wired(&h)[3], "merge<blur,fg:vignette");
+    // Glow onto the wire from the arm into the Merge
+    let (glow, wire) = (node_label(&h, "Glow").center(), at(&format!("fx.wire.{m}.fg")));
+    drag(&mut h, glow, wire);
+    assert_eq!(wired(&h), ["vignette<source", "glow<vignette", "blur<source", "merge<blur,fg:glow"], "Glow is not on the arm's wire");
+    // Delete over the graph: the selected node of a chain that branches goes with its wires kept
+    let label = node_label(&h, "Glow").center();
+    h.hover_at(label);
+    h.step();
+    click_at(&mut h, label);
+    h.key_press(egui::Key::Delete);
+    h.step();
+    h.step();
+    assert_eq!(wired(&h), ["vignette<source", "blur<source", "merge<blur,fg:vignette"], "Delete broke the wiring");
+    // the Merge's cross: its Background is the Output again, the arm stays and dangles
+    let m = node_of(&h, "Merge");
+    let node = crate::widgets::field_probe::rect_of(&format!("fx.node.{m}")).unwrap();
+    let x = h.query_all_by_label(crate::icons::CLEAR).map(|n| n.rect()).find(|r| node.contains_rect(*r)).expect("Merge's cross");
+    h.hover_at(x.center());
+    h.step();
+    click_at(&mut h, x.center());
+    h.step();
+    assert_eq!(wired(&h), ["vignette<source", "blur<source"]);
+    let c = event(&h);
+    assert_eq!(kt_model::fx_graph::reaches_output(&c.fx_in, 2), [false, true], "the blur is not the Output");
+}
+
+/// t3220 (fx-graph-dag D8, rule 16): what the graph cannot do is refused in the status line and
+/// changes nothing — the leading Geometry into an arm, a wire that closes a loop, a wire across
+/// lanes, a fifth read, a picture's Merge mode never offered on the sound lane.
+/// - **PATH** in a graph with an arm drag the Geometry node onto the arm's wire → the status line
+///   says it stays before the first branch → drag a wire from Merge onto Blur's input → "would close
+///   a loop" → in a morpher drag a wire from a picture node onto a sound node → refused → add a Merge
+///   on the sound lane → its mode list is Sum and Crossfade
+#[test]
+fn t3220_refusals_name_their_reason_and_change_nothing() {
+    use kt_model::fx_graph::{FxIn, SlotInputs};
+    crate::plugins::install();
+    let mut h = fx_harness(vec![FxInstance::blur(3)]);
+    let mosh = FxInstance::plugin("datamosh").unwrap();
+    let merge = || FxInstance::Merge { mode: MergeMode::default(), mix: 1.0 };
+    let src = || SlotInputs { main: FxIn::Source, ..Default::default() };
+    let onto = |main: u32| SlotInputs { main: FxIn::Slot(main), second: Some(FxIn::Prev), matte: None };
+    // three Datamosh arms merged one by one over a blur: four reads
+    let fx = vec![FxInstance::blur(3), mosh.clone(), merge(), mosh.clone(), merge(), mosh, merge()];
+    let w = vec![SlotInputs::default(), src(), onto(0), src(), onto(2), src(), onto(4)];
+    assert!(h.state_mut().apply_batch(vec![Command::SetFx { id: ClipId(1), fx }, Command::SetFxIn { id: ClipId(1), fx_in: w }]));
+    h.step();
+    h.step();
+    let c = event(&h);
+    assert_eq!(kt_model::fx_graph::read_count(&c.fx, &c.fx_in), kt_model::fx_graph::MAX_READS, "scene");
+    let lead = node_of(&h, crate::fx_editor::fx_display_name(&FxInstance::geometry()));
+    // a fifth read
+    branch(&mut h, &format!("fx.out.{lead}"), "slowed", "fxreg.tpl.slowed_reverb");
+    // dangling it opens nothing: the read is refused where it would reach Out
+    let dangling = event(&h);
+    let s = node_of(&h, "Slowed+Reverb");
+    let last = (0..16).filter(|i| crate::widgets::field_probe::rect_of(&format!("fx.matte.{i}")).is_some()).max().unwrap();
+    drag(&mut h, at(&format!("fx.out.{s}")), at(&format!("fx.matte.{last}")));
+    assert_eq!(event(&h), dangling, "a fifth read was made");
+    assert_eq!(said(&h), crate::tf!(k::fx::graph::WHY_READS, kt_model::fx_graph::MAX_READS));
+    // a loop: the Output into the first blur
+    let b = node_of(&h, "Blur");
+    drag(&mut h, at(&format!("fx.out.{last}")), at(&format!("fx.in.{b}")));
+    assert_eq!(event(&h), dangling, "a loop was made");
+    assert_eq!(said(&h), tr(k::fx::graph::WHY_LOOP));
+    // the lead into an arm: onto Slowed's wire
+    let geo = crate::widgets::field_probe::rect_of(&format!("fx.slot.{lead}")).unwrap_or_else(|| node_label(&h, crate::fx_editor::fx_display_name(&FxInstance::geometry())));
+    let to = node_label(&h, "Slowed+Reverb").center();
+    drag(&mut h, geo.center(), to);
+    assert_eq!(event(&h), dangling, "the lead moved into an arm");
+    assert_eq!(said(&h), tr(k::fx::graph::WHY_LEAD));
+
+    // across lanes, and the sound lane's Merge
+    let mut h = morpher_harness(MorphPatch {
+        video_fx: vec![FxInstance::blur(4)],
+        audio_fx: vec![FxInstance::plugin("gain").unwrap()],
+        ..Default::default()
+    });
+    let before = patch(&h);
+    let (b, g) = (node_of(&h, "Blur"), node_of(&h, crate::fx_editor::fx_display_name(&FxInstance::plugin("gain").unwrap())));
+    drag(&mut h, at(&format!("fx.out.{b}")), at(&format!("fx.in.{g}")));
+    assert_eq!(patch(&h), before, "a wire crossed the lanes");
+    assert_eq!(said(&h), tr(k::fx::graph::LANE_REFUSED));
+    let gr = crate::widgets::field_probe::rect_of("fx.graph").unwrap();
+    drag(&mut h, at(&format!("fx.out.{g}")), egui::pos2(gr.center().x, gr.bottom() + 12.0));
+    pick_row(&mut h, "merge", "fxreg.merge");
+    let p = patch(&h);
+    assert_eq!(tags(&p.audio_fx), ["gain", "merge"], "the Merge is not on the sound lane");
+    assert!(matches!(p.audio_fx[1], FxInstance::Merge { mode: MergeMode::Sum, .. }), "{:?}", p.audio_fx[1]);
+    assert_eq!(tags(&p.video_fx), ["blur"]);
+}
+
+/// t3207 (fx-graph-dag D3): the Viewer on a node of an arm gives the player the node and what it is
+/// made from — not the slots that stand before it in the list; Esc gives the whole graph back and
+/// the model never changes.
+/// - **PATH** an event with Glow on the trunk and Vignette in an arm, merged → Ctrl+Shift+click
+///   Vignette → the preview shows the vignette alone with the badge "Viewer: Vignette" → press Esc →
+///   the full picture
+#[test]
+fn t3207_the_viewer_shows_a_node_of_an_arm_by_its_ancestors() {
+    use kt_model::fx_graph::{FxIn, SlotInputs};
+    crate::plugins::install();
+    let mut h = fx_harness(vec![FxInstance::blur(3)]);
+    let fx = vec![FxInstance::builtin("glow"), FxInstance::builtin("vignette"), FxInstance::Merge { mode: MergeMode::default(), mix: 1.0 }];
+    let w = vec![
+        SlotInputs::default(),
+        SlotInputs { main: FxIn::Source, ..Default::default() },
+        SlotInputs { main: FxIn::Slot(0), second: Some(FxIn::Prev), matte: None },
+    ];
+    assert!(h.state_mut().apply_batch(vec![Command::SetFx { id: ClipId(1), fx }, Command::SetFxIn { id: ClipId(1), fx_in: w }]));
+    h.step();
+    h.step();
+    let before = h.state().model.project().clone();
+    let label = node_label(&h, "Vignette");
+    h.hover_at(label.center());
+    h.step();
+    let mods = egui::Modifiers { ctrl: true, shift: true, command: true, ..Default::default() };
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: label.center(), button: egui::PointerButton::Primary, pressed, modifiers: mods });
+    }
+    h.step();
+    h.step();
+    assert_eq!(h.state().viewer.as_ref().map(|v| v.name.clone()), Some("Vignette".to_string()));
+    let played = |h: &Harness<'_, KtApp>| {
+        let p = h.state().player.project();
+        let c = p.clips.iter().find(|c| c.id == ClipId(1)).unwrap().clone();
+        (c.fx.iter().map(|f| f.tag().to_string()).collect::<Vec<_>>(), c.fx_in.clone())
+    };
+    assert_eq!(played(&h), (vec!["vignette".to_string()], vec![]), "the player did not get the arm alone");
+    assert_eq!(h.state().model.project(), &before, "the Viewer changed the model");
+    h.key_press(egui::Key::Escape);
+    h.step();
+    h.step();
+    assert_eq!(played(&h).0.len(), 3, "Esc did not give the graph back");
+}
+
+/// t3299 (fx-graph-dag D2, D3): the coverage strip and the picker's cells know the graph — an event
+/// with Slowed in an arm has a second row over its own line whose ticks are what that read has warm,
+/// and a candidate cell stands after the selected node of an arm, a branch's on the arm alone.
+/// - **PATH** put Slowed in an arm of an event → a second thin row stands over the event's coverage
+///   line on the timeline → open Diagnostics → the performance section says "Reads ×1: #1
+///   Slowed+Reverb"
+#[test]
+fn t3299_a_read_has_its_row_and_a_cell_its_place() {
+    use kt_model::fx_graph::{FxIn, Node, SlotInputs};
+    crate::plugins::install();
+    let mut h = fx_harness(vec![FxInstance::blur(3)]);
+    let fx = vec![FxInstance::slowed_reverb(0.5, 0.35, 100.0), FxInstance::blur(3), FxInstance::Merge { mode: MergeMode::default(), mix: 1.0 }];
+    let w = vec![
+        SlotInputs::default(),
+        SlotInputs { main: FxIn::Source, ..Default::default() },
+        SlotInputs { main: FxIn::Prev, second: Some(FxIn::Slot(0)), matte: None },
+    ];
+    assert!(h.state_mut().apply_batch(vec![Command::SetFx { id: ClipId(1), fx }, Command::SetFxIn { id: ClipId(1), fx_in: w }]));
+    let wait = kt_time::test_deadline();
+    while h.state().player.video_read_rows().is_empty() {
+        assert!(std::time::Instant::now() < wait, "the engine never listed the read");
+        h.step();
+    }
+    let row = h.state().player.video_read_rows().remove(0);
+    assert_eq!((row.clip, row.opens.tag()), (ClipId(1), "slowed_reverb"));
+    // half the speed walks half the material over the same window
+    assert_eq!((row.end - row.start).0, 180_000);
+    assert_eq!(row.material.1 - row.material.0, 90_000);
+    while crate::widgets::field_probe::rect_of("clip.1.read.0").is_none() {
+        assert!(std::time::Instant::now() < wait, "no row of the read over the event's line");
+        h.step();
+    }
+
+    // the cells: after the selected node of the arm; a branch — the arm alone
+    let p = h.state().model.project().clone();
+    let cand = [FxInstance::builtin("glow")];
+    let chain = |place| {
+        let q = crate::fx_thumbs::with_candidate(&p, place, &cand, None).expect("a scene");
+        let c = q.clips.iter().find(|c| c.id == ClipId(1)).unwrap().clone();
+        q.validate().expect("the cell's project is valid");
+        (c.fx.iter().map(|f| f.tag().to_string()).collect::<Vec<_>>(), c.fx_in)
+    };
+    use crate::fx_thumbs::Place;
+    // the strip: Geometry 0, Slowed 1, Blur 2, Merge 3
+    let (tags, w) = chain(Place::After(ClipId(1), 1));
+    assert_eq!(tags, ["slowed_reverb", "blur", "glow", "merge"]);
+    assert_eq!((w[2].main, w[3].main, w[3].second), (FxIn::Slot(0), FxIn::Slot(1), Some(FxIn::Prev)), "the candidate is not on the arm into the Merge");
+    assert_eq!(chain(Place::Arm(ClipId(1), Node::Slot(2))), (vec!["blur".into(), "glow".into()], vec![]));
+    assert_eq!(chain(Place::Clip(ClipId(1))).0, ["slowed_reverb", "blur", "merge", "glow"], "the tail is not the tail");
+}
+
+/// t3240 (fx-graph-dag D6, D8): branches where a chain is not one event's line — the sound lane of a
+/// pair's one editor (the video event's wiring untouched), a device's halves leaving a pair whose
+/// sound branches, a track's chain with the window's Cancel, and a copied graph pasted after itself.
+/// - **PATH** double click a linked event carrying Blur, VHS Tape and a Gain on its sound → drag a
+///   wire from Gain's output to empty space → pick Compressor → Merge it → only the sound lane has a
+///   second row → click the cross of VHS Tape → both halves go, the sound's branch stays → Copy the
+///   chain, Paste → the branches come twice → open the video track's window, branch from In → Cancel
+///   → the track is as it was
+#[test]
+fn t3240_branches_on_a_pair_a_device_a_track_and_a_paste() {
+    crate::plugins::install();
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    p.clips.push(clip(1, ClipKind::Video, vec![FxInstance::blur(3)]));
+    p.clips.push(clip(2, ClipKind::Audio, vec![FxInstance::plugin("gain").unwrap()]));
+    p.validate().unwrap();
+    app.model = TimelineModel::new(p);
+    assert!(app.apply(Command::SetFx { id: ClipId(1), fx: vec![FxInstance::blur(3), FxInstance::builtin("vhs_tape")] }));
+    app.open_fx_editor(ClipId(1));
+    h.step();
+    h.step();
+    let of = |h: &Harness<'_, KtApp>, id: u64| h.state().model.clip(ClipId(id)).unwrap().clone();
+    assert_eq!(tags(&of(&h, 2).fx), ["gain", "vhs_tape_sound"], "scene");
+    let gain = node_of(&h, crate::fx_editor::fx_display_name(&FxInstance::plugin("gain").unwrap()));
+    branch(&mut h, &format!("fx.out.{gain}"), "compressor", "fxreg.tpl.compressor");
+    let comp = node_of(&h, crate::fx_editor::fx_display_name(&FxInstance::plugin("compressor").unwrap()));
+    branch(&mut h, &format!("fx.out.{comp}"), "merge", "fxreg.merge");
+    let a = of(&h, 2);
+    assert_eq!(tags(&a.fx), ["gain", "compressor", "vhs_tape_sound", "merge"], "{:?}", a.fx_in);
+    assert!(!a.fx_in.is_empty() && of(&h, 1).fx_in.is_empty(), "the wiring is not the sound lane's alone");
+    assert_eq!(kt_model::fx_graph::reaches_output(&a.fx_in, 4), [true; 4]);
+    // the device leaves both lanes by one cross: the sound's branch stays and the project is valid
+    let tape = node_label(&h, "VHS Tape");
+    let x = h
+        .query_all_by_label(crate::icons::CLEAR)
+        .map(|n| n.rect())
+        .filter(|r| (r.center().y - tape.center().y).abs() < 8.0 && r.left() > tape.right() - 1.0)
+        .min_by(|a, b| a.left().total_cmp(&b.left()))
+        .expect("VHS Tape's cross");
+    h.hover_at(x.center());
+    h.step();
+    click_at(&mut h, x.center());
+    h.step();
+    let a = of(&h, 2);
+    assert_eq!((tags(&of(&h, 1).fx), tags(&a.fx)), (vec!["blur"], vec!["gain", "compressor", "merge"]));
+    assert_eq!(kt_model::fx_graph::reaches_output(&a.fx_in, 3), [true; 3], "{:?}", a.fx_in);
+    assert!(said(&h).is_empty(), "an edit was refused: {}", said(&h));
+    h.state().model.project().validate().unwrap();
+
+    // a copied graph pasted after itself keeps its branches
+    let mut h = fx_harness(vec![FxInstance::blur(3)]);
+    let lead = node_of(&h, crate::fx_editor::fx_display_name(&FxInstance::geometry()));
+    branch(&mut h, &format!("fx.out.{lead}"), "vignette", "fxreg.tpl.vignette");
+    let v = node_of(&h, "Vignette");
+    branch(&mut h, &format!("fx.out.{v}"), "merge", "fxreg.merge");
+    assert_eq!(wired(&h), ["vignette<source", "blur<source", "merge<blur,fg:vignette"]);
+    let c = event(&h);
+    let block = kt_model::ops::FxChainBlock {
+        slots: c.fx.iter().map(|f| kt_model::ops::FxSlotBlock { fx: f.clone(), bypass: false, curves: vec![], masks: vec![] }).collect(),
+        src_in: kt_time::Tick(0),
+        fx_off: false,
+        fx_in: c.fx_in.clone(),
+    };
+    h.state_mut().fx_clipboard = Some(block);
+    // nothing selected in the lane's middle: the paste goes after the Output
+    let m = node_label(&h, "Merge").center();
+    h.hover_at(m);
+    h.step();
+    click_at(&mut h, m);
+    h.step();
+    let paste = h.get_by_label(tr(k::fx::PASTE_CHAIN)).rect().center();
+    h.hover_at(paste);
+    h.step();
+    click_at(&mut h, paste);
+    h.step();
+    assert_eq!(
+        wired(&h)[3..],
+        ["vignette<merge", "blur<merge", "merge<blur,fg:vignette"],
+        "the pasted graph is not its branches over the Output"
+    );
+
+    // a video track's chain: In has no Geometry after it, a branch starts right there
+    let mut h = harness();
+    let v1 = h.state().model.project().track_at(LaneKind::Video, 0).unwrap().id;
+    assert!(h.state_mut().apply(Command::SetTrackFx { id: v1, fx: vec![FxInstance::blur(3)], bypass: vec![] }));
+    let before = h.state().model.project().track(v1).cloned();
+    h.state_mut().open_track_window(v1);
+    h.step();
+    h.step();
+    branch(&mut h, "fx.src.0", "vignette", "fxreg.tpl.vignette");
+    let t = h.state().model.project().track(v1).unwrap().clone();
+    assert_eq!((tags(&t.fx), t.fx_in.len()), (vec!["vignette", "blur"], 2), "the track has no branch");
+    click_at(&mut h, crate::widgets::field_probe::rect_of("track.cancel").unwrap().center());
+    h.step();
+    assert_eq!(h.state().model.project().track(v1).cloned(), before, "Cancel left the track's branch");
+}

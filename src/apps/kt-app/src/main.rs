@@ -7,6 +7,8 @@
 // Debug builds keep the console for eprintln diagnostics.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+#[cfg(test)]
+mod alone;
 mod analysis;
 mod app;
 mod audio_out;
@@ -57,14 +59,17 @@ mod isp_panel;
 mod journal;
 #[cfg(test)]
 mod layout_tests;
+mod later;
 mod lessons;
 mod load_watch;
 #[cfg(test)]
 mod mask_tests;
 mod maskctl;
 mod masks;
+mod map_watch;
 mod meters;
 mod morpher_editor;
+mod graph_layout;
 mod node_editor;
 mod project_lock;
 mod plugins;
@@ -115,6 +120,11 @@ fn main() -> eframe::Result {
     kt_media::frame_alloc::return_large_frames_to_os();
     // a throwaway process that meets a hardware driver for the render (hw-encode-context D10)
     kt_media::muxer::hw_trial::serve();
+    // a run of ours never writes into a person's data (own-data-dir, found-defects 829)
+    if let Some(var) = kt_dirs::rig_without_data_dir(&kt_dirs::SystemEnv) {
+        eprintln!("{var} is set and neither KINETREN_DATA_DIR nor XDG_DATA_HOME: a rig gives the program a data directory of its own");
+        std::process::exit(2);
+    }
     // the first process watches the editor and shows the crash window (render-crash-and-recovery)
     if let Some(code) = supervisor::run() {
         std::process::exit(code);

@@ -1,72 +1,55 @@
 # Proposal: memory-breakdown
 
-> DESIGN ONLY (spec session, 2026-11-20). Registry `v26.10-index.md` Q1–Q3 (no). Note F-RES-011 (refreshed).
-> Tests reserved: t3962–t3967.
+> DESIGN ONLY, revision 3 (2026-11-24, base `0c2a4065`): made implementation-ready against today's code (design D0);
+> revision 2 had the owner's B12. Registry `v26.10-index.md` Q1–Q3. Tests: t3962–t3965, t4232–t4234. No open question.
 
 ## Why
 
-The owner, `v26.10` lines 143–145: "Счеткик ОЗУ внизу основного окна не равен счетчику ОЗУ в окне диагностики … процесс
-kt вообще может занимать 4гб или 10, а счетчик отражает только 500мб … внизу окна хочется компактный счетчик видеть, а в
-окне диагностики все-таки какой-то раскрытый список-1d-граф заполнения по секциям - что где и чего, и я не про тупое
-чтение procinfo, мы должны не только базовую procinfo вывести но еще и распределить в ней информацию по нашему
-управлению памятью и постоянной памятью проекта, тот же ktindex."
+The owner's items, whole:
 
-Since then both counters read the process's resident memory (frames-cache-growth), and memory-ledger prints the caches'
-tenants in one Diagnostics line. What is missing is his item 3: the whole resident memory split into OUR sections, as a
-bar, and the project's memory on disk.
+- `v26.10.txt` lines 143–145:
+  > 1. Счеткик ОЗУ внизу основного окна не равен счетчику ОЗУ в окне диагностики, они действительно разные вещи считают или что?
+  > 2. Даже если считают разные вещи - процесс kt вообще может занимать 4гб или 10, а счетчик отражает только 500мб, что тоже странно
+  > 3. впринципе внизу окна хочется компактный счетчик видеть, а в окне диагностики все-таки какой-то раскрытый
+  > список-1d-граф заполнения по секциям - что где и чего, и я не про тупое чтение procinfo, мы должны не только базовую
+  > procinfo вывести но еще и распределить в ней информацию по нашему управлению памятью и постоянной памятью проекта, тот
+  > же ktindex.
+- `kkt-26.11.20b.txt` lines 25–26 (B12): the counter — "к текущему добавить vram, и убрать лишнее, ну и в gb показывать, а
+  при наведении - раскрывать что-то еще показывать"; the project's disk — "Только проекта (Recommended)".
+
+**The reading, checked.** "К текущему добавить vram, и убрать лишнее": the current counter is two items, "frames: V/cap MB"
+and "memory: P MB". The memory stays, VRAM joins, the frames pair is what goes (revision 2 dropped only the word
+"memory"). "При наведении раскрывать": by the standing rule there are no pop-ups (t83, the owner's R.8), and the one
+hint's place is the status line; the counter's own hint expands there, and a click opens the section. "Тот же ktindex": since
+project-cache-folder (merged 2026-11-24) `ktindex.db` is no more, its content is the `media/` part of the cache folder, so
+the third bar is the folder's parts. Items 1 and 2 were closed by frames-cache-growth: both numbers are the process's.
 
 ## What Changes
 
-- **Every large holder reports into the ledger.** Besides the cache tenants, report-only accounts (they are never
-  granted, only counted): the project model and its undo history, the timeline's waveform peaks and thumbnails in
-  memory, the reel previews, the interface's textures (egui), open decoders (their frame pools), the audio render's
-  state (effects' buffers, the ring), glyph atlases and fonts. Each account is opened by its owner and kept current
-  by it (a byte count it already knows; the model's by a cheap estimate per revision).
-- **The Diagnostics "Memory" section draws one bar** of the resident memory: one coloured segment per section, the
-  sections ordered by size, "not counted" as the rest (resident minus the accounts); hovering a segment names it with
-  MB and what it is; under the bar the same in a list. A second bar shows the GPU's memory (the device pools and
-  textures kt-gpu holds), labelled as video memory.
-- **The project on disk**: a third bar, the project's stores: the sidecar index (`<project>.ktindex.db`: peaks,
-  thumbnails, packet index), the project's cache folder (prerender, stream history, disk copies — change
-  `project-cache-folder`), the recovery file; sizes read when the section opens and every 5 s while it is open.
-- **The status bar counter shows two numbers in GB, nothing else**: the resident memory and the video memory
-  ("3.2 GB · VRAM 1.1 GB", the owner's B12); its hover expands the sections of both and the project on disk.
+- **Two new kinds in the ledger**, counted and never granted: open decoders' picture pools and the audio render's state.
+- **A "Memory" section in Diagnostics**: one bar of the process's memory by section, the rest as "not counted"; a bar of
+  video memory; a bar of the project's disk. A list under each. It takes the place of the one line "Caches: …".
+- **The status bar**: "3.2 GB · VRAM 1.1 GB" alone; its hint expands the largest sections; a click opens the section.
+- **Video memory is measured**, by the graphics library's own counters of every device the program opened.
 
 ## Capabilities
 
 ### Modified Capabilities
 
-- `telemetry`: report-only ledger accounts; the breakdown's arithmetic (sections + not counted = resident).
-- `ui-reach`: the Memory section's bars and list; the status counter's hover.
+- `telemetry`: the sections, their arithmetic, the video memory's measure.
+- `ui-timeline`: the requirement "The memory numbers say what they count…" (replaced by B12).
+- `ui-reach`: the section's bars, the counter's hint and click.
 
 ## Impact
 
-- kt-time (`mem.rs`): report-only tenant kinds (`Model`, `Undo`, `Peaks`, `Thumbs`, `ReelPreview`, `UiTextures`,
-  `Decoders`, `AudioState`, `Fonts`), `report(kind, bytes)`; the snapshot carries them; `GROWING` unchanged.
-- kt-model: a byte estimate of a project and of the undo stack, updated per revision (summed field sizes, no
-  serialization).
-- kt-engine, kt-media, kt-app, kt-text: their holders report.
-- kt-gpu: the device's bytes by pool for the second bar.
-- kt-app: the Diagnostics section, the status hover, i18n ×5.
-- No format change. Idle: the counters are numbers kept by their owners; the disk sizes are read only while the
-  section is open.
+- kt-time `mem.rs`: `Tenant::{Decoders, AudioState}`, `KINDS` 10; `Tenant::on_device`.
+- kt-gpu: wgpu's `counters` feature, `memory::video()`; kt-ffmpeg/kt-media: the decoders' account; kt-engine `fxstore.rs`:
+  the audio state's.
+- kt-model: `Project::approx_bytes`, `TimelineModel::memory`.
+- kt-app: `mem_view.rs` (new), `app.rs`, i18n ×5.
+- No format change. OTIO: nothing. Idle: nothing is read while neither the counter's hint nor the section is on screen, but
+  the two numbers of the bar in frames drawn anyway, once a second, as today.
 
 ## Questions to the owner
 
-Decided (2026-11-22, `kkt-26.11.20b` B12, lines 25–26): Q1 revised by his words "к текущему добавить vram, и убрать
-лишнее, ну и в gb показывать, а при наведении - раскрывать что-то еще показывать" — the bottom counter shows the
-resident memory plus the video memory, nothing else, in GB, and its hover expands the rest; Q2 (a) "Только проекта
-(Recommended)" — the disk bar shows only the project's stores.
-
-The questions as asked:
-
-**Q1. The compact counter at the bottom.** Your words: "внизу окна хочется компактный счетчик видеть". Today it shows
-the process's resident memory ("memory: 3200 MB").
-- (a) **Resident memory only; its hover lists the three largest sections and the video memory** (*recommended*: one
-  number that matches the Diagnostics bar's total).
-- (b) Resident and video memory side by side ("3.2 GB · VRAM 1.1 GB").
-
-**Q2. "Постоянная память проекта" — which disk stores.**
-- (a) **The project's own: the sidecar index, the project's cache folder, the recovery file** (*recommended*: what
-  this project costs on disk and can be cleared).
-- (b) Also the program's own data (the library of downloads, logs, the telemetry journal).
+None. Q1–Q2 as asked are in the git history of this file (800f7b45).

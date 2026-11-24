@@ -948,3 +948,102 @@ fn t3820_an_export_on_the_hosts_device_crosses_nothing() {
     assert_eq!(a.len(), b.len());
     assert!(a == b, "the two exports write the same frames");
 }
+
+/// The scene of t3228: shot B merges its blurred trunk with a posterized Datamosh arm (`arm`), or is
+/// the arm's path alone as a line.
+fn project_arm(arm: bool) -> Project {
+    use kt_model::fx_graph::{FxIn, SlotInputs};
+    let mut p = project_order(Some(3.0), None);
+    let b = p.clips.iter_mut().find(|c| c.id == ClipId(2)).unwrap();
+    if arm {
+        // blur(0: source)  posterize(1: source) datamosh(2)  merge(3: bg blur, fg datamosh, Normal)
+        let line = std::mem::take(&mut b.fx);
+        b.fx = vec![FxInstance::blur(6)];
+        b.fx.extend(line);
+        b.fx.push(FxInstance::Merge { mode: MergeMode::default(), mix: 1.0 });
+        b.fx_in = vec![
+            SlotInputs::default(),
+            SlotInputs { main: FxIn::Source, ..Default::default() },
+            SlotInputs::default(),
+            SlotInputs { main: FxIn::Slot(0), second: Some(FxIn::Prev), matte: None },
+        ];
+    }
+    p.validate().unwrap();
+    p
+}
+
+/// Test t3228 (fx-graph-dag D2; capability `video-plan`): Datamosh in an arm keeps a history of its own,
+/// keyed as its line's — its frames are those of the event whose chain is the arm's path (the event
+/// before the cut, the slot in front and its masks included), after playing and after a cold seek; a
+/// change of the trunk beside it asks no history again; and everything that sizes or walks the streams
+/// (the run ahead, the checkpoints, the memo's want, the bytes of a position) counts the read's stage.
+#[test]
+fn t3228_datamosh_in_an_arm_keeps_its_own_history() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    if no_device() {
+        return;
+    }
+    let t = Tick(38 * STEP);
+    let (arm, line) = (project_arm(true), project_arm(false));
+    // a Normal merge at full level over an opaque trunk is its Foreground: the arm's own picture
+    let want = frame_at(&line, t);
+    assert!(want != frame_at(&project(false), t), "scene: the mosh does something");
+    assert!(frame_at(&arm, t) == want, "the arm is not the event with that line");
+    // played up to it
+    let (vr, cache) = (renderer(&arm), big_cache());
+    let mut last = (vec![], false);
+    for k in 0..=38 {
+        warm(&vr, &cache, Tick(k * STEP));
+        last = kt_gpu::testkit::compose(&vr, &cache, Tick(k * STEP), Q);
+    }
+    assert!(last.1 && last.0 == want, "playing up to the moment gives other bytes than the seek");
+
+    // the trunk's edit leaves the arm's history where it is; an edit of the slot in front moves it
+    let memo = Arc::new(StreamMemo::new(256 << 20));
+    let build = |p: &Project| {
+        let mut vr = VideoRenderer::new(p);
+        vr.set_stream_memo(memo.clone());
+        vr
+    };
+    let of_history = |vr: &VideoRenderer| vr.layers_at(t, Q).iter().filter(|(m, ..)| *m == MediaId(1)).count();
+    let first = build(&arm);
+    assert!(of_history(&first) > 0, "scene: the cold history reads the event before");
+    let cache = big_cache();
+    warm(&first, &cache, t);
+    assert!(kt_gpu::testkit::compose(&first, &cache, t, Q).1);
+    assert_eq!(of_history(&first), 0, "the memo holds the arm's history");
+    let edited = |i: usize, f: FxInstance| {
+        let mut p = arm.clone();
+        p.clips.iter_mut().find(|c| c.id == ClipId(2)).unwrap().fx[i] = f;
+        build(&p)
+    };
+    assert_eq!(of_history(&edited(0, FxInstance::blur(12))), 0, "an edit of the trunk threw the arm's history away");
+    let mut post = FxInstance::plugin("posterize").unwrap();
+    assert!(post.set_param("levels", 6.0));
+    assert!(of_history(&edited(1, post)) > 0, "an edit in front of the arm's stream kept its history");
+
+    // what sizes and walks the streams sees the read's stage as the line's
+    let (a, l) = (renderer(&arm), renderer(&line));
+    assert_eq!(a.stream_frame_bytes(t, Q), l.stream_frame_bytes(t, Q), "the bytes of a position");
+    assert_eq!(a.stream_checkpoints(t, Q), l.stream_checkpoints(t, Q), "the checkpoints");
+    let (from, to) = (Tick(30 * STEP), Tick(45 * STEP));
+    let (wa, wl) = (a.stream_want(from, to, Q), l.stream_want(from, to, Q));
+    assert!(wl.positions > 0, "scene: the line's stage wants positions");
+    assert_eq!((wa.positions, wa.lap_bytes, wa.per_position, wa.checkpoint_bytes), (wl.positions, wl.lap_bytes, wl.per_position, wl.checkpoint_bytes), "the memo's want");
+    // the run ahead walks it: the moments of the run are in the memo after it
+    let cache = big_cache();
+    for k in 30..=40 {
+        warm(&a, &cache, Tick(k * STEP));
+    }
+    assert!(!a.stream_advance_run(&cache, Tick(36 * STEP), Tick(40 * STEP), Q), "the run ahead left the arm's stage short");
+    assert_eq!(of_history(&a), 0, "the run ahead did not walk the arm's history");
+    // both on the trunk and in an arm: two histories, both wanted
+    let mut both = arm.clone();
+    let c = both.clips.iter_mut().find(|c| c.id == ClipId(2)).unwrap();
+    let mosh = c.fx[2].clone();
+    c.fx[0] = mosh;
+    both.validate().unwrap();
+    assert_eq!(renderer(&both).stream_want(from, to, Q).positions, 2 * wl.positions, "two stages of one event count as one");
+}

@@ -70,7 +70,7 @@ fn main() {
         let _ = CACHE_DIR.set(dir.into());
         args.drain(i..i + 2);
     }
-    kt_media::cache_folder::set_data_root(&kt_dirs::data_dir());
+    kt_media::cache_folder::set_data_root(&kt_dirs::tool_dir());
     let code = run(&args);
     kt_time::trace::flush();
     std::process::exit(code);
@@ -107,6 +107,31 @@ fn crash_report(args: &[String]) -> i32 {
 // Parsing of pseudo-paths (`synth:`, `gen:`) — the SINGLE factory of kt-media
 // (R.52). A second, case-SENSITIVE copy of `synth_pattern` lived here, and
 // the copies were already drifting apart (footnote of item 211).
+
+/// The arms of an event's graph (fx-graph-dag): a line per slot with what its inputs read (a slot
+/// that reaches no Output is marked), and a line per read the layer makes beyond its own.
+fn graph_lines(c: &kt_model::ClipEvent) -> Vec<String> {
+    use kt_model::fx_graph::{self, Node, Socket};
+    let name = |n: Node| match n {
+        Node::Source => "source".to_string(),
+        Node::Slot(j) => format!("{j}:{}", c.fx[j].tag()),
+    };
+    let live = fx_graph::reaches_output(&c.fx_in, c.fx.len());
+    let mut out: Vec<String> = (0..c.fx.len())
+        .map(|i| {
+            let ins: Vec<String> = fx_graph::reads_of(&c.fx_in, i)
+                .map(|(n, s)| match s {
+                    Socket::Main => name(n),
+                    Socket::Second => format!("foreground {}", name(n)),
+                    Socket::Matte => format!("matte {}", name(n)),
+                })
+                .collect();
+            format!("graph {i}:{} <- {}{}", c.fx[i].tag(), ins.join(", "), if live[i] { "" } else { "  (dangles)" })
+        })
+        .collect();
+    out.extend(fx_graph::reads(&c.fx, &c.fx_in).iter().map(|r| format!("second read opened by {}:{}", r.slot, c.fx[r.slot].tag())));
+    out
+}
 
 /// What the engine reads in the range [from, to) seconds of the timeline.
 ///
@@ -270,6 +295,12 @@ fn probe_range(
             if c.reversed { "  REVERSED" } else { "" },
             if c.fx.is_empty() { String::new() } else { format!("  fx {}", c.fx.len()) }
         );
+        // a chain that branches (fx-graph-dag): what every slot reads, and the reads beyond its own
+        if !c.fx_in.is_empty() {
+            for line in graph_lines(c) {
+                println!("      {line}");
+            }
+        }
         // SIGNED SPEED (R.57): from a single “warped” one cannot see either the
         // direction, or which piece of material the event occupies —
         // and a complaint “it plays the wrong thing” is worked out precisely by these numbers.
@@ -1585,8 +1616,8 @@ fn run(args: &[String]) -> i32 {
     // (stream-front-on-device)
     kt_engine::video::install_stream_front(kt_gpu::stream_front_engine);
     kt_time::mem::set_resident_probe(kt_gpu::memory::resident);
-    // the disk tier of compiled pipelines, in the data folder (pipeline-prewarm D7)
-    kt_gpu::set_cache_dir(kt_dirs::data_dir().join("shader-cache"));
+    // the disk tier of compiled pipelines, in the tool's data folder (pipeline-prewarm D7, own-data-dir)
+    kt_gpu::set_cache_dir(kt_dirs::tool_dir().join("shader-cache"));
     match args.first().map(String::as_str) {
         Some("ffmpeg") => {
             // the search report (media-index): what was loaded, what was rejected and why
@@ -2135,9 +2166,10 @@ fn run(args: &[String]) -> i32 {
             ) {
                 Ok(stats) => {
                     eprintln!(
-                        "ok: {} video frames, {} audio frames, underruns {}, missing layers {}, encoder {}",
+                        "ok: {} video frames, {} audio frames, {}, underruns {}, missing layers {}, encoder {}",
                         stats.video_frames,
                         stats.audio_frames,
+                        stats.totals(),
                         stats.underruns,
                         stats.missing_video_layers,
                         stats.encoder
@@ -2239,7 +2271,8 @@ fn warn_if_locked(path: &str) {
     }
 }
 
-/// The per-user data directory of the app — the same resolver as kt-app (`kt-dirs`).
+/// The per-user data directory of the app — the same resolver as kt-app (`kt-dirs`). READ only: what
+/// kt-cli writes goes into `kt_dirs::tool_dir()` (own-data-dir).
 fn app_data_dir() -> Option<std::path::PathBuf> {
     Some(kt_dirs::data_dir())
 }
@@ -2304,5 +2337,38 @@ mod export_tests {
         let sets: Vec<&str> = src.lines().filter(|l| l.contains(concat!("kt_ffmpeg::set_", "decode_threads(")) || l.contains(concat!("kt_ffmpeg::set_", "rgba_threads("))).collect();
         assert_eq!(sets, ["    kt_ffmpeg::set_decode_threads(threads);"], "a process-wide decoder setting outside the preview tools");
         assert!(src.contains(concat!("match open_", "render_sources(free")), "the export opens its sources around the scope");
+    }
+}
+
+#[cfg(test)]
+mod graph_tests {
+    use kt_model::fx_graph::{FxIn, SlotInputs};
+
+    /// Test t3225 (fx-graph-dag, the probe): an event that branches prints what every slot reads, a
+    /// slot that reaches no Output marked, and the reads it makes beyond its own.
+    #[test]
+    fn t3225_the_probe_prints_the_arms_and_the_reads() {
+        kt_plugins_builtin::install();
+        let fx = |id: &str| kt_model::FxInstance::plugin(id).unwrap();
+        let mut p = kt_model::demo::demo_project(kt_model::demo::DemoSources::Synth);
+        let c = p.clips.iter_mut().find(|c| c.kind == kt_model::ClipKind::Video).expect("a video event");
+        c.fx = vec![
+            kt_model::FxInstance::slowed_reverb(0.5, 0.35, 100.0),
+            fx("glow"),
+            fx("blur"),
+            kt_model::FxInstance::Merge { mode: kt_model::MergeMode::default(), mix: 1.0 },
+        ];
+        let src = SlotInputs { main: FxIn::Source, ..Default::default() };
+        c.fx_in = vec![SlotInputs::default(), src, src, SlotInputs { main: FxIn::Prev, second: Some(FxIn::Slot(0)), matte: None }];
+        assert_eq!(
+            super::graph_lines(c),
+            [
+                "graph 0:slowed_reverb <- source",
+                "graph 1:glow <- source  (dangles)",
+                "graph 2:blur <- source",
+                "graph 3:merge <- 2:blur, foreground 0:slowed_reverb",
+                "second read opened by 0:slowed_reverb",
+            ]
+        );
     }
 }

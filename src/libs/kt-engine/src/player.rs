@@ -1084,6 +1084,12 @@ impl Player {
         self.renderer().video_decode_qualities(q)
     }
 
+    /// The reads the layers make beyond their own (fx-graph-dag D2).
+    pub fn video_read_rows(&self) -> Vec<crate::video::ReadRow> {
+        let q = self.preview_quality();
+        self.renderer().read_rows(q)
+    }
+
     /// Warmth of attachments in the ticks of their content (R.50, B6): a reel
     /// has no source, and the bar must ask about its CONTENT.
     pub fn nest_coverage(&self) -> Vec<(kt_model::ClipId, Vec<std::ops::Range<i64>>)> {
@@ -1321,6 +1327,11 @@ impl Player {
     /// moment of the range was composed and measured.
     pub fn preview_cost(&self, a: Tick, b: Tick) -> Option<crate::preview_cost::PreviewCost> {
         self.preview_costs.lock().unwrap().over(a, b)
+    }
+
+    /// This player's playing holds the background work (its own vote, not the process's mask).
+    pub fn holds_background(&self) -> bool {
+        self.bg_pause.is_up()
     }
 
     /// Record a moment's cost as the preview would (a test of the render window).

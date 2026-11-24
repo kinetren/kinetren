@@ -588,3 +588,7 @@ keeps the set asks nothing (t2127). The export prewarms its devices and waits (`
   instance opens no read; an event with reads is never a run predecessor (several streams).
   `tail_frames`/`lookahead_frames` of a clip cover its reads. A track stage carries its graph.
   Tests t3212, t3216, t3217, t3229 (`tests/audio_graph.rs`).
+
+- **What walks, sizes or counts stream stages goes over `streams_of(clip)`** (fx-graph-dag D2, t3228): a
+  layer's own stage and its reads'. A read is linked (`link_stages`) and masked (`ClipMaskPlan::of_line`)
+  as the event whose chain is its line; the layer's own program drops the masks of the slots its reads run.

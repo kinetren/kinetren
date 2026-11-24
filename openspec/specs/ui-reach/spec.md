@@ -416,7 +416,7 @@ transition windows, and on another system it grew wider by itself.
 - **WHEN** the FX window is open with the morpher window over it and a slow frame reads two presses of Esc at once
 - **THEN** both windows close: each press closes the window that is on top for it
 - **PATH** double-click an event → its FX window → open the morpher layer's window over it → press Esc twice quickly while the program is busy → both windows are gone, the timeline is free
-- **TEST** t3291 (`src/apps/kt-app/src/reach_tests.rs`), live scenario `node_graph`
+- **TEST** t3291, t3241 (two frames running) (`src/apps/kt-app/src/reach_tests.rs`), live scenario `node_graph`
 
 #### Scenario: The title cross and Esc are one path
 - **WHEN** each openable window of the registry that has a title cross is opened twice in the same scene; once it is closed by a click on the cross, once by Esc; the model, the undo stack, the clipboard and the focus are compared
@@ -1709,7 +1709,7 @@ selected event (a solid colour on a video track, a tone on an audio track), at t
 With nothing selected it SHALL create a solid colour on video track 1. Its window SHALL open, and the
 kind SHALL be changed in the window's gallery. A kind change, from the gallery or from the bin card,
 SHALL keep the generator's sound pair in step in the same history step: a kind that sounds beside its
-picture SHALL have its linked sound event on audio track 1, and a kind with no sound SHALL have none. A value edit that switches the generator's sound on or off (SMPTE's tone, Sync flash's beep) SHALL do the same in its own history step for the edited event alone, whose new sound event SHALL carry the edited values (found-defects 1000); "apply to all" SHALL do it for every event of the generator, and the window's Cancel SHALL take it back.
+picture SHALL have its linked sound event on audio track 1, and a kind with no sound SHALL have none. A value edit that switches the generator's sound on or off (SMPTE's tone, Sync flash's beep) SHALL do the same in its own history step for the edited event alone, whose new sound event SHALL carry the edited values (found-defects 1000); "apply to all" and a kind change SHALL do it for every event of the generator in every reel (found-defects 1001), and the window's Cancel SHALL take it back.
 Why: the owner, kkt-26.11.20 line 4 (A1): "Один пункт, по дорожке (Recommended)".
 
 #### Scenario: Edit and the bin by the selected track
@@ -1729,6 +1729,12 @@ Why: the owner, kkt-26.11.20 line 4 (A1): "Один пункт, по дорож�
 - **THEN** the bars stand alone; the tick brings a sound event on A1 under them, linked, with the ticked values (the meters move when it plays), and leaves another event of the same bars silent; the untick, through either half, takes it; one Ctrl+Z gives it back
 - **PATH** Edit → "Create a generator…" → Kind → SMPTE bars → tick "Tone" → a sound event appears on A1 under the bars → untick → it goes → Ctrl+Z → it is back
 - **TEST** t3720 (`src/apps/kt-app/src/gen_audio_tests.rs`), live `gen_technical`
+
+#### Scenario: Apply to all reaches the sound in every reel
+- **WHEN** SMPTE bars stand in the edit and twice inside a reel, one of them linked already; "Tone" is ticked on the edit's and "Apply to all" pressed; then the kind is changed to a solid colour and undone
+- **THEN** each picture event of the reel gets its sound event on its audio track 1, linked to it alone, with the ticked values, in one history step; the solid colour takes them from every reel; undo gives them back
+- **PATH** SMPTE bars in the edit and the same bars inside a reel → in the edit's event window tick "Tone" → "Apply to all" → enter the reel: a sound event stands under its bars → Ctrl+Z: it is gone
+- **TEST** t3724 (`src/apps/kt-app/src/gen_audio_tests.rs`)
 
 ### Requirement: A form uses the width it is given
 Every form of parameter rows — effect, morpher, transition, camera, track, generator and title forms,
@@ -1761,7 +1767,7 @@ Why: the owner, 2026-11-07: "половина ширины этой портян
 ### Requirement: An event window says which event it edits
 The effects window SHALL be titled by the event's name (a title's first words, a generator's kind, a reel's name, a
 file's base name) and the window's kind, the transition window by the events it joins, the morpher window by its row and
-start, and each SHALL show its number in the body in weak text; the per-chain fold SHALL be drawn without an indent strip; copy and paste of a chain
+start, and each SHALL show its number in the body in weak text; the per-chain fold SHALL be drawn without an indent strip, its body past the window's resize edge; copy and paste of a chain
 and of an envelope SHALL be icon buttons with their hints.
 Why: the owner, v26.10 W3, T8, T7.
 

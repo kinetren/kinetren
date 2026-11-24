@@ -37,8 +37,13 @@ thing, the export writes another".
 
 #### Scenario: A graph with no time kind in an arm reads as the line
 - **WHEN** a slowed event with a zooming lead branches after the lead, and the same event branches before any geometry
-- **THEN** the frames asked by the order equal the line's; the first keeps its decode step, the second gets step 1; a mask on a slot inside an arm takes the slot's own input as its dry side
-- **TEST** t3205 (`src/libs/kt-engine/tests/decode_scale.rs`), t3206 (`src/libs/kt-gpu/tests/parity.rs`)
+- **THEN** the frames asked by the order equal the line's; the first keeps its decode step, the second gets step 1; a mask on a slot inside an arm takes the slot's own input as its dry side, a masked slot of a read's line cuts inside the read, and the picture's masks cut before the branch (within one level at their soft pixels: a Merge keeps straight 8-bit alpha)
+- **TEST** t3205, t3206 (`src/libs/kt-engine/tests/fx_graph_render.rs`)
+
+#### Scenario: A register is used again, and the arms are prewarmed
+- **WHEN** a chain of five merges one after another is composed, one of its arms making no pass; a chain with two arms of point-wise effects is prewarmed
+- **THEN** the picture is that of the arms computed apart and the same twice; a held texture goes back to the pool when its register takes another value; the run shapes are each arm's, the ids hold the Merge, a dangling slot brings none
+- **TEST** t3243 (`src/libs/kt-engine/tests/fx_graph_render.rs`), t3242 (`src/libs/kt-engine/tests/prewarm_reach.rs`)
 
 #### Scenario: The keys see the wiring
 - **WHEN** an arm is rewired from one node to another with the same slots and values
@@ -60,17 +65,17 @@ reading machine.
 #### Scenario: The read law
 - **WHEN** an event merges an arm holding Slowed (0.5×) over an arm holding a blur, and separately two copies of the event are stacked, the upper with the Slowed path as a line, the lower with the blur
 - **THEN** the frames are byte-for-byte equal on one device, in the preview and in the export
-- **TEST** t3226 (`src/libs/kt-gpu/tests/parity.rs`)
+- **TEST** t3226 (`src/libs/kt-engine/tests/fx_graph_render.rs`)
 
 #### Scenario: The order and the strip see both reads
 - **WHEN** a slowed arm is added to an event that reads frames 0..48 on its trunk
 - **THEN** `wanted_frames` lists the trunk's frames and the arm's half-rate frames; the prefetch warms both and the composite misses none; the strip draws two rows; removing the arm returns the line's order exactly
-- **TEST** t3227 (`src/libs/kt-engine/tests/fx_reads.rs`)
+- **TEST** t3227 (`src/libs/kt-engine/tests/fx_graph_render.rs`), t3299 (`src/apps/kt-app/src/node_editor_tests.rs`)
 
 #### Scenario: Datamosh in an arm keeps its own history
 - **WHEN** Datamosh stands both on the trunk of one event and in an arm of another event over the same file, played across a seek
-- **THEN** each keeps its own history keyed by event and read; the arm's frames equal those of an event whose chain is the arm's path; the stream memo budget counts both
-- **TEST** t3228 (`src/libs/kt-engine/tests/fx_reads.rs`)
+- **THEN** each keeps its own history keyed by event and read; the arm's frames equal those of an event whose chain is the arm's path (the event before the cut and the slot in front included), after playing and after a seek; the trunk's edit asks no history again; the run ahead, the checkpoints, the memo's want and a position's bytes count the read's stage, two stages as two
+- **TEST** t3228 (`src/libs/kt-engine/tests/stream_stage.rs`)
 
 ### Requirement: A Merge is the layer composite's operation — the Merge law
 A Merge node SHALL fit its Foreground to its Background's size and blend it by the layer blend
