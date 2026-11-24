@@ -32,7 +32,7 @@ Why: invariants 1–3 and 11; the layer strength's dry ring is the same alignmen
 #### Scenario: Slowed in a sound arm reads its own window
 - **WHEN** an event sums its dry source with an arm holding Slowed at 0.5×
 - **THEN** the arm equals the event whose chain is that arm's path, sample for sample; the dry side is today's line; two runs give the same bytes
-- **TEST** t3229 (`src/libs/kt-engine/tests/audio_graph.rs`)
+- **TEST** t3229, t3293 (beside a look-ahead side), t3294 (after a seek), t3295 (looped) (`src/libs/kt-engine/tests/audio_graph.rs`)
 
 #### Scenario: Tails and state follow the graph
 - **WHEN** a reverb stands in one arm and a dangling node in another; the arm is rewired; a value is edited

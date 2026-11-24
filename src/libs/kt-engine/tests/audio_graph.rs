@@ -182,3 +182,76 @@ fn t3212_the_graph_pass_computes_the_line() {
     let graph = render(&project(vec![delay(150.0, 0.4), gain, zero], w), frames);
     assert!(graph == line, "the graph pass moved the line's samples");
 }
+
+fn limiter() -> FxInstance {
+    FxInstance::plugin_with("limiter", &[-20.0, -6.0, 5.0, 80.0]).unwrap()
+}
+
+/// 0 slowed (arm, a read) ; 1 limiter of the Source ; 2 Sum(1, 0): a read beside a look-ahead trunk side.
+fn read_and_lookahead() -> Project {
+    let w = vec![SlotInputs::default(), wire(FxIn::Source, None), wire(FxIn::Prev, Some(FxIn::Slot(0)))];
+    project(vec![slowed(0.5), limiter(), sum()], w)
+}
+
+/// Test t3293 (fx-graph-dag D4): a read beside a look-ahead side — the read's output is aligned with the
+/// limited side, so the event is the limiter's line plus the Slowed line, sample for sample.
+#[test]
+fn t3293_a_read_is_aligned_with_a_look_ahead_side() {
+    kt_plugins_builtin::install();
+    let frames = DUR + 48_000 * 2;
+    let want = added(&render(&project(vec![limiter()], vec![]), frames), &render(&project(vec![slowed(0.5)], vec![]), frames));
+    let got = render(&read_and_lookahead(), frames);
+    let first = got.iter().zip(&want).position(|(a, b)| a != b);
+    assert_eq!(first, None, "the read is not aligned with the look-ahead side (first differing sample)");
+}
+
+/// Test t3294 (fx-graph-dag D4): a seek into a graph with a read gives what the sum of the two lines
+/// gives after the same seek, sample for sample.
+#[test]
+fn t3294_a_seek_into_a_graph_with_a_read() {
+    kt_plugins_builtin::install();
+    let from = |p: &Project, at: i64, n: usize| {
+        let r = AudioRenderer::new(p);
+        let mut f = fetcher();
+        let mut store = FxStateStore::new();
+        r.sync_fx(&mut store);
+        let mut out = vec![0f32; n * CH];
+        // play elsewhere first: the states are warm from another place, then the transport seeks
+        let mut junk = vec![0f32; 8192 * CH];
+        r.render_frames_with(&mut f, &mut store, 0, &mut junk);
+        store.reset_all();
+        for (k, c) in out.chunks_mut(1024 * CH).enumerate() {
+            r.render_frames_with(&mut f, &mut store, at + k as i64 * 1024, c);
+        }
+        out
+    };
+    let at = 20_000;
+    let want = added(&from(&project(vec![limiter()], vec![]), at, 16_384), &from(&project(vec![slowed(0.5)], vec![]), at, 16_384));
+    let got = from(&read_and_lookahead(), at, 16_384);
+    let first = got.iter().zip(&want).position(|(a, b)| a != b);
+    assert_eq!(first, None, "after a seek the graph is not its lines (first differing sample)");
+}
+
+/// Test t3295 (fx-graph-dag D4): a loop region over a graph with a read — three laps equal the sum of the
+/// two lines looped the same way: nothing of the read's state leaks over the wrap, nothing is lost.
+#[test]
+fn t3295_a_loop_over_a_graph_with_a_read() {
+    kt_plugins_builtin::install();
+    let region = 10_000i64..10_000 + 12_345;
+    let looped = |p: &Project| {
+        let r = AudioRenderer::new(p);
+        let mut f = fetcher();
+        let mut store = FxStateStore::new();
+        r.sync_fx(&mut store);
+        let mut out = vec![0f32; 36 * 1024 * CH];
+        for (k, c) in out.chunks_mut(1024 * CH).enumerate() {
+            r.render_looped_with(&mut f, &mut store, region.clone(), region.start + k as i64 * 1024, c);
+        }
+        out
+    };
+    let want = added(&looped(&project(vec![limiter()], vec![])), &looped(&project(vec![slowed(0.5)], vec![])));
+    let got = looped(&read_and_lookahead());
+    let first = got.iter().zip(&want).position(|(a, b)| (a - b).abs() > 1e-6).map(|i| i / CH);
+    let worst = got.iter().zip(&want).map(|(a, b)| (a - b).abs()).fold(0f32, f32::max);
+    assert_eq!(first, None, "the looped graph is not its lines looped (first differing frame; worst {worst})");
+}
