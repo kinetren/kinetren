@@ -739,6 +739,12 @@ impl Player {
         store.get(self.render_cache.key(&built.video.probe_plan(&self.cache, t, parts.quality()))?)
     }
 
+    /// No decoder has anything queued or in its hands (a test that must know whose request a decode is).
+    #[doc(hidden)]
+    pub fn decoders_idle(&self) -> bool {
+        self.workers.read().unwrap().values().all(|w| w.is_idle())
+    }
+
     /// What the preview already holds for the moment `t` of the current version (poster-from-kept):
     /// a reader to run OFF the UI thread (it waits for the device), giving the kept composite at the
     /// preview's quality, or the disk tier's picture of it; `None` from the reader — the preview holds
