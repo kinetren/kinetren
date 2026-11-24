@@ -91,4 +91,18 @@ fn t4111_a_file_is_its_name_size_and_time_as_it_was_opened() {
     assert_eq!(first.identity(), ident, "the one opened before still decodes what it opened");
     std::fs::remove_file(&file).unwrap();
     assert_eq!(first.identity(), ident);
+
+    // the file is replaced under its path: a key behind the decoder would open a second one by the path,
+    // and that is another file's (found-defects 1065)
+    let long = fixture.with_file_name("testsrc_12s.mp4");
+    let b = dir.path().join("b.mp4");
+    std::fs::copy(&long, &b).unwrap();
+    let q = Some(kt_media::Quality { width: 80, height: 44 });
+    let (mut src, mut old) = (open(&b), open(&long));
+    src.read_video_frame(Tick(9 * 90_000), q).unwrap();
+    std::fs::copy(&fixture, dir.path().join("new.mp4")).unwrap();
+    std::fs::rename(dir.path().join("new.mp4"), &b).unwrap();
+    let t = Tick(90_000);
+    assert_eq!(src.read_video_frame(t, q).unwrap().rgba, old.read_video_frame(t, q).unwrap().rgba, "the new file's frame");
+    assert_eq!(src.decoders(), 1, "a decoder of the new file was kept");
 }

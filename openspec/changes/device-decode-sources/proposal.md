@@ -44,8 +44,8 @@ Why it was not simply switched on for sources:
   report says why.
 - **One decode device per process**, shared by reference; each decoder and its surface pool stays
   owned by the thread that owns the decoder (invariant 5 unchanged).
-- **Surfaces are a tenant of the memory ledger.** A decoder opens on the device only when the ledger
-  grants its pool; otherwise it opens on the processor — which, by the first point, changes no byte.
+- **Surfaces are a tenant of the memory ledger.** A decoder opens on the device only when its pool fits the
+  tenant's bound; otherwise it opens on the processor — which, by the first point, changes no byte.
 - **The preview's sources and the export's sources open this way**; thumbnails, stills, filmstrips
   and reel strips stay on the processor (one picture each: the device costs more than it spares).
 - **The trace says who decoded each picture** and what carrying it back cost, so the gain is judged on

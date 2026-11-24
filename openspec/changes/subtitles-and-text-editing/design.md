@@ -79,8 +79,8 @@ a cut between events shows as a thin bar, a gap as "· · ·" with its length.
 
 ## D4. Pauses and fillers → markers
 
-"Mark pauses…" (min length, threshold dB): walks the peak pyramid of the audio events in timeline order,
-marks spans below threshold as range markers named "pause"; "Mark fillers": words matching a per-language
+Pauses are the change `pause-detection` (2026-11-24): a detector that learns the recording's floor, since the owner asks
+for noisy sound too (v26.10 line 89); the Text panel's "Pauses…" opens its window. "Mark fillers": words matching a per-language
 list (in the i18n catalogue, editable in Settings) as range markers "filler". Marker names are made
 unique by `unique_name` (the area/marker namespace rule). Nothing is cut; a "Cut all pause markers" item
 is an explicit ripple of the named ranges.

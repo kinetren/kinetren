@@ -17,8 +17,8 @@ pub struct FfmpegSource {
     has_alpha: bool,
     /// The file's path, for a second decoder (export-throughput D9).
     path: String,
-    /// The file as it was opened (durable-moment-key D1): a decoder made again reopens its codec or the
-    /// same path, the source is replaced when the file is.
+    /// The file as it was opened (durable-moment-key D1): a decoder made again reopens its codec; one opened
+    /// later by the path is kept only while the same file lies there (`cursor_for`).
     ident: Option<crate::SourceIdent>,
     /// More decoders of this file, opened by a multi-quality span when one file is read at two
     /// places at once (a picture-in-picture of the same footage, a reel): one decoder
@@ -187,7 +187,11 @@ impl FfmpegSource {
             } else {
                 kt_ffmpeg::Source::open_with_index(&self.path, Some(prebuilt))
             };
-            if let Ok(s) = opened {
+            // the path may hold another file by now: a decoder of that one is not this source's
+            // (found-defects 1065); looked at after the open, which read what lies there
+            if let Ok(s) = opened
+                && file_ident(&self.path) == self.ident
+            {
                 self.cursors.push(s);
                 return all;
             }
