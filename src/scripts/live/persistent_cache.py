@@ -17,6 +17,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
+from idle import Meter, wait_quiet  # noqa: E402
 from kt_live import Live, pattern_media, project_with_clips, require_tools  # noqa: E402
 
 OWN_PROCESS = True
@@ -65,6 +66,7 @@ def main(out):
         app.until(lambda: app.has_probe("bin.copy"), timeout=60)
         app.expect(app.has_probe("bin.copy"), "the card of the 4K file carries the copy's mark")
         app.hover_probe("bin.copy", "the copy's mark")
+        wait_quiet(Meter(app), "after the copy was made")
         app.step("made", f"the copy is made by itself: {done[0]}; the card shows the disk and its lines")
 
         app.right_click_probe("bin.copy", "the card of the 4K file")

@@ -133,3 +133,26 @@ per moment; nothing runs at rest once the heavy moments are written. A quality c
 - **Build-salted entries** — every update would empty a "persistent" cache.
 - **Showing a frame of a higher quality at a lower one** — a different picture than composing at that quality; the
   coverage bars would claim what the plan does not make.
+
+## Measurement (2026-11-25, release, llvmpipe, 32 threads; copies by libx264, forced: no hardware encoder here)
+
+`kt-cli preview` on the heavy showcase (`showcase --heavy`, footage in /dev/shm) and on one event of the 4K VP9 file
+alone, 640×360, read from each run's trace; "before" — the build of `durable-moment-key`, "control" — this branch with no
+copies, "after" — with them (three files got one: 3840×2160 → 960×540, 3840×1608 → 1920×804, 3840×2026 → 1920×1014;
+making them took 128 s and 302 s at rest). Run one after another at load 9–20.
+
+| | before | control | after |
+|---|---|---|---|
+| dense edit 40–52 s: V-fps | 0.4 / 1.1 | 1.3 / 1.2 | 10.4 / 9.1 |
+| — incomplete composites | 633 / 620 | 609 / 620 | 334 / 336 |
+| — a decoded picture, ms (pictures) | 3.8 (11.6 k) | 3.8 (11.6 k) | 1.2 (8.0 k) |
+| — resident peak, MB | 4435 / 4349 | 4268 / 4622 | 3820 / 3844 |
+| — processor cores | 15.2 | 15.4 | 19.8 |
+| loop 20–24 s, 200 s: V-fps (the two builds together) | 21.5 | | 23.4 |
+| — resident steady / peak, MB | 3554 / 3760 | | 3011 / 3333 |
+| one 4K event, 15 s: V-fps | 24.9 | | 24.9 |
+| — a decoded picture, ms; cores | 3.5; 0.9 | | 0.2; 0.5 |
+| — resident, MB | 1907 | | 1721 |
+
+The dense edit's processor grows because the frames now come and are composed; the copies leave the composite as the
+limit there (218 ms the slowest). Not measured: a card's own decode, where the original is cheaper than here.

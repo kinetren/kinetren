@@ -56,8 +56,8 @@
 
 - [x] 4.1 the switch "as in the preview", the card badges, the Diagnostics section; i18n in every catalog;
       t3447, t3450; planned live scenario `persistent_cache` (t3448) with a screenshot per step
-- [ ] 4.2 the idle check on a heavy project with the store full
+- [x] 4.2 the idle check on a heavy project with the store full
 
 ## 5. Close
 
-- [ ] 5.1 What's new; F-MED-002 verdict; registry B1 moved; the report's "Найдено, не исправлено"
+- [x] 5.1 What's new; F-MED-002 verdict; registry B1 moved; the report's "Найдено, не исправлено"
