@@ -695,7 +695,9 @@ impl Muxer {
         }
         let mut mopts: *mut ffi::AVDictionary = core::ptr::null_mut();
         // the trial's sink cannot be read back for the rewrite
-        if cfg.path != crate::hw_trial::TRIAL_SINK && form.container.faststart() {
+        // (a source copy, whose frames carry their own times, is read from this disk alone: the rewrite
+        // would write its gigabytes twice)
+        if cfg.path != crate::hw_trial::TRIAL_SINK && form.container.faststart() && cfg.time_base.is_none() {
             set(&mut mopts, "movflags", "+faststart");
         }
         let r = unsafe { (api.avformat_write_header)(fmt, &mut mopts) };

@@ -207,7 +207,17 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   rest: moments the cost map measured at least half a frame period and their unmeasured neighbours,
   after `QUIET` with no `note_input`, never while playing or under an export's vote; its decodes at
   `Thumbnail`, its device work at class `background`. No export reads it. With no `Config` (tests,
-  the CLI without `--render-cache`) nothing changes. t2980–t2985, t2988.
+  the CLI without `--render-cache`) nothing changes. t2980–t2985, t2988. A thread stopped by the PROCESS's end
+  (`shutdown::ending`) leaves its open segment (and an unfinished source copy) with no call to the disk; a player
+  dropped in a running program commits it (t3611). What changes the state it looks up notifies its wake: a
+  composite's cost, Play, pause, a published build, a quality (found-defects 974); a look-up the person broke off is
+  made again at their rest, and `set_notify` tells the interface when the bars may be brighter.
+- **The preview's source copies** (`copies.rs`, persistent-cache D3, t3443, t3444, t3446, t3449): the player's
+  `source-copies` thread alone picks each file's copy for the preview's decode size, swaps it in and makes a missing
+  one at rest (class background, a short-lived source: invariant 5). A swap is `MediaParts::swap_picture`, never
+  `replace_media`: the sound, its effects' state and the kept mix go on. It parks with no clock; what moves a decision
+  (mode, quality, build, a raise, play and pause) wakes it. A copy's composite has its own key by the source's
+  identity, so memory and disk keep copy and original apart.
 - **The memory ledger sizes the preview's memos** (memory-ledger): the prefetch thread tells the
   display's executor the loop region's moments (`tell_loop` → `VideoGpuExec::keep_loop`; never from
   the UI thread, the executor's lock may stand behind a composite), and `size_stream_memo` asks the

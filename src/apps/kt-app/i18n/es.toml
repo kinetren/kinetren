@@ -2081,6 +2081,26 @@ hint_cache_delete = "Borrar esta carpeta de caché: todo se recalcula cuando hag
 hint_cache_cap = "Al llegar al límite se reemplazan los resultados más antiguos"
 cache_open = "Caché persistente…"
 
+# The persistent cache of the preview (persistent-cache).
+[pcache]
+title = "Caché persistente"
+as_preview = "Como en la vista previa"
+off = "No"
+hint = "Caché persistente en disco: fotogramas listos de los momentos lentos y copias ligeras de archivos pesados. Tamaño de la vista previa, 1/2, 1/4 o no"
+making = "Se crea una copia ligera: fotograma {0} de {1}"
+copy = "La vista previa lee una copia ligera en disco: {0}×{1}"
+camera = "La vista previa lee la copia de la cámara"
+failed = "Sin copia ligera: {0}"
+use_camera = "Usar la copia de la cámara…"
+use_camera_hint = "Un archivo menor que la cámara grabó junto a este: lo lee la vista previa, nunca un render"
+drop_camera = "Dejar de usar la copia de la cámara"
+differs_duration = "La copia de la cámara dura otra cosa: {0} s aquí, {1} s allí"
+differs_frames = "La copia de la cámara tiene otro número de fotogramas: {0} aquí, {1} allí"
+differs_sound = "El sonido de la copia de la cámara dura otra cosa: {0} s aquí, {1} s allí"
+unreadable = "No se puede leer la copia de la cámara: {0}"
+frames = "Fotogramas en disco: {0}, leídos {1}, escritos {2}"
+copies = "Copias de archivos: {0}, leídas {1}, escritas {2}"
+
 # The deck face of the VHS tape simulation (vhs-tape-simulation, D11).
 [deck]
 one_deck = "Un equipo: graba y reproduce"

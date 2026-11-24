@@ -1,20 +1,20 @@
 ---
 id: F-MED-002
 title: Persistent cache — final preview frames and heavy sources' copies kept on disk, rendering from originals
-status: candidate
+status: done
 priority: B
 cost: L
 category: media/persistent-cache
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: partial
+we_have: yes
 crates: [kt-model, kt-media, kt-ffmpeg, kt-cache, kt-engine, kt-otio, kt-app]
 invariants: [4, 5, 9, 10, 11]
 ui_rules: [12, 13, 16, 20]
-round: null
-point: null
-tests: []
+round: "kkt-26.11.22"
+point: 4
+tests: [3440, 3441, 3442, 3443, 3444, 3445, 3446, 3447, 3449, 3450, 3451, 3452, 3453]
 depends_on: []
-checked: 2026-11-23
+checked: 2026-11-25
 ---
 
 # F-MED-002 — Persistent cache — final preview frames and heavy sources' copies kept on disk, rendering from originals
@@ -130,72 +130,8 @@ The difference "proxy versus optimised media" in Resolve is explained on the BMD
 What could NOT be found: a live quote about a proxy that fell out of sync with the original in duration or timecode ("proxies out of sync"). I searched `creativecow.net`, `community.adobe.com` and through search queries like "proxy different duration / out of sync / timecode mismatch" — the results go either to reddit (unavailable from this environment) or to video tutorials, from which there is nothing to quote. The requirement of matching frame rate is confirmed by the primary source (Larry Jordan); the duration mismatch itself is so far only documented.
 
 ## How it fits Kinotrain
-
-### Since 2026-11-20
-
-- The preview presents on the device and keeps composites in memory and on disk (render-cache-disk,
-  `src/libs/kt-engine/src/render_cache.rs`): its durable key notes a file leaf by path, size and mtime, so
-  a proxy must be noted as the opened file or a restart replays proxy frames as the original's.
-- `MuxConfig.fps` is still an integer (`src/libs/kt-ffmpeg/src/lib.rs`) while `Probe.fps` is rational —
-  the drift above still stands.
-- The owner took this as candidate ★18 (2026-11-01); the design is the OpenSpec change `persistent-cache`
-  (all-intra MKV with the original's timestamps and copied audio, the original's natives reported).
-- The owner, 2026-11-20 (A10): adaptive — the copies are kept at the size the preview plays, a better copy is
-  made when a higher quality is chosen, a switch beside the quality offers "as in the preview"; the copies live
-  in the project's cache folder (A14, change `project-cache-folder`), never named "proxy".
-- The owner, 2026-11-22 (`kkt-26.11.20b.txt` line 7): "тяжелые. и мне не нравится почему ты думаешь только о проигрывании и
-  декоде - А КАК ЖЕ ЭФФЕКТЫ??? У НАС СУТЬ ПО БОЛЬШЕЙ ЧАСТИ В КЭШИРОВАНИИ ЧТОБЫ ЭФФЕКТЫ ТЯЖЕЛЫЕ НЕ СЧИТАТЬ!" — the
-  persistent cache is one store with the disk prerender, so the heavy effects' work is kept in the frames.
-- The owner, 2026-11-23 (`kkt-26.11.22.txt` lines 4–5, D1): "делай кеш имменно финального превью а не на каком-то
-  конкретном этапе цепочки fx … а не дохера ли мы данных сейчас в таком случае храним??" — only the FINAL preview
-  frame is kept (at the quality the preview plays), plus the heavy sources' copies; no result at a stage of a chain.
-- CAPABILITY: openspec/specs/media-index/
-
-### What already exists
-
-**Three savings, of which we have two.** Proxies substitute the SOURCE, the cache keeps the RESULT, the resolution share reduces the WORK. Ours are the two:
-
-- *Preview resolution share* 1/16 … 1/1 — `draw_preview_controls` in `src/apps/kt-app/src/app.rs` (the array `fracs`, `q_for`, `Player::set_preview_quality`). The share lives "on top of" the project resolution: when the resolution changes, the share is kept, not the pixels. There is no automatic lowering under load — the choice always belongs to the person.
-- *Cache* — `src/libs/kt-cache/src/lib.rs`: the pre-FX `BurstKind::Video{quality}` and the post-FX memoisation `PostFxVideo{quality, fx_hash}` (idx = timeline tick). `quality` is part of the key: records of different qualities are not interchangeable, and coverage is counted separately for each quality (invariant No. 4).
-
-Also an answer to the question "are proxies the same axis as `quality`?": **no**. `quality` is a request TO THE DECODER for the output size within ONE source. A proxy is a different file behind the same `MediaId`. These are different axes, and they must not be mixed in the cache key (see "What gets in the way").
-
-**The saving of the resolution share does NOT touch decoding.** `FfmpegSource` decodes the frame entirely through `avcodec`, and `Quality` is applied afterwards, in `sws_scale` (`src/libs/kt-ffmpeg/src/source_impl.rs`). So 1/16 saves swscale, the FX chain, the composite and the bytes of the cache — but a 4K H.265 is still decoded in full, frame by frame. It is precisely this expense item that ONLY proxies close, and that is the main argument for them.
-
-**The switch machinery is already written and covered by tests.** `Player::replace_media` (`src/libs/kt-engine/src/player.rs`) does exactly what the "proxy/original" button needs, and in the right order: it stops the `MediaWorker` → `cache.invalidate_source` → starts a new worker → bumps `project_version` (otherwise prefetch at idle would not notice the change) → wakes the loop. Transport, position, FX state and the cache of the other sources are not touched. The background part is `KtApp::reopen_rx` and the thread `reopen-media` in `src/apps/kt-app/src/app.rs`. Tests t209 (placeholder), t210 (render with placeholders), t211 (a returning file replaces the placeholder) — this is the same scenario "a different file stood up behind `MediaId`", only the cause is different. This is a strong argument of "cheap": the most nervous part of the feature — substituting the source on the fly without losing position or FX tails — is already debugged.
-
-**The sidecar mechanism "file next to the project" is worked out.** `<project>.ktindex.db` (`src/libs/kt-media/src/index.rs`, `docs/media-index.md`) already stores probe, packet index, peak pyramid and thumbs; the identity of a file is checked by `size + mtime + xxhash`, and ONLY the affected media is rebuilt. The table binding "media → proxy file" is added there additively, without a bump of `SCHEMA_VERSION` — `index.rs` has a ready technique for this (`CREATE TABLE IF NOT EXISTS` on every opening; this is how the `poster` table was set up).
-
-**The encoder exists.** `kt-ffmpeg::Muxer` (`src/libs/kt-ffmpeg/src/muxer_impl.rs`) accepts RGBA frames and f32 audio and writes MP4 h264+AAC through the system FFmpeg with automatic choice of a hardware encoder (invariants No. 9, No. 10). Generating a proxy is NOT an export of the timeline: it is a separate small loop "read `MediaSource` at a reduced `Quality` → write to `Muxer`".
-
-**In the project format the place for proxies ALREADY exists — and it is not ours.** OTIO keeps for a clip not one reference to the material but a map: `Clip.media_references: IndexMap<String, Option<MediaRefNode>>` + `active_media_reference_key` (`src/libs/kt-otio/src/schema.rs`), `DEFAULT_MEDIA_KEY = "DEFAULT_MEDIA"`, plus the written upgrade Clip.1 → Clip.2. We read only the active reference, but we carry the WHOLE map as passthrough (`ClipExtra::media_refs` in `src/libs/kt-otio/src/convert.rs`) — that is, a project that came from a foreign tool with a key of the form `proxy` is already not lost with us; we simply do not know how to switch to it.
-
-### What is missing
-
-1. In OUR model a media item has one path: `MediaRef { id, path }` (`src/libs/kt-model/src/project.rs`). There is no second path and no sign of "the proxy is now active".
-2. There is no transcoder "file → file". `export_mp4_with_backends` (`src/libs/kt-engine/src/export.rs`) renders a COMPOSITION and receives the sources from outside; for proxies a different, much simpler loop is needed.
-3. There is no queue of background jobs with progress. A proxy for an hour of material is tens of minutes of work, which must run in the background and survive the closing of the render window.
-4. There is not one place in the UI where a SEPARATE media item has properties and actions: the bin has cards and a context menu for GROUPS (`src/apps/kt-app/src/bin_panel.rs`), media has none.
-5. There is no "attach proxies": there is nowhere and nothing to attach a foreign (camera) proxy and check that it fits.
-
-### What gets in the way
-
-**The binding point is `SourceId`, and it equals `MediaId` one to one** (`SourceId(clip.media.0)` in `src/libs/kt-engine/src/video.rs`). This is good: a proxy naturally stands "behind the same `MediaId`", and the whole engine — the frame plan, prefetch, coverage bars, the keys of post-FX — notices nothing; `kt-ffmpeg` is already locked behind the `MediaSource` trait (`docs/architecture.md`). But the price is that the original and the proxy CANNOT lie in the cache at the same time: `invalidate_source` removes all records of the source, and every toggle of the switch zeroes the warmth. Introducing the proxy as a third axis of the cache key (next to `quality`) is not allowed: it would double the coverage and break the wording of invariant No. 4, "the cache is the single source of truth about warmth" — there would be two truths, and the bars would have to choose which one to show.
-
-**A proxy must match the original in DURATION, and we already have a rake lying here.** The frame key in the cache is time, not the frame number: `video_cache_idx(source_pts) = source_pts.0` (`src/libs/kt-engine/src/video.rs`). Therefore a proxy with a different fps is not frightening to us — we address material by ticks, not by frames. What is frightening is a proxy of a different DURATION, and our own muxer does exactly that: `MuxConfig.fps` is an integer, `time_base = 1/fps` (`src/libs/kt-ffmpeg/src/muxer_impl.rs`), and fractional rates are snapped to the integer grid (`grid_fps(23.976…) = 24`, t178 in `src/libs/kt-otio/tests/convert.rs`). A proxy of an hour of 23.976 fps material, written by our muxer at 24 fps, will come out shorter than the original by almost four seconds — and the tail of the clip will drift. The very first implementation must either teach the muxer fractional rates or guarantee the duration some other way. Incidentally: our MP4 carries stereo (invariant No. 1), so Premiere's restriction "an h264 proxy is not suitable for multichannel audio" is structurally the same for us — we simply do not know multichannel audio anyway.
-
-**Export with proxies is prevented structurally, not by a checkbox.** The render sources are NOT opened by the engine: `render_dialog::open_all` (`src/apps/kt-app/src/render_dialog.rs`) and the function of the same name in `src/apps/kt-cli/src/main.rs` go by `MediaRef::path` from the model and pass the ready list to `export_mp4_with_backends`. While the proxy substitution lives ONLY in the player path (`Player::replace_media`), export physically does not see the proxy file — this is the construction of VEGAS, not of Premiere, and it is correct. But it must not be "remembered" — it must be locked in: a test that turns on proxies, renders, and compares against the reference made from originals is cheap and directly protects invariant No. 11.
-
-**Pixel parameters of FX already lie on the resolution share, and a proxy will make this worse.** In `params_for!` (`src/libs/kt-model/src/project.rs`) the unit `Px` is carried by `Blur.radius/radius_y`, `Edges.thickness`, `Noise.size`, `Vhs.rgb_shift/scan_step`, `Glow.radius`. Exactly ONE of them is scaled by the resolution share: the 3D one — `Cam3d.world_scale = quality.width / project.width` (`src/libs/kt-engine/src/video.rs`, `src/libs/kt-engine/src/video_plan.rs`). The blur, however, is implemented as a downscale with a step `(radius/3).max(1)+1` in the pixels of the CURRENT frame (`src/libs/kt-fx/src/video.rs`), so on a 1/4 preview a radius of 8 gives a blur four times coarser relative to the picture than in the export. Invariant No. 7 is formally intact (preview == export byte for byte is checked at ONE quality), but in the editor's eyes this is exactly the trouble that users complain about with other people's proxies. The rule of the kt-fx crate ("the default of a new parameter = the previous behaviour byte for byte") forbids fixing this silently: scaling of the `Px` parameters would shift the goldens, and the decision about it is a separate one, not an incidental one.
-
-### Which invariants it touches
-
-- **No. 4** (the cache is the single source of truth about coverage): the switch of proxies goes only through `invalidate_source`; a separate axis is not to be introduced into the key.
-- **No. 5** (exactly one MediaWorker owns the decoder): the substitution is done by replacing the worker, as in `replace_media`, and not by a second worker on the same `MediaId`.
-- **No. 9 / No. 10** (export is in-process, the binary is not linked with libav*): the proxy generator must go through `kt-ffmpeg::Muxer`, and not call an external `ffmpeg`, although the temptation is great — this is the simplest part of the work, the easiest to do wrongly.
-- **No. 11** (determinism): export must go from the originals. The only item for which the feature requires a TEST, not discipline.
-- **No. 7** is not violated: a proxy changes the bytes of the SOURCE, not the path of the composition.
-- UI rules of `src/apps/kt-app/CLAUDE.md`: **20** ("nothing grows or gets cut off by itself" — proxies are not switched on by themselves nor switched off silently), **13** (the toggle must sit in space already occupied — for example, in the bin card, and not in a new strip), **16** (there is no proxy for this media — this is an ERROR of the gesture, not a faded hint), **12** (generation is background work: not during a gesture and not during playback).
+CAPABILITY: openspec/specs/media-index/ — copies of heavy sources; the frames: openspec/specs/video-plan/; the contract is in `spec.md`, the "why" in `design.md`.
+Whole preview frames and copies of heavy files in one folder of the project under one budget and one value order; a copy holds the picture only, at the original's own times; an export opens the media's path and never sees one.
 
 ## Estimate
 
@@ -210,7 +146,11 @@ Also an answer to the question "are proxies the same axis as `quality`?": **no**
 
 ## Verdict
 
-We take it, but not before there is material on which this shows: the preview resolution share covers everything except decoding, and while projects do not run up against decoding 4K/H.265, proxies save other people's pain, not ours. The argument "for" is not performance as such, but the fact that half of the feature is already written and tested (`Player::replace_media`, the sidecar DB, `Muxer`, `media_references` in OTIO), and that protection against rendering with proxies comes out for us by VEGAS's construction — export opens its own sources by `MediaRef::path` and does not see the proxy file at all. The work must be done in this order: first the test "render goes from the originals", then everything else.
+Done (`persistent-cache`). The note's own argument held: the protection against rendering from a copy costs nothing,
+because an export opens the media by its path. What the owner added decided the rest: the copy follows the size the
+preview plays at (A10), the store keeps the final frame and never a stage of a chain (D1), and the name is "Persistent
+cache". The second path in the model and OTIO's `media_references` were not needed: a copy is found by the content of
+its original, so the project does not know of it.
 
 ## Sources
 

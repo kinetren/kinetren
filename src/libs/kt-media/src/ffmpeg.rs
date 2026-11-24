@@ -114,6 +114,11 @@ impl FfmpegSource {
         Ok(src)
     }
 
+    /// The stream's pictures have alpha (R.67).
+    pub fn has_alpha(&self) -> bool {
+        self.has_alpha
+    }
+
     /// The index came from the DB (no scan was performed): diagnostics/test 34.
     pub fn index_was_prebuilt(&self) -> bool {
         self.inner.index_was_prebuilt()

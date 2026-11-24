@@ -118,6 +118,9 @@ struct Shared {
     cond: Condvar,
     min_generation: AtomicU64,
     idle: AtomicBool,
+    /// Pictures read, and the time they took (ns): how fast the source decodes.
+    pictures: AtomicU64,
+    picture_ns: AtomicU64,
 }
 
 /// The worker's handle. Drop does NOT stop the thread — call `shutdown()`.
@@ -138,7 +141,22 @@ impl MediaWorker {
 
     pub fn spawn_with_stats(
         media: MediaId,
+        source: Box<dyn MediaSource>,
+        cache: Arc<BurstCache>,
+        stats: Arc<DecodeStats>,
+    ) -> MediaWorker {
+        // what it decodes, known before its first insert (durable-moment-key D1): one place for the
+        // player's open, an added source and a replaced one
+        let ident = source.identity().unwrap_or_else(kt_cache::SourceIdent::once);
+        Self::spawn_with_ident(media, source, ident, cache, stats)
+    }
+
+    /// `ident` is the source's own answer (a picture swapped for its copy's adopts it first, keeping the
+    /// sound).
+    pub(crate) fn spawn_with_ident(
+        media: MediaId,
         mut source: Box<dyn MediaSource>,
+        ident: kt_cache::SourceIdent,
         cache: Arc<BurstCache>,
         stats: Arc<DecodeStats>,
     ) -> MediaWorker {
@@ -147,18 +165,23 @@ impl MediaWorker {
             cond: Condvar::new(),
             min_generation: AtomicU64::new(0),
             idle: AtomicBool::new(true),
+            pictures: AtomicU64::new(0),
+            picture_ns: AtomicU64::new(0),
         });
         let sh = shared.clone();
         let source_id = crate::source_id(media);
-        // what it decodes, known before its first insert (durable-moment-key D1): one place for the
-        // player's open, an added source and a replaced one
-        let ident = source.identity().unwrap_or_else(kt_cache::SourceIdent::once);
         cache.adopt(source_id, ident);
         let join = std::thread::Builder::new()
             .name(format!("media-worker-{}", media.0))
             .spawn(move || worker_loop(&sh, source_id, ident, source.as_mut(), &cache, &stats))
             .expect("spawn media worker");
         MediaWorker { shared, join: Some(join), media }
+    }
+
+    /// What a picture took to decode, ns, once enough were read to say.
+    pub fn picture_ns(&self) -> Option<u64> {
+        let n = self.shared.pictures.load(Ordering::Relaxed);
+        (n >= 48).then(|| self.shared.picture_ns.load(Ordering::Relaxed) / n)
     }
 
     pub fn submit(&self, req: DecodeRequest) {
@@ -514,9 +537,13 @@ fn worker_loop(
                 let mut res = Ok(());
                 let mut done_keys = 0usize;
                 for chunk in span_chunks(&missing, SPAN_CHUNK) {
+                    let at = std::time::Instant::now();
                     res = read_chunk(source, chunk, &mut |k| {
                         emitted.insert(k);
                     }, (source_id, ident), cache);
+                    let moments = chunk.iter().map(|k| k.pts).collect::<std::collections::BTreeSet<_>>().len();
+                    shared.pictures.fetch_add(moments as u64, Ordering::Relaxed);
+                    shared.picture_ns.fetch_add(at.elapsed().as_nanos() as u64, Ordering::Relaxed);
                     done_keys += chunk.len();
                     if res.is_err() {
                         break;

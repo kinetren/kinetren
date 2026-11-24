@@ -671,6 +671,33 @@ impl Source {
         Ok(())
     }
 
+    /// The video stream's time base: what a copy of its pictures keeps their times in.
+    pub fn video_time_base(&self) -> Option<(i32, i32)> {
+        self.video.as_ref().map(|v| (v.time_base.num, v.time_base.den))
+    }
+
+    /// Where the last audio packet starts, from the stream's start (a camera's copy is compared by it).
+    pub fn audio_end(&self) -> Option<Tick> {
+        let a = self.audio.as_ref()?;
+        let last = *self.index.audio_pts.last()?;
+        Some(Tick(unsafe { (self.api.av_rescale_q)(last - a.start_time, a.time_base, tb(1, TICK_HZ as i32)) }))
+    }
+
+    /// The next picture of the file in order, from where the decoder stands (a fresh source: the
+    /// first), at `w`×`h`, with its own time from the stream's start in the stream's time base; `None`
+    /// — the end (persistent-cache, a source copy keeps every picture at its time). Not mixed with the
+    /// reads by key: they count what they hold.
+    pub fn next_video(&mut self, w: u32, h: u32) -> Result<Option<(i64, RgbaFrame)>, FfError> {
+        let api = self.api;
+        let v = self.video.as_mut().ok_or(FfError::OutOfRange)?;
+        let Some(frame) = v.decode_next_frame(api)? else { return Ok(None) };
+        let pts = v.last_pts.unwrap_or(0) - v.start_time;
+        let rgba = v.to_rgba(api, frame, w, h);
+        let mut f = frame;
+        unsafe { (api.av_frame_free)(&mut f) };
+        Ok(Some((pts, rgba?)))
+    }
+
     /// Where the video decoder stands, in ticks of the file's own time: the pts of the frame it
     /// last answered with (`None` — nothing decoded since it was opened). An export choosing one of
     /// several decoders of a file asks it (export-throughput D9).

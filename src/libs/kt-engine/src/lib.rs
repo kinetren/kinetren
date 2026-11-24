@@ -7,6 +7,7 @@
 
 pub mod audio;
 pub mod builds;
+pub mod copies;
 pub mod export;
 pub mod export_pipeline;
 pub mod export_settings;

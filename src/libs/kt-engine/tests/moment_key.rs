@@ -414,6 +414,26 @@ fn kept(player: &Player, moments: &[Tick]) -> usize {
     moments.iter().filter(|t| runs.iter().any(|r| r.contains(&t.0))).count()
 }
 
+/// Show another range until what is left of the loop's frames is gone, and come back to the loop.
+fn evict(player: &Player, moments: &[Tick]) {
+    let grid = player.video_grid();
+    let region = grid.align_floor(Tick(9 * 90_000)).0;
+    player.set_loop_region(None);
+    for i in 0..24 {
+        let t = Tick(region + i * grid.frame_step());
+        player.seek(t);
+        wait("the other range never came", || matches!(player.present_preview(t, SHOW), Some((_, true))));
+    }
+    let end = Tick(moments[39].0 + grid.frame_step());
+    player.set_loop_region(Some(kt_time::TickRange { start: moments[0], end }));
+    // the window from the last place is done
+    let mut last = decodes();
+    wait("the decoders never rested", || {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        std::mem::replace(&mut last, decodes()) == decodes()
+    });
+}
+
 /// The tests here read the process-wide work counters: one at a time.
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -436,23 +456,7 @@ fn t4112_a_loop_plays_from_its_kept_composites_without_its_sources() {
         player.seek(moments[0]);
         player.cache.max_video_bytes() == BASE
     });
-    // another range: what is left of the loop's frames goes
-    let grid = player.video_grid();
-    let region = player.video_grid().align_floor(Tick(9 * 90_000)).0;
-    player.set_loop_region(None);
-    for i in 0..24 {
-        let t = Tick(region + i * grid.frame_step());
-        player.seek(t);
-        wait("the other range never came", || matches!(player.present_preview(t, SHOW), Some((_, true))));
-    }
-    let end = Tick(moments[39].0 + grid.frame_step());
-    player.set_loop_region(Some(kt_time::TickRange { start: moments[0], end }));
-    // the window from the last place is done
-    let mut last = decodes();
-    wait("the decoders never rested", || {
-        std::thread::sleep(std::time::Duration::from_millis(250));
-        std::mem::replace(&mut last, decodes()) == decodes()
-    });
+    evict(&player, &moments);
     let (d0, r0) = (decodes(), kt_time::work::count(kt_time::work::Work::CompositeReplay));
     for _ in 0..2 {
         for t in &moments {
@@ -478,11 +482,8 @@ fn t4113_an_edit_elsewhere_asks_no_decode_an_edit_here_asks_its_own() {
         player.seek(moments[0]);
         player.cache.max_video_bytes() == BASE
     });
-    let mut last = decodes();
-    wait("the decoders never rested", || {
-        std::thread::sleep(std::time::Duration::from_millis(250));
-        std::mem::replace(&mut last, decodes()) == decodes()
-    });
+    evict(&player, &moments);
+    assert!(moments.iter().all(|t| !player.missing_layers(*t).is_empty()), "scene guard: the loop's sources are evicted");
     let d0 = decodes();
     // an event wholly outside the loop
     let (a, b) = (moments[0], moments[39]);
@@ -499,4 +500,27 @@ fn t4113_an_edit_elsewhere_asks_no_decode_an_edit_here_asks_its_own() {
     player.set_project(q);
     wait("the edited moment never came", || matches!(player.present_preview(a, SHOW), Some((_, true))));
     assert!(decodes() > d0, "the changed moment asks its sources");
+}
+
+/// Test t3608 (durable-moment-key D4, found-defects 970): a loop kept whole at one preview quality is not
+/// kept at another: after the quality moves the bars draw none of it, the window asks its frames at the new
+/// size with nobody composing them; back at the former quality a moment shown is a replay again.
+#[test]
+fn t3608_a_moment_kept_at_one_quality_is_not_kept_at_another() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((player, _, moments)) = loop_player(0.53) else { return };
+    lap(&player, &moments);
+    wait("the loop was never kept whole", || kept(&player, &moments) == moments.len());
+    player.seek(moments[0]);
+    let mut last = decodes();
+    wait("the decoders never rested", || {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        std::mem::replace(&mut last, decodes()) == decodes()
+    });
+    let d0 = decodes();
+    player.set_preview_quality(Quality { width: 256, height: 144 });
+    assert_eq!(kept(&player, &moments), 0, "the bars draw what another quality kept");
+    wait("the window never asked the new quality's frames", || decodes() > d0);
+    player.set_preview_quality(Quality { width: 320, height: 180 });
+    assert!(matches!(player.present_preview(moments[5], SHOW), Some((_, true))), "still held by the executor");
 }

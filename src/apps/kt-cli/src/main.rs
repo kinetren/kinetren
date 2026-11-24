@@ -1144,6 +1144,7 @@ fn preview_run(
     wav: Option<String>,
     device_open_ms: f64,
     render_cache: Option<String>,
+    copies: Option<String>,
     one_device: bool,
 ) -> Result<(), String> {
     use kt_ffmpeg::iostats as io;
@@ -1190,6 +1191,28 @@ fn preview_run(
             made: render_cache_made(),
             cap: kt_engine::render_cache::cap_from_env(),
         }));
+    }
+    // the copies of heavy sources as the editor makes them (persistent-cache): made at rest before the run
+    if let Some(dir) = &copies {
+        let c = player.copies();
+        c.set_config(Some(kt_engine::copies::Config {
+            maker: std::sync::Arc::new(kt_media::copy::ffmpeg::FfmpegCopies::from_env()),
+            root: dir.into(),
+            resolve: std::sync::Arc::new(|p| {
+                let p = std::path::PathBuf::from(p);
+                p.is_file().then_some(p)
+            }),
+        }));
+        let t0 = std::time::Instant::now();
+        while !c.settled() && t0.elapsed().as_secs() < 1800 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        println!("  copies: {} made in {:.1} s", c.made(), t0.elapsed().as_secs_f64());
+        for m in &project.media {
+            if let Some(card) = c.card(m.id) {
+                println!("    {}: {card:?}", m.path);
+            }
+        }
     }
     let opts = kt_engine::preview_bench::BenchOptions {
         from: Tick((from * kt_time::TICK_HZ as f64) as i64),
@@ -1864,7 +1887,7 @@ fn run(args: &[String]) -> i32 {
             let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3))
             else {
                 eprintln!(
-                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--ui-ms N] [--free-running] [--cold] [--loop S] [--wav out.wav] [--device-open-ms N] [--render-cache DIR] [--one-device]"
+                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--ui-ms N] [--free-running] [--cold] [--loop S] [--wav out.wav] [--device-open-ms N] [--render-cache DIR] [--copies DIR] [--one-device]"
                 );
                 return 2;
             };
@@ -1887,10 +1910,11 @@ fn run(args: &[String]) -> i32 {
             let wav = opt("--wav").cloned();
             let device_open_ms = opt("--device-open-ms").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
             let render_cache = opt("--render-cache").cloned();
+            let copies = opt("--copies").cloned();
             // the window's device shared with the compute host, as the editor does where it can
             // (stream-picture-stays D2): its stream pictures reach the composite as they lie
             let one_device = args.iter().any(|a| a == "--one-device");
-            match preview_run(&project, input, from, to, size, ui_ms, free, cold, looped, wav, device_open_ms, render_cache, one_device) {
+            match preview_run(&project, input, from, to, size, ui_ms, free, cold, looped, wav, device_open_ms, render_cache, copies, one_device) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{e}");

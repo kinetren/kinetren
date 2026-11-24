@@ -595,7 +595,7 @@ pub fn save_workspace_at(path: &std::path::Path, w: &Workspace) {
         doc["geom_controls"] = serde_json::json!(on);
     }
     // no fsync: two of them held a close for 21 s on a busy disk (found-defects 831)
-    crate::later::write(path, format!("{doc:#}\n"), false);
+    crate::later::write(path, format!("{doc:#}\n"));
 }
 
 // ---- between-projects records (welcome-window-and-tour) -------------------
@@ -672,6 +672,8 @@ pub struct StartChoice {
     /// Economy UI (30 fps while playing) — a program preference (welcome-window-and-settings D8):
     /// it lives here, not in the app File → New rebuilds.
     pub economy_ui: bool,
+    /// Which copies the preview plays from (persistent-cache); `None` — as in the preview.
+    pub persistent_cache: Option<String>,
     /// The language choice code (`auto`, `ru`, …); `None` — never chosen through this record (the
     /// start then takes the former eframe value once, D8).
     pub lang: Option<String>,
@@ -693,6 +695,7 @@ impl Default for StartChoice {
             seeded: false,
             started_before: false,
             economy_ui: false,
+            persistent_cache: None,
             lang: None,
             controls: None,
             controls_by_style: Vec::new(),
@@ -838,6 +841,7 @@ impl StartStore {
                 seeded: v.get("seeded").and_then(|x| x.as_bool()).unwrap_or(false),
                 started_before: v.get("started_before").and_then(|x| x.as_bool()).unwrap_or(true),
                 economy_ui: v.get("economy_ui").and_then(|x| x.as_bool()).unwrap_or(false),
+                persistent_cache: v.get("persistent_cache").and_then(|x| x.as_str()).map(str::to_string),
                 lang: v.get("lang").and_then(|x| x.as_str()).map(str::to_string),
                 controls: v.get("controls").and_then(|x| x.as_str()).map(str::to_string),
                 controls_by_style: v
@@ -897,7 +901,7 @@ impl StartStore {
         doc["version"] = serde_json::json!(RECORDS_VERSION);
         // tmp + rename, WITHOUT fsync: a break midway leaves no stump, and these records are
         // conveniences — a lost recent list costs nothing (t985 took 90 s with `write_atomic`)
-        crate::later::write(&path, format!("{doc:#}\n"), false);
+        crate::later::write(&path, format!("{doc:#}\n"));
     }
 
     fn save_recent(&mut self) {
@@ -945,6 +949,9 @@ impl StartStore {
             "started_before": self.start.started_before,
             "economy_ui": self.start.economy_ui,
         });
+        if let Some(m) = &self.start.persistent_cache {
+            v["persistent_cache"] = serde_json::json!(m);
+        }
         if let Some(l) = &self.start.lang {
             v["lang"] = serde_json::json!(l);
         }
@@ -1059,6 +1066,11 @@ impl StartStore {
             self.start.economy_ui = on;
             self.save_start();
         }
+    }
+
+    pub fn set_persistent_cache(&mut self, mode: &str) {
+        self.start.persistent_cache = Some(mode.to_string());
+        self.save_start();
     }
 
     /// The Layout & Controls style as its code, also remembered for its tile (rule 23).

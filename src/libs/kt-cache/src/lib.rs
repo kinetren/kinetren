@@ -1003,6 +1003,15 @@ impl BurstCache {
         }
     }
 
+    /// The source's PICTURES are decoded from another file from now on, its sound from the same one (a
+    /// copy of a heavy source, persistent-cache D3): the pictures go, the bursts stay.
+    pub fn adopt_picture(&self, source: SourceId, ident: SourceIdent) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.idents.insert(source, ident) != Some(ident) {
+            self.drop_of(&mut inner, source, |k| !matches!(k.kind, BurstKind::Audio));
+        }
+    }
+
     /// The source is no more: its bytes and its identity go.
     pub fn forget(&self, source: SourceId) {
         let mut inner = self.inner.lock().unwrap();
@@ -1011,12 +1020,19 @@ impl BurstCache {
     }
 
     fn drop_source(&self, inner: &mut Inner, source: SourceId) {
-        let keys: Vec<BurstKey> =
-            inner.by_source.remove(&source).map(|k| k.into_iter().collect()).unwrap_or_default();
+        self.drop_of(inner, source, |_| true);
+    }
+
+    fn drop_of(&self, inner: &mut Inner, source: SourceId, gone: impl Fn(&BurstKey) -> bool) {
+        let all = inner.by_source.remove(&source).unwrap_or_default();
+        let (keys, left): (Vec<BurstKey>, Vec<BurstKey>) = all.into_iter().partition(&gone);
+        if !left.is_empty() {
+            inner.by_source.insert(source, left.into_iter().collect());
+        }
         self.stats.invalidate_scan_steps.fetch_add(keys.len() as u64, Ordering::Relaxed);
         kt_time::trace::ev(kt_time::trace::Ev::CacheInvalidate).a(source.0).b(keys.len() as u64).emit();
-        inner.past.retain(|k, _| k.source != source);
-        inner.past_order.retain(|k| k.source != source);
+        inner.past.retain(|k, _| k.source != source || !gone(k));
+        inner.past_order.retain(|k| k.source != source || !gone(k));
         for key in keys {
             let entry = inner.map.remove(&key).unwrap();
             inner.lru.remove(&entry.recency);
@@ -1025,7 +1041,7 @@ impl BurstCache {
             }
             uncount(inner, &entry);
         }
-        inner.coverage.retain(|(s, _), _| *s != source);
+        inner.coverage.retain(|(s, kind), _| *s != source || !gone(&BurstKey { source, kind: *kind, idx: 0 }));
         self.report(inner);
         self.epoch.fetch_add(1, Ordering::AcqRel);
     }
@@ -1157,22 +1173,6 @@ mod v12_tests {
         s.remove_range(0, 30);
         assert!(s.query(0..40).is_empty());
     }
-}
-
-#[cfg(test)]
-mod postfx_tests {
-    use super::*;
-
-    fn vframe(bytes: usize) -> Arc<VideoFrame> {
-        Arc::new(VideoFrame {
-            pts: kt_time::Tick(0),
-            width: 2,
-            height: 2,
-            rgba: vec![7u8; bytes].into_boxed_slice(),
-            has_alpha: false,
-        })
-    }
-
 }
 
 #[cfg(test)]
@@ -1530,6 +1530,33 @@ mod serial_tests {
         c.insert_video(s, q, 0, frame());
         assert!(matches!(c.get_video_leaf(s, q, 0), (Some(_), None)), "a private cache names its frames by serials");
         assert_ne!(SourceIdent::once(), SourceIdent::once());
+    }
+
+    /// Test 3612 (persistent-cache D3): a source whose PICTURES come from another file from now on keeps its
+    /// decoded sound and the sound's coverage; a late picture of the old file is refused, and the same
+    /// identity again drops nothing.
+    #[test]
+    fn t3612_a_swapped_picture_keeps_the_sound() {
+        let c = BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: 1 << 20 });
+        let (s, q) = (SourceId(7), Some(Quality { width: 4, height: 4 }));
+        let (file, copy) = (SourceIdent::of("file"), SourceIdent::of("copy"));
+        c.adopt(s, file);
+        assert!(c.insert_video_from(s, file, q, 0, 1, frame()) && c.insert_audio_from(s, file, Arc::new(AudioBurst::silence(0))));
+        let (video, audio) = (BurstKind::video(q), BurstKind::Audio);
+        assert!(!c.coverage(s, video, 0..4).is_empty() && !c.coverage(s, audio, 0..4).is_empty());
+        let bytes = c.audio_bytes();
+        c.adopt_picture(s, copy);
+        assert!(!c.contains_video(s, q, 0) && c.contains_audio(s, 0));
+        assert!(c.coverage(s, video, 0..4).is_empty() && !c.coverage(s, audio, 0..4).is_empty());
+        assert_eq!((c.video_bytes(), c.audio_bytes()), (0, bytes));
+        assert!(!c.insert_video_from(s, file, q, 0, 1, frame()), "the file's last span, after the swap");
+        assert!(c.insert_video_from(s, copy, q, 0, 1, frame()));
+        let epoch = c.epoch();
+        c.adopt_picture(s, copy);
+        assert!(c.contains_video(s, q, 0) && c.epoch() == epoch, "the same picture drops nothing");
+        // what stayed is the source's still: it goes with it
+        c.forget(s);
+        assert!(!c.contains_audio(s, 0) && c.audio_bytes() == 0);
     }
 }
 

@@ -710,7 +710,8 @@ pub mod render_cache {
     pub const HEAVY: u32 = 4;
     /// The prerender measured a moment light: nothing written, its run ends there.
     pub const LIGHT: u32 = 5;
-    /// The prerender stopped a moment: `b` why (the [`render_cache::why`] code).
+    /// The prerender stopped a moment: `b` why (the [`render_cache::why`] code). With `c`: the close left
+    /// an open segment of `c` moments, whose composites took the span.
     pub const ABANDON: u32 = 6;
     /// The bars' scan at rest: `a` moments looked at, `b` found on disk.
     pub const SCAN: u32 = 7;

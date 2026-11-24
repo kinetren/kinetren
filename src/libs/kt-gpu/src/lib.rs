@@ -31,6 +31,10 @@ pub use context::{trace_device,
 };
 pub use compiled::{cold_draws, forms_revision, pipelines_in_frame};
 pub use exit::{background_gpu_work, begin as begin_exit};
+#[doc(hidden)]
+pub use exit::{busy, wait_background};
+/// Write the pass times measured since the last write (the program's close, on a thread).
+pub use seeds::flush as flush_pass_times;
 pub use pipeline_cache::set_cache_dir;
 pub use engine::{held_pictures, present_checks, present_waits, DisplayTarget, GpuFxEngine, assembled_composite, assembled_shaders, plugin_taps, plugin_transitions, plugin_warps};
 

@@ -2148,6 +2148,25 @@ impl VideoRenderer {
         self.clips.iter().map(|c| (c.id, clip_order_quality(c, quality))).collect()
     }
 
+    /// The size each media is decoded at for the preview quality, the largest of its events, inside
+    /// reels too (a source copy is chosen by it, persistent-cache D3).
+    pub(crate) fn media_decode_sizes(&self, quality: Quality, out: &mut std::collections::BTreeMap<u64, (u32, u32)>) {
+        let mut take = |c: &VideoClip| {
+            let d = clip_order_quality(c, quality);
+            let e = out.entry(c.media.0).or_insert((0, 0));
+            *e = (e.0.max(d.width), e.1.max(d.height));
+        };
+        for c in &self.clips {
+            take(c);
+            c.reads.iter().for_each(|(_, r)| take(r));
+        }
+        for c in &self.clips {
+            if let Some(sub) = c.nest.and_then(|k| self.nests.get(&k)) {
+                sub.media_decode_sizes(clip_decode_quality(c, quality), out);
+            }
+        }
+    }
+
     /// The reads a layer makes beyond its own (fx-graph-dag D2), for the coverage strip's rows and the
     /// performance panel: what each reads at and the material it walks.
     pub fn read_rows(&self, quality: Quality) -> Vec<ReadRow> {

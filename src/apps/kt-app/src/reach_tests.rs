@@ -8483,3 +8483,112 @@ fn t3609_a_disk_call_of_the_close_is_bounded_and_named() {
     h.state_mut().dirty_content = false;
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Test t3447 (persistent-cache D1, D2): a heavy range prepared on disk stays bright after a title beside it
+/// is moved, and the title's old and new moments are dim; the Diagnostics window lists the store's two kinds
+/// with their sizes, reads and writes; the switch beside the quality is remembered and, at "Off", nothing of
+/// the store is read.
+/// - **PATH** play the heavy range, pause 2 s → the coverage bar turns bright → drag the title event 1 s
+///   right → the bar stays bright over the heavy event, dim only where the title was and is → open
+///   Diagnostics → the Persistent cache section lists frames and source copies → press the switch beside the
+///   quality, pick Off → the bar over the heavy event is bright no more
+#[test]
+fn t3447_a_heavy_range_survives_an_edit_beside_it_and_the_store_says_so() {
+    crate::alone::own_process!();
+    use kt_time::Tick;
+    crate::plugins::install();
+    let mut h = crate::layout_tests::harness();
+    h.step();
+    if matches!(h.state().player.video_backend(), kt_engine::VideoBackendStatus::Missing) {
+        eprintln!("skipped: no wgpu adapter");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("kt-t3447-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let app = h.state_mut();
+    app.project_path = Some(dir.join("film.kt"));
+    let root = app.cache_folder().unwrap();
+    app.player.set_preview_quality(kt_media::Quality { width: 160, height: 90 });
+    let mut p = kt_model::demo::demo_project(kt_model::demo::DemoSources::Generators);
+    // the heavy event, and a title two seconds after it, on one row
+    let mut heavy = p.clips.iter().find(|c| c.kind == kt_model::ClipKind::Video).expect("a picture").clone();
+    (heavy.lane, heavy.start, heavy.duration) = (0, Tick(0), Tick(45_000));
+    let mut title = heavy.clone();
+    (title.id, title.start) = (kt_model::ClipId(heavy.id.0 + 1), Tick(225_000));
+    title.opacity = 0.5;
+    p.clips = vec![heavy, title.clone()];
+    p.transitions.clear();
+    p.morphers.clear();
+    p.region = None;
+    app.model = kt_model::TimelineModel::new(p);
+    app.model_rev += 1;
+    app.sync_media_sources();
+    app.push_project_to_player();
+    app.player.wait_built();
+    app.player.seek(Tick(0));
+    app.player.render_cache().set_heavy_for_tests(Some(1));
+    app.player.set_render_cache(Some(kt_engine::render_cache::Config {
+        codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
+        root: root.clone(),
+        made: kt_engine::render_cache::Made::of(60),
+        cap: None,
+    }));
+    let grid = app.player.video_grid();
+    let step = grid.frame_step();
+    let at = |from: i64| (0..6).map(|i| Tick(grid.align_floor(Tick(from)).0 + i * step)).collect::<Vec<_>>();
+    let (a, b, b_new) = (at(6_000), at(225_000), at(315_000));
+    let bright = |h: &egui_kittest::Harness<'_, crate::app::KtApp>, ts: &[Tick]| {
+        let (runs, _) = h.state().player.final_video_runs();
+        ts.iter().filter(|t| runs.iter().any(|r| r.contains(&t.0))).count()
+    };
+    let until = |h: &mut egui_kittest::Harness<'static, crate::app::KtApp>, what: &str, ok: &dyn Fn(&egui_kittest::Harness<'static, crate::app::KtApp>) -> bool| {
+        let deadline = kt_time::test_deadline();
+        while !ok(h) {
+            assert!(std::time::Instant::now() < deadline, "{what}");
+            h.step();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    };
+    for t in a.iter().chain(&b) {
+        h.state().player.note_preview_cost(*t, 1_000_000_000, (160, 90));
+    }
+    h.state().player.render_cache().kick();
+    until(&mut h, "the heavy range was never prepared", &|h| bright(h, &a) == 6 && bright(h, &b) == 6);
+    // nothing more is written: what the edit leaves bright is what was prepared before it
+    h.state().player.render_cache().set_heavy_for_tests(Some(u64::MAX));
+
+    let moved = h.state_mut().apply(kt_model::Command::MoveClip { id: title.id, new_start: Tick(315_000), new_lane: 0 });
+    assert!(moved, "the title moves: {:?}", h.state().status);
+    until(&mut h, "the heavy range did not stay bright after the edit", &|h| bright(h, &a) == 6 && !h.state().player.final_video_runs().1);
+    assert_eq!((bright(&h, &b), bright(&h, &b_new)), (0, 0), "the title's old and new moments are dim");
+
+    h.state_mut().perf.diag_open = true;
+    let frames = crate::i18n::tr(crate::i18n::k::pcache::FRAMES).split('{').next().unwrap().to_string();
+    until(&mut h, "the Diagnostics window shows no figures", &|h| h.state().copies_ui.figures[0].writes >= 12 && painted_texts(h).iter().any(|t| t.src.starts_with(&frames)));
+    let [f, c] = h.state().copies_ui.figures;
+    assert!(f.bytes > 0, "{f:?}");
+    assert_eq!(c, Default::default(), "no copy was made of a generator");
+    let copies = crate::i18n::tr(crate::i18n::k::pcache::COPIES).split('{').next().unwrap();
+    assert!(painted_texts(&h).iter().any(|t| t.src.starts_with(copies)), "the second kind is listed");
+    h.state_mut().perf.diag_open = false;
+    h.step();
+
+    // the switch, as a person presses it
+    let press = |h: &mut egui_kittest::Harness<'static, crate::app::KtApp>, probe: &str| {
+        let pos = crate::widgets::field_probe::rect_of(probe).unwrap_or_else(|| panic!("{probe} is not published")).center();
+        h.event(egui::Event::PointerMoved(pos));
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        }
+        h.step();
+        h.step();
+    };
+    press(&mut h, "pcache.switch");
+    press(&mut h, "pcache.off");
+    assert_eq!(h.state().cache_mode(), kt_media::copy::CopyMode::Off);
+    assert_eq!(h.state().start.store.start.persistent_cache.as_deref(), Some("off"), "kept between projects");
+    until(&mut h, "the bar still draws what the store holds", &|h| bright(h, &a) == 0);
+    drop(h);
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -26,6 +26,26 @@ pub fn deadline() -> Instant {
     Instant::now() + WAIT
 }
 
+/// When the process ends at the latest, whatever still runs: the exit watcher's moment.
+static ENDS: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+/// The process ends by `t` (the exit watcher is armed). Once.
+pub fn ends_by(t: Instant) {
+    let _ = ENDS.set(t);
+}
+
+/// The process is ending: a thread that stops now starts no disk call nobody waits for. A process cannot
+/// end while one of its threads stands in an uninterruptible call (found-defects 831, 972).
+pub fn ending() -> bool {
+    ENDS.get().is_some()
+}
+
+/// How long a last step may wait: `max`, and never to the watcher's moment — it keeps a second for the end.
+pub fn left(max: Duration) -> Duration {
+    let room = |t: &Instant| t.saturating_duration_since(Instant::now()).saturating_sub(Duration::from_secs(1));
+    ENDS.get().map_or(max, |t| max.min(room(t)))
+}
+
 /// Record a wait of the close that started at `since`: `ended` — what it waited for ended.
 pub fn record(who: &'static str, since: Instant, ended: bool) {
     let ns = since.elapsed().as_nanos() as u64;

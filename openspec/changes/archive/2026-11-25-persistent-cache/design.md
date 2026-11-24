@@ -38,8 +38,8 @@ lowest first; least recently used as the tie-break; frames this process used in 
 
 ## D3. Source copies
 
-Revision 2's copies, kept per media in the cache folder (`media/<content id>/copy-<q>.mkv`): MKV, H.264 all-intra, the
-original's timestamps, audio stream-copied, the original's natives reported; at the size the preview plays, for heavy
+Revision 2's copies, kept per media in the cache folder (`media/<content id>/copy-<w>x<h>.mov`): QuickTime, H.264
+all-intra, the original's timestamps, the picture only, the original's natives reported; at the size the preview plays, for heavy
 sources only (long-GOP above 1920×1080, or measured slower than real time); a better copy when a higher quality is
 chosen; "Use a camera's copy…" kept. A copy is a decoded SOURCE, not a stage of a chain: it is what the chain reads, at
 the size the preview would decode anyway.
@@ -97,6 +97,34 @@ per moment; nothing runs at rest once the heavy moments are written. A quality c
   moments the present memo holds (`kept_moments`, `player.rs:3569`), so a moment on disk but not yet restored is still
   decoded ahead: the cache audit's cut 1 (`docs/cache-audit.md`), given to mosh-sharp; this change must not undo it.
 
+## Found while building (section 3)
+
+- **QuickTime, not Matroska.** Matroska keeps milliseconds: at 23.976 fps every third picture lies a third of a
+  millisecond from its own time, and where a project's grid meets that time the picture before it is chosen. A MOV track
+  takes the original's time base.
+- **No sound in a copy.** Copying packets needs a container that takes every codec the original may hold, and gives a
+  second sound whose priming and length must be proved equal. The sound decodes fast everywhere; `CopySource` reads it
+  from the original's own decoder, so "byte-equal" holds by construction.
+- **The swap keeps the sound.** `replace_media` drops everything of a source; a swap of the picture must not reset a
+  kept mix (a slowed reverb's is expensive). `BurstCache::adopt_picture` drops the pictures only.
+- **A host with no hardware encoder makes no copy** (the owner's rule, row 775); the reason is shown.
+- **The copies' decoder** is opened by `FfmpegCopies::copy` alone, so `device-decode-sources` takes over one call.
+
+## Found while building (section 4)
+
+- **The disk tier was not told of an edit** (found-defects 974). Its thread woke on a composite's cost, Play and pause;
+  an edit beside the range, with the playhead on a kept moment, costs nothing. The class — a thread that parks on a wake
+  nobody gives for a change its answer depends on — walked over every parked thread of the player: `prefetch` and the
+  render thread are woken by every published build and quality (`wait_since`'s list), `preview-compose` by its asks,
+  `source-copies` by builds, qualities, raises, play and pause (section 3), `render-ahead` by play and by each shown
+  moment. Only `render-cache` missed the build and the quality. A look-up the person breaks off is made again at their
+  rest, and the interface is told when the bars may be brighter.
+- **One row in the Diagnostics window, not a section.** The window's floors leave no height: three rows pushed the
+  journal off a 720-point window (t1968) and made it grow (t918). The two kinds stand side by side in one row, shown with
+  a store to speak of; the mode and the encoder are in its hint.
+- **The switch shows the disk and the value; its list is headed "Persistent cache".** Its width may not follow the
+  window (t790), and the whole name does not fit the row at 900 points.
+
 ## Rejected
 
 - **Layer results at heavy cut points (revision 3)** — rejected by the owner (D1): a second store of pictures that are
@@ -105,3 +133,26 @@ per moment; nothing runs at rest once the heavy moments are written. A quality c
 - **Build-salted entries** — every update would empty a "persistent" cache.
 - **Showing a frame of a higher quality at a lower one** — a different picture than composing at that quality; the
   coverage bars would claim what the plan does not make.
+
+## Measurement (2026-11-25, release, llvmpipe, 32 threads; copies by libx264, forced: no hardware encoder here)
+
+`kt-cli preview` on the heavy showcase (`showcase --heavy`, footage in /dev/shm) and on one event of the 4K VP9 file
+alone, 640×360, read from each run's trace; "before" — the build of `durable-moment-key`, "control" — this branch with no
+copies, "after" — with them (three files got one: 3840×2160 → 960×540, 3840×1608 → 1920×804, 3840×2026 → 1920×1014;
+making them took 128 s and 302 s at rest). Run one after another at load 9–20.
+
+| | before | control | after |
+|---|---|---|---|
+| dense edit 40–52 s: V-fps | 0.4 / 1.1 | 1.3 / 1.2 | 10.4 / 9.1 |
+| — incomplete composites | 633 / 620 | 609 / 620 | 334 / 336 |
+| — a decoded picture, ms (pictures) | 3.8 (11.6 k) | 3.8 (11.6 k) | 1.2 (8.0 k) |
+| — resident peak, MB | 4435 / 4349 | 4268 / 4622 | 3820 / 3844 |
+| — processor cores | 15.2 | 15.4 | 19.8 |
+| loop 20–24 s, 200 s: V-fps (the two builds together) | 21.5 | | 23.4 |
+| — resident steady / peak, MB | 3554 / 3760 | | 3011 / 3333 |
+| one 4K event, 15 s: V-fps | 24.9 | | 24.9 |
+| — a decoded picture, ms; cores | 3.5; 0.9 | | 0.2; 0.5 |
+| — resident, MB | 1907 | | 1721 |
+
+The dense edit's processor grows because the frames now come and are composed; the copies leave the composite as the
+limit there (218 ms the slowest). Not measured: a card's own decode, where the original is cheaper than here.

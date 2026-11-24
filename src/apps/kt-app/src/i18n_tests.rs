@@ -788,3 +788,23 @@ fn t3711_render_item_is_render_in_every_catalog() {
         assert!(hint.contains(render.trim_matches('…')), "{lang:?}: the toolbar says {hint:?}, the menu {render:?}");
     }
 }
+
+/// Test t3450 (persistent-cache; the owner's "не называй это прокси никогда"): no text of the interface
+/// calls the persistent cache a proxy, in any language; the switch has its name in each.
+/// - **PATH** switch the language to Russian → open the switch beside the quality and a clip card's menu →
+///   every item reads "Постоянный кэш" or a copy's own name, none "прокси"
+#[test]
+fn t3450_no_text_says_proxy() {
+    let words = ["proxy", "proxies", "прокси", "代理", "بروكسي", "وكيل"];
+    for (li, lang) in Lang::ALL.into_iter().enumerate() {
+        for (i, v) in tables::TABLES[li].iter().enumerate() {
+            let low = v.to_lowercase();
+            for w in words {
+                assert!(!low.contains(w), "{}: {:?} says {w:?}: {v}", lang.code(), tables::KEY_NAMES[i]);
+            }
+        }
+    }
+    let at = tables::KEY_NAMES.iter().position(|n| *n == "pcache.title").expect("the switch's name");
+    let names: Vec<&str> = (0..Lang::ALL.len()).map(|l| tables::TABLES[l][at]).collect();
+    assert!(names.contains(&"Постоянный кэш") && names.contains(&"Persistent cache"), "{names:?}");
+}

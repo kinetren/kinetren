@@ -45,6 +45,9 @@ pub(crate) fn instance(_opening: &Opening, backends: wgpu::Backends) -> &'static
     let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
     desc.backends = backends;
     let i: &'static wgpu::Instance = Box::leak(Box::new(wgpu::Instance::new(desc)));
+    // the drivers are loaded: a process that ends while a thread opens its first device ends before their
+    // destructors too, not only once the device is open (found-defects 973)
+    crate::exit::device_opened();
     INSTANCES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     all.push((backends, i));
     i
@@ -55,7 +58,9 @@ pub(crate) fn instance(_opening: &Opening, backends: wgpu::Backends) -> &'static
 fn own_instance(_opening: &Opening) -> wgpu::Instance {
     let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
     desc.backends = wgpu::Backends::GL;
-    wgpu::Instance::new(desc)
+    let i = wgpu::Instance::new(desc);
+    crate::exit::device_opened();
+    i
 }
 
 static INSTANCES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
