@@ -83,9 +83,8 @@
       (v2a put them there); every chain edit of the editor keeps the wiring (`remove_slot`,
       `insert_slot`) so a format-8 file's slot can be deleted (found-defects 903)
 - [x] 4.3 i18n ×5 (Merge, its modes and sockets, the refusals); `subset-fonts.py` if needed
-- [~] 4.4 idle with a branched graph: t3221 (heavy chain in the harness); live `idle` on the heavy
-      showcase still to run
-- [~] 4.5 live `node_graph_branch` written (a screenshot per step), still to run; live `idle`, `node_graph`, `fxwin`
+- [x] 4.4 idle with a branched graph: t3221 (heavy chain in the harness); live `idle`
+- [x] 4.5 live `node_graph_branch` (a screenshot per step); live `idle`, `node_graph`, `fxwin`
 - [x] 4.6 What's new line; `docs/guide` page on the node editor gains branches; U3's registry row
 
 ## 5. Close
