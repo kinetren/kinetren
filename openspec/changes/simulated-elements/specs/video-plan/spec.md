@@ -1,11 +1,13 @@
 ## ADDED Requirements
 
-### Requirement: Simulated poses enter the plan as numbers in its key
+### Requirement: Simulated poses enter the plan as numbers
 When a layer's owner has element sets, the frame plan SHALL carry each element's placed pose for the moment as numbers
-— glyph poses for the title's rasterization, vertices for the mask raster, transforms for reel layers and 3D planes, an
-instance buffer for particles — and the plan key and the durable key SHALL hash those numbers, never a history or the
-moment a computation started. The elements SHALL be drawn by their producer's own drawing path; particles by one
-instanced-sprite pass warmed with the project.
+— vertices for the mask raster, transforms for reel layers and 3D planes, an instance buffer for a title's letters and
+an emitter's particles. The plan key and the durable key SHALL hash what those numbers are a function of — the sets and
+their drivers up to the moment, and the moment — never a computation's history, and a probe plan SHALL have the full
+plan's key without stepping. Masks and transforms SHALL be drawn by their own paths; letters and particles by instanced
+passes warmed with the project: a title's letters as masks combined by layer, so that its shadows, strokes and fills lie
+in the title's own order.
 Why: invariant 4 — the memo and the disk frames stay exact; invariant 7 — one composition path; R.59 — physics gives
 numbers, not pixels.
 
@@ -16,5 +18,5 @@ numbers, not pixels.
 
 #### Scenario: A simulated title's letters are placed by the plan, from the source's atlas
 - **WHEN** one reel holding a title with a spring set is placed twice at two outer speeds, and the same title without a set is composed beside it
-- **THEN** the two instances read one glyph atlas from the source and give two plans with two keys and two pictures; at rest poses the sprite title equals the source's raster of the title without a set; the title without a set keeps its plan key and bytes
+- **THEN** the two instances read one glyph atlas from the source and give two plans with two keys and two pictures; at rest poses the sprite title, with plate, shadow, stroke and fill, equals the source's raster of the title without a set within the stored frames' tolerance; the title without a set keeps its plan key and bytes
 - **TEST** t4107 (`src/libs/kt-engine/tests/simulated_elements.rs`)
