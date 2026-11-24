@@ -230,7 +230,8 @@ It stays the next step if the owner's trace shows the transfer, not the decode, 
 | Datamosh stream input, render-ahead, ahead-kept, kept composites | unaffected | they read decoded frames from the cache, which are the same bytes |
 | Loudness, sync, peak pyramid, audio-reactive series (`listen.rs`) | no | audio |
 | The render-ahead composites, the disk frames of the cache folder (segments) | as the tier | they decode as `segment.rs` |
-| `persistent-cache`'s source copies (its `CopySource`) | yes, through `open_source` | a copy is a file like any other: the same table, the same proof |
+| `persistent-cache`'s source copies (`FfmpegCopies::copy`, `kt-media/src/copy.rs`, branch `persistent-cache` 14d30724) | yes, through `open_source` | today it opens by `open_hw` as a segment does: a display per decoder, no bound, and NV12 through swscale. After this change a copy is a file like any other: the same table, proof and layout, and its picture no longer depends on whether a device opened (its `SourceIdent` names the copy's file, not its decoder, so until then two machines may keep two pictures under one key: the lossy tier, never an export) |
+| the copy's MAKING (`FfmpegCopies::make`: `Source::open`, the processor) | yes, `Purpose::Preview` | a long-GOP 4K file is what the device is for; its time is measured there and decides "slow" |
 | Windows (D3D11VA, NV12/P010) | yes | the same layout; wine CI has no device → processor |
 | FFmpeg 6/7/8/9 | yes | no new symbol; `AVHWFramesContext` is in every version module (t961) |
 | The memory ledger | changed | tenant `Surfaces`, a fixed kind (D4); `memory-breakdown` appends its report-only kinds after it |

@@ -1,6 +1,7 @@
 # Proposal: rest-is-said
 
-> DESIGN ONLY (spec-engine, 2026-11-24, orch `286c406c`), asked by the orchestrator: read the rows of class "red once
+> DESIGN ONLY (spec-engine, 2026-11-24, orch `286c406c`; revision 2 of the same day against `0c2a4065`: `durable-moment-key`
+> fixed 966, 967 and 969 one by one, and what it did is cut from here), asked by the orchestrator: read the rows of class "red once
 > under load" together and say whether one mechanism stands behind several. Tests t4117–t4124.
 
 ## Why
@@ -31,7 +32,8 @@ message was gone with the run.
   question answers "at rest, or who is not". Tests and live scenarios open a quiet window only from that answer.
 - **A wait that gives up says it**: `trace::flush` answers whether the records are written; the tests' form waits to
   the guard and names the writer.
-- **A bench ends by what it shows**, not by seconds: a loop played until it showed N frames, with the hang guard.
+- **A bench that gives up says so.** Playing on until a frame is shown is built (966, `first_shown_by`); its other ends (a start that
+  never sounds) still return as if the range had been played.
 - **The early window is made to fail on purpose**: a stretch at the actors' last step (a test knob) makes every M1 test red
   in one run, instead of one at a time over months.
 - **A red keeps its message**: the test run writes its failures to a file that the next run does not overwrite.

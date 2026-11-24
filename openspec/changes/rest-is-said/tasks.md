@@ -1,8 +1,9 @@
 # Tasks: rest-is-said
 
-> IMPLEMENTATION-READY (spec-engine, 2026-11-24, orch `286c406c`). Tests t4117–t4124. Areas: TESTS, PLAYER (the prefetch
-> loop's near part), `audio_out.rs`, `render_cache.rs` (park points). Section 1 and 3 may run beside
-> `durable-moment-key` and `fx-graph-dag` v2d; 2 and 4 after `durable-moment-key` merges. Commit per section.
+> IMPLEMENTATION-READY (spec-engine, 2026-11-24, orch `0c2a4065`, revision 2: what `durable-moment-key` fixed is cut). Tests
+> t4117–t4124. Areas: TESTS, PLAYER (the prefetch
+> loop's near part), `audio_out.rs`, `render_cache.rs` (park points). Section 1 may run beside
+> anything; 2 and 4 not beside `persistent-cache` (PLAYER, `render_cache.rs`). Commit per section.
 
 ## 0. Notes first
 
@@ -20,13 +21,15 @@
 - [ ] 2.1 `kt-time/src/rest.rs` (D1): `Actor`, `EPOCH`, `reached`, `still`, `busy`; t4117, t4118
 - [ ] 2.2 the actors, one commit a crate: `sched.rs`; kt-engine `player.rs` (four threads), `worker.rs`, `compose_queue.rs`,
       `render_cache.rs`; kt-plugin-api's compute walk; kt-gpu `compiled.rs`; kt-app `audio_out.rs`
-- [ ] 2.3 `audio_out.rs`'s tests (t2380, t2643, t2644 and the other users of `parked`) from `Rest`; the writer's `/proc` reading of t2142 and
+- [ ] 2.3 `audio_out.rs`'s `settled` and `parked` read `Rest` (their tests unchanged); the writer's `/proc` reading of t2142 and
       t1964 replaced; the kt-app dump's `rest`, `idle.wait_quiet`, `gpu_record`, `render_cache`; t4120
 - [ ] 2.4 the stretch (D4), `make test-stretch`; every red it shows cured or rowed; the list in the report
 
 ## 3. The bench
 
-- [ ] 3.1 `BenchOptions.end`, `BenchReport.gave_up`; t2044 by `Shown(24)`; the two other `loop_for` users read; t4121
+- [x] 3.0 t2044 plays on until a frame was shown (`first_shown_by`): built in `durable-moment-key` (966)
+- [ ] 3.1 `BenchReport.gave_up` (asserted `None` by every test that reads a report), `BenchOptions.stop_when`; the two other users of `loop_for` end by what
+      they played (D3); t4121
 - [ ] 3.2 t2414 and t2459 behind the source's gate (row 772)
 
 ## 4. Row 960
@@ -35,5 +38,5 @@
 
 ## 5. Close
 
-- [ ] 5.1 rows 958 (`idle`), 960, 961, 966, 967 closed, 772 closed or re-read; `distribution/design.md` gains the four shapes;
+- [ ] 5.1 rows 958 (`idle`), 960, 961 closed (966, 967, 969 are), 772 closed or re-read; `distribution/design.md` gains the four shapes;
       `scripts/live` README line on `rest`; target-prune; the report's "Найдено, не исправлено"
