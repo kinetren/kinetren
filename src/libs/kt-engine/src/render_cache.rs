@@ -2,14 +2,16 @@
 //! review R3). A slow moment, once composed, is kept on disk and played from it later — the next lap,
 //! after an eviction, after a restart — with no decode, no stream stage and no chain.
 //!
-//! - **The key** (D1): [`durable_hash`] of the probe plan — every field the executor's plan key hashes
-//!   but the frames' per-process content serials — mixed with what those serials stood for, collected
-//!   while the plan is built ([`Leaves`]): a file's path, size and modification time, a generator's
-//!   values, every file of the project for a stream stage. Salted by the format, the program's build
-//!   and the device: the folder `<root>/v<FORMAT>-<build>/<device>/`.
+//! - **The key** (D1; project-cache-folder D1b): [`DiskKey`] — [`durable_hash`] of the probe plan, every
+//!   field the executor's plan key hashes but the frames' per-process content serials, mixed with what
+//!   those serials stood for, collected while the plan is built ([`Leaves`]): a file's path, size and
+//!   modification time, a generator's values, every file of the project for a stream stage. Its salt is
+//!   what made the pixels ([`Made`]): the decoder's major, the plugins that ran, the composite code
+//!   outside them. Not the build: an update keeps what it did not change.
 //! - **The store** (D2): [`DiskStore`], segments of up to [`SEGMENT_FRAMES`] moments, each a video
-//!   written by the host's [`SegmentCodec`] (a hardware encoder) with a manifest beside it, bounded,
-//!   least recently used out; the folders of other builds go at open.
+//!   written by the host's [`SegmentCodec`] (a hardware encoder) with a manifest beside it, in the
+//!   project's cache folder under `results/v<FORMAT>/<device class>/frames/`, written in that folder's
+//!   cycle. A frame of another salt is a miss, and its segment goes when it is met.
 //! - **The reads** (D3) are the player's (`PreviewParts::restore_from_disk`), before anything composes.
 //! - **The prerender** (D4) is the player's `render-cache` thread ([`run_prerender`]): at rest, after
 //!   [`QUIET`] with no input, the moments the cost map measured at least half a frame period
@@ -18,8 +20,10 @@
 //! No export reads or writes it (D5): the export's bytes never depend on what the preview kept.
 
 use crate::video_plan::{FramePlan, LayerInput, LayerSrc, PlanLayer};
+use kt_media::cache_folder::{Folder, Tenant};
 pub use kt_media::segment::{RawSegments, SegmentCodec, SegmentReader, SegmentWriter};
 use kt_model::MediaId;
+use kt_plugin_api::Family;
 use kt_time::trace::{self, render_cache as rc, Ev};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -30,12 +34,11 @@ use std::time::Duration;
 use xxhash_rust::xxh3::Xxh3;
 
 /// The layout's version: a change of the manifest, the folders or the key's fields moves it.
-pub const FORMAT: u32 = 2;
-/// The default cap of the store (D2); `KT_RENDER_CACHE_MB` overrides it.
-pub const DEFAULT_CAP: u64 = 2 << 30;
+pub const FORMAT: u32 = 3;
 /// How long no input must have come before the prerender works (D4: FCP's trigger, shorter).
 pub const QUIET: Duration = Duration::from_millis(1500);
-/// The most frames one segment holds (ten seconds at 25 fps): the eviction's grain.
+/// The most frames one segment holds (ten seconds at 25 fps): the eviction's grain. A small folder's
+/// segments are shorter (`DiskStore::segment_frames`).
 pub const SEGMENT_FRAMES: usize = 250;
 /// Readers kept open by the reader thread.
 const READERS: usize = 4;
@@ -48,13 +51,19 @@ pub fn enabled() -> bool {
     *ON.get_or_init(|| std::env::var("KT_RENDER_CACHE").as_deref() != Ok("off"))
 }
 
-/// The cap: `KT_RENDER_CACHE_MB`, else [`DEFAULT_CAP`].
-pub fn cap_from_env() -> u64 {
-    std::env::var("KT_RENDER_CACHE_MB")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .map(|mb| mb << 20)
-        .unwrap_or(DEFAULT_CAP)
+/// `KT_RENDER_CACHE_MB`: a cap of the frames alone (tests, the live check); without it the cache
+/// folder's room bounds them.
+pub fn cap_from_env() -> Option<u64> {
+    std::env::var("KT_RENDER_CACHE_MB").ok().and_then(|v| v.parse::<u64>().ok()).map(|mb| mb << 20)
+}
+
+/// Delete `<data>/render-cache`, where the former builds kept the frames of every project
+/// (project-cache-folder D5).
+pub fn remove_former(data: &Path) {
+    let dir = data.join("render-cache");
+    if dir.is_dir() {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 /// A composite: tightly packed straight RGBA.
@@ -69,13 +78,13 @@ fn hex(v: u64) -> String {
     format!("{v:016x}")
 }
 
-/// The folder of one build of the layout: `v<FORMAT>-<build hash>`.
-fn build_dir_name(build: &str) -> String {
-    format!("v{FORMAT}-{}", hex(xxhash_rust::xxh3::xxh3_64(build.as_bytes())))
+/// The store's folder inside the cache folder, of one layout and one device class.
+fn frames_rel(device: &str) -> String {
+    format!("results/v{FORMAT}/{}/frames", hex(xxhash_rust::xxh3::xxh3_64(device.as_bytes())))
 }
 
 /// A segment's manifest (D2, D7): a text file beside the video, the codec and the encoder that wrote
-/// it, the frame size and rate, and the durable key of every frame in order — serializable on its
+/// it, the frame size and rate, and the durable key and salt of every frame in order — serializable on its
 /// own, so a later reader (the cached final render, F-EXP-003) can tell what a file holds.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Manifest {
@@ -84,7 +93,7 @@ pub struct Manifest {
     pub w: u32,
     pub h: u32,
     pub fps: u32,
-    pub keys: Vec<u64>,
+    pub keys: Vec<DiskKey>,
 }
 
 impl Manifest {
@@ -94,7 +103,7 @@ impl Manifest {
             self.codec, self.encoder, self.w, self.h, self.fps
         );
         for k in &self.keys {
-            s.push_str(&format!("key {}\n", hex(*k)));
+            s.push_str(&format!("key {} {}\n", hex(k.key), hex(k.salt)));
         }
         s
     }
@@ -116,7 +125,10 @@ impl Manifest {
                     m.h = b.parse().ok()?;
                 }
                 "fps" => m.fps = v.parse().ok()?,
-                "key" => m.keys.push(u64::from_str_radix(v, 16).ok()?),
+                "key" => {
+                    let (a, b) = v.split_once(' ')?;
+                    m.keys.push(DiskKey { key: u64::from_str_radix(a, 16).ok()?, salt: u64::from_str_radix(b, 16).ok()? });
+                }
                 _ => {}
             }
         }
@@ -131,14 +143,14 @@ struct Seg {
     last: u64,
     w: u32,
     h: u32,
-    keys: Vec<u64>,
+    keys: Vec<DiskKey>,
 }
 
 #[derive(Default)]
 struct Index {
     segs: HashMap<u64, Seg>,
-    /// Key → (segment, frame).
-    keys: HashMap<u64, (u64, u32)>,
+    /// Key → (segment, frame, salt).
+    keys: HashMap<u64, (u64, u32, u64)>,
     used: u64,
     seq: u64,
     /// Uses above this were made by this process.
@@ -150,7 +162,7 @@ struct Index {
 impl Index {
     fn insert(&mut self, id: u64, seg: Seg) {
         for (i, k) in seg.keys.iter().enumerate() {
-            self.keys.insert(*k, (id, i as u32));
+            self.keys.insert(k.key, (id, i as u32, k.salt));
         }
         self.used += seg.bytes;
         self.frame_bytes.0 += seg.bytes;
@@ -161,8 +173,8 @@ impl Index {
     fn remove(&mut self, id: u64) -> Option<Seg> {
         let seg = self.segs.remove(&id)?;
         for k in &seg.keys {
-            if self.keys.get(k).is_some_and(|(s, _)| *s == id) {
-                self.keys.remove(k);
+            if self.keys.get(&k.key).is_some_and(|(s, ..)| *s == id) {
+                self.keys.remove(&k.key);
             }
         }
         self.used -= seg.bytes;
@@ -173,11 +185,17 @@ impl Index {
 /// A request of the reader thread: the segment, its frame, its size, where to answer.
 type ReadAsk = (PathBuf, u32, u32, u32, std::sync::mpsc::Sender<Option<Vec<u8>>>);
 
-/// The disk tier's segments of one build and one device (D2): videos written by the host's
-/// [`SegmentCodec`] and their manifests, bounded, least recently used out.
+/// The disk tier's segments of one device class (D2): videos written by the host's [`SegmentCodec`]
+/// and their manifests, the frames of the project's cache folder.
 pub struct DiskStore {
+    folder: Arc<Folder>,
+    /// `dir` inside the folder, with `/`.
+    rel: String,
     dir: PathBuf,
-    cap: u64,
+    /// A cap of the frames alone (`KT_RENDER_CACHE_MB`).
+    cap: Option<u64>,
+    /// Moves when segments went away: what the bars drew of them is no more.
+    gone: Arc<AtomicU64>,
     codec: Arc<dyn SegmentCodec>,
     ix: Mutex<Index>,
     /// The thread that owns every open segment reader (invariant 5: a decoder has one owner).
@@ -216,10 +234,17 @@ pub struct SegmentBuild {
     id: u64,
     writer: Box<dyn SegmentWriter>,
     manifest: Manifest,
+    /// The device time its moments took, ns.
+    cost: u64,
 }
 
 impl SegmentBuild {
-    pub fn push(&mut self, key: u64, rgba: &[u8]) -> Result<(), String> {
+    /// A moment of it took the device `ns` to compose: what a read of it saves.
+    pub fn cost(&mut self, ns: u64) {
+        self.cost += ns;
+    }
+
+    pub fn push(&mut self, key: DiskKey, rgba: &[u8]) -> Result<(), String> {
         self.writer.push(rgba)?;
         self.manifest.keys.push(key);
         Ok(())
@@ -232,7 +257,7 @@ impl SegmentBuild {
     }
 
     /// The next frame as the `planes` layout's packed planes, made on the composing device.
-    pub fn push_planes(&mut self, key: u64, planes: &[u8]) -> Result<(), String> {
+    pub fn push_planes(&mut self, key: DiskKey, planes: &[u8]) -> Result<(), String> {
         self.writer.push_planes(planes)?;
         self.manifest.keys.push(key);
         Ok(())
@@ -256,20 +281,11 @@ impl SegmentBuild {
 }
 
 impl DiskStore {
-    /// Open (create) `<root>/v<FORMAT>-<build>/<device>/`, read its manifests (a video with none, or of
-    /// another codec, is removed) and remove the other builds' folders under `root`.
-    pub fn open(root: &Path, build: &str, device: &str, cap: u64, codec: Arc<dyn SegmentCodec>) -> std::io::Result<DiskStore> {
-        let mine = build_dir_name(build);
-        if let Ok(rd) = std::fs::read_dir(root) {
-            for e in rd.flatten() {
-                let name = e.file_name().to_string_lossy().into_owned();
-                let ours = name.starts_with('v') && name[1..].split('-').next().is_some_and(|n| n.parse::<u32>().is_ok());
-                if ours && name != mine && e.path().is_dir() {
-                    let _ = std::fs::remove_dir_all(e.path());
-                }
-            }
-        }
-        let dir = root.join(mine).join(hex(xxhash_rust::xxh3::xxh3_64(device.as_bytes())));
+    /// Open (create) the frames of `device` in the cache folder and read their manifests (a video with
+    /// none, or of another codec, is removed).
+    pub fn open(folder: Arc<Folder>, device: &str, cap: Option<u64>, codec: Arc<dyn SegmentCodec>) -> std::io::Result<DiskStore> {
+        let rel = frames_rel(device);
+        let dir = folder.root().join(&rel);
         std::fs::create_dir_all(&dir)?;
         let ext = codec.extension().to_string();
         let mut found: Vec<(std::time::SystemTime, u64, Manifest, u64)> = Vec::new();
@@ -318,8 +334,10 @@ impl DiskStore {
                 let _ = std::fs::remove_file(&v);
             }
         }
-        let store = DiskStore { dir, cap, codec, ix: Mutex::new(ix), reader: Mutex::new(None) };
-        // a smaller cap than the folder holds: the oldest go now
+        // what the cycle dropped before the index was read is not in it
+        let _ = folder.take_dropped(&rel);
+        let store = DiskStore { folder, rel, dir, cap, gone: Arc::default(), codec, ix: Mutex::new(ix), reader: Mutex::new(None) };
+        // a smaller cap than the store holds: the oldest go now
         store.make_room(0, true);
         Ok(store)
     }
@@ -332,6 +350,27 @@ impl DiskStore {
         self.codec.codec()
     }
 
+    /// The entry of a segment in the folder.
+    fn entry(&self, id: u64) -> String {
+        format!("{}/{}.{}", self.rel, hex(id), self.codec.extension())
+    }
+
+    /// Forget the segments the folder's cycle dropped.
+    fn sync(&self) {
+        let dropped = self.folder.take_dropped(&self.rel);
+        if dropped.is_empty() {
+            return;
+        }
+        let mut ix = self.ix.lock().unwrap();
+        for e in dropped {
+            let id = e.rsplit('/').next().and_then(|s| u64::from_str_radix(s, 16).ok());
+            if let Some(seg) = id.and_then(|id| ix.remove(id)) {
+                trace::ev(Ev::RenderCache).aux(rc::EVICT).a(seg.keys.len() as u64).b(seg.bytes).c(id.unwrap()).emit();
+            }
+        }
+        self.gone.fetch_add(1, Ordering::Relaxed);
+    }
+
     fn video(&self, id: u64) -> PathBuf {
         self.dir.join(format!("{}.{}", hex(id), self.codec.extension()))
     }
@@ -340,8 +379,26 @@ impl DiskStore {
         self.dir.join(format!("{}.{MANIFEST}", hex(id)))
     }
 
-    pub fn contains(&self, key: u64) -> bool {
-        self.ix.lock().unwrap().keys.contains_key(&key)
+    /// Does the store hold the picture? A frame that others made than what makes it now is a miss, and
+    /// its segment goes (project-cache-folder D1b).
+    pub fn contains(&self, key: DiskKey) -> bool {
+        self.sync();
+        self.find(key).is_some()
+    }
+
+    /// The same with nothing dropped, for the bars.
+    fn holds(&self, key: DiskKey) -> bool {
+        self.sync();
+        self.ix.lock().unwrap().keys.get(&key.key).is_some_and(|k| k.2 == key.salt)
+    }
+
+    fn find(&self, key: DiskKey) -> Option<(u64, u32)> {
+        let (id, frame, salt) = *self.ix.lock().unwrap().keys.get(&key.key)?;
+        if salt != key.salt {
+            self.drop_segment(id);
+            return None;
+        }
+        Some((id, frame))
     }
 
     /// The bytes the store holds, and the frames.
@@ -350,32 +407,36 @@ impl DiskStore {
         (ix.used, ix.keys.len())
     }
 
-    pub fn cap(&self) -> u64 {
-        self.cap
-    }
 
     /// The manifest of the segment that holds `key` (tests, diagnostics).
-    pub fn manifest_of(&self, key: u64) -> Option<Manifest> {
-        let id = self.ix.lock().unwrap().keys.get(&key)?.0;
+    pub fn manifest_of(&self, key: DiskKey) -> Option<Manifest> {
+        let id = self.find(key)?.0;
         std::fs::read_to_string(self.manifest_path(id)).ok().and_then(|t| Manifest::parse(&t))
     }
 
     /// The picture under `key`, decoded by the reader thread; a segment that does not read back is
     /// removed and is a miss.
-    pub fn get(&self, key: u64) -> Option<Picture> {
-        let (id, frame, w, h) = {
+    pub fn get(&self, key: DiskKey) -> Option<Picture> {
+        self.sync();
+        let Some((id, frame)) = self.find(key) else {
+            self.folder.missed(Tenant::Frames);
+            return None;
+        };
+        let (w, h) = {
             let mut ix = self.ix.lock().unwrap();
-            let (id, frame) = *ix.keys.get(&key)?;
             ix.seq += 1;
             let s = ix.seq;
             let seg = ix.segs.get_mut(&id)?;
             seg.last = s;
-            (id, frame, seg.w, seg.h)
+            (seg.w, seg.h)
         };
         let (tx, rx) = std::sync::mpsc::channel();
         self.ask((self.video(id), frame, w, h, tx))?;
         match rx.recv().ok().flatten() {
-            Some(rgba) => Some(Picture { w, h, rgba }),
+            Some(rgba) => {
+                self.folder.used(&self.entry(id));
+                Some(Picture { w, h, rgba })
+            }
             None => {
                 self.drop_segment(id);
                 None
@@ -402,28 +463,43 @@ impl DiskStore {
         if gone.is_some() {
             let _ = std::fs::remove_file(self.manifest_path(id));
             let _ = std::fs::remove_file(self.video(id));
+            self.folder.gone(&self.entry(id));
+            self.gone.fetch_add(1, Ordering::Relaxed);
         }
     }
 
-    /// Evict until `bytes` more fit; `any` — this process's segments may go too. `false` — no room.
+    /// Room for `bytes` more, in the frames' own cap and then in the folder's cycle; `any` — this
+    /// process's segments may go too. `false` — no room.
     fn make_room(&self, bytes: u64, any: bool) -> bool {
         let mut gone = Vec::new();
-        let ok = {
-            let mut ix = self.ix.lock().unwrap();
-            while ix.used + bytes > self.cap {
-                let session = ix.session;
-                let oldest = ix.segs.iter().filter(|(_, s)| any || s.last <= session).min_by_key(|(_, s)| s.last).map(|(k, _)| *k);
-                let Some(id) = oldest else { break };
-                let s = ix.remove(id).unwrap();
-                gone.push((id, s.bytes, s.keys.len()));
+        let ok = match self.cap {
+            None => true,
+            Some(cap) => {
+                let mut ix = self.ix.lock().unwrap();
+                while ix.used + bytes > cap {
+                    let session = ix.session;
+                    let oldest = ix.segs.iter().filter(|(_, s)| any || s.last <= session).min_by_key(|(_, s)| s.last).map(|(k, _)| *k);
+                    let Some(id) = oldest else { break };
+                    let s = ix.remove(id).unwrap();
+                    gone.push((id, s.bytes, s.keys.len()));
+                }
+                ix.used + bytes <= cap
             }
-            ix.used + bytes <= self.cap
         };
+        if !gone.is_empty() {
+            self.gone.fetch_add(1, Ordering::Relaxed);
+        }
         for (id, b, n) in gone {
             let _ = std::fs::remove_file(self.manifest_path(id));
             let _ = std::fs::remove_file(self.video(id));
+            self.folder.gone(&self.entry(id));
             trace::ev(Ev::RenderCache).aux(rc::EVICT).a(n as u64).b(b).c(id).emit();
         }
+        if !ok || bytes == 0 {
+            return ok;
+        }
+        let ok = self.folder.ask_room(bytes);
+        self.sync();
         ok
     }
 
@@ -436,11 +512,27 @@ impl DiskStore {
         }
     }
 
+    /// How many frames a segment takes: an eighth of all the store may hold at most, so a small folder
+    /// is written in a cycle too, a segment in another's place.
+    fn segment_frames(&self, w: u32, h: u32) -> usize {
+        let all = self.cap.unwrap_or(u64::MAX).min(self.folder.cap());
+        ((all / 8 / self.frame_bytes(w, h).max(1)) as usize).clamp(1, SEGMENT_FRAMES)
+    }
+
+    /// Room for `frames` of the segment being written, whose file no count holds yet: what it replaces
+    /// goes before the bytes come, not after.
+    fn room_for(&self, frames: usize, w: u32, h: u32) -> bool {
+        self.make_room(frames as u64 * self.frame_bytes(w, h), false)
+    }
+
     /// Would `bytes` more fit without evicting what this process used?
     pub fn has_room(&self, bytes: u64) -> bool {
-        let ix = self.ix.lock().unwrap();
-        let stale: u64 = ix.segs.values().filter(|s| s.last <= ix.session).map(|s| s.bytes).sum();
-        ix.used - stale + bytes <= self.cap
+        let mine = self.cap.is_none_or(|cap| {
+            let ix = self.ix.lock().unwrap();
+            let stale: u64 = ix.segs.values().filter(|s| s.last <= ix.session).map(|s| s.bytes).sum();
+            ix.used - stale + bytes <= cap
+        });
+        mine && self.folder.has_room(bytes)
     }
 
     /// Start a segment of `w`×`h` at `fps`: `NoEncoder` when the codec opens no encoder here.
@@ -451,16 +543,18 @@ impl DiskStore {
             // a new name for every segment of this folder: the time and the sequence
             xxhash_rust::xxh3::xxh3_64(format!("{}|{}|{:?}", ix.seq, std::process::id(), std::time::SystemTime::now()).as_bytes())
         };
+        // the person may have deleted the folder while the program runs
+        std::fs::create_dir_all(&self.dir).map_err(|e| PutError::Io(e.to_string()))?;
         let writer = self.codec.writer(&self.video(id), w, h, fps).map_err(PutError::NoEncoder)?;
         let manifest = Manifest { codec: self.codec.codec().into(), encoder: writer.encoder().into(), w, h, fps, keys: Vec::new() };
-        Ok(SegmentBuild { id, writer, manifest })
+        Ok(SegmentBuild { id, writer, manifest, cost: 0 })
     }
 
     /// Close a segment and keep it: its frames read from now. `evict_session` — what this process
     /// used may be evicted for it (the prerender passes `false`: past the cap the segment is dropped).
     /// The bytes on disk.
     pub fn commit(&self, b: SegmentBuild, evict_session: bool) -> Result<u64, PutError> {
-        let SegmentBuild { id, writer, manifest } = b;
+        let SegmentBuild { id, writer, manifest, cost } = b;
         let video = writer.finish().map_err(PutError::Io)?;
         if manifest.keys.is_empty() {
             let _ = std::fs::remove_file(self.video(id));
@@ -470,6 +564,10 @@ impl DiskStore {
         let bytes = video + text.len() as u64;
         if !self.make_room(bytes, evict_session) {
             let _ = std::fs::remove_file(self.video(id));
+            // what a frame takes here is known from now: the next segment is cut to the room
+            let mut ix = self.ix.lock().unwrap();
+            ix.frame_bytes.0 += bytes;
+            ix.frame_bytes.1 += manifest.keys.len() as u64;
             return Err(PutError::Full);
         }
         let tmp = self.dir.join(format!("{}.tmp", hex(id)));
@@ -478,7 +576,10 @@ impl DiskStore {
         let mut ix = self.ix.lock().unwrap();
         ix.seq += 1;
         let last = ix.seq;
+        let mean = cost / 1000 / manifest.keys.len() as u64;
         ix.insert(id, Seg { bytes, last, w: manifest.w, h: manifest.h, keys: manifest.keys });
+        drop(ix);
+        self.folder.wrote(&self.entry(id), bytes, mean);
         Ok(bytes)
     }
 }
@@ -541,6 +642,8 @@ pub struct Leaves {
     files: BTreeSet<MediaId>,
     /// A stream stage reads another event's file: every file of the project joins the key.
     all_files: bool,
+    /// A procedural source drew: the generators join the salt.
+    gens: bool,
 }
 
 #[derive(Default)]
@@ -575,6 +678,7 @@ pub(crate) fn note_leaf(source: u64, file: Option<MediaId>, rev: u64, stream: bo
                 l.files.insert(m);
             }
             l.all_files |= stream;
+            l.gens |= rev != 0;
         }
     });
 }
@@ -681,6 +785,9 @@ fn put_src(h: &mut Xxh3, s: &LayerSrc<'_>) {
         }
     }
     h.update(&s.fx_hash.to_le_bytes());
+    // the rows as the curves gave them: a changed curve arithmetic is another picture under the same
+    // chain
+    put_debug(h, &&*s.fx);
     // the wiring, as `plan_hash` does (fx-graph-dag D3); a line adds nothing
     if !s.fx_in.is_empty() {
         put_debug(h, &s.fx_in);
@@ -743,19 +850,143 @@ fn put_plan(h: &mut Xxh3, plan: &FramePlan<'_>) {
     }
 }
 
-/// The key on disk: the plan's durable hash, its leaves and the quality it was asked at.
-pub fn disk_key(plan: &FramePlan<'_>, leaves: &Leaves, files: &FileIds) -> u64 {
+/// What a moment's picture is kept under.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub struct DiskKey {
+    /// What the picture is OF: the plan, its leaves, the quality it was asked at.
+    pub key: u64,
+    /// What MAKES it ([`Made`]).
+    pub salt: u64,
+}
+
+impl DiskKey {
+    /// Both, as one number of the process's own tables.
+    pub fn id(self) -> u64 {
+        self.key ^ self.salt.rotate_left(29)
+    }
+}
+
+/// What makes pixels outside the plan (project-cache-folder D1b).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Made {
+    /// The decoder's major (`avcodec_version()`).
+    pub decoder: u32,
+    /// The composite code outside the plugins' kernels.
+    pub composite: u64,
+    /// The decode's own conversion of the same file.
+    pub pixels: u32,
+}
+
+include!(concat!(env!("OUT_DIR"), "/composite_path.rs"));
+
+impl Made {
+    /// What this build makes with the decoder of `major`.
+    pub fn of(major: u32) -> Made {
+        Made { decoder: major, composite: COMPOSITE_PATH_VERSION, pixels: kt_media::index::THUMB_PIXELS_VERSION }
+    }
+
+    /// The salt of a plan: with the versions of the plugins whose kernels run in it.
+    pub fn salt(&self, plan: &FramePlan<'_>, leaves: &Leaves) -> u64 {
+        let mut used: BTreeSet<(u8, &str)> = BTreeSet::new();
+        plugins_of(plan, &mut used);
+        let reg = kt_model::plugin_slot::registry();
+        let mut h = Xxh3::new();
+        h.update(&self.decoder.to_le_bytes());
+        h.update(&self.composite.to_le_bytes());
+        h.update(&self.pixels.to_le_bytes());
+        for (f, id) in used {
+            let family = if f == 0 { Family::Fx } else { Family::Transition };
+            h.update(id.as_bytes());
+            h.update(&kernel_version(reg, family, id).to_le_bytes());
+        }
+        // what drew a leaf is not in the plan: every generator, every stream kernel
+        for p in reg.plugins() {
+            let m = p.manifest();
+            let ran = (leaves.gens && m.media.family() == Family::Generator) || (leaves.all_files && p.stream().is_some());
+            if ran {
+                h.update(m.id.as_bytes());
+                h.update(&kernel_version(reg, m.media.family(), &m.id).to_le_bytes());
+            }
+        }
+        h.digest()
+    }
+}
+
+/// A plugin's version: the source it was built from and the WGSL text it runs.
+fn kernel_version(reg: &kt_plugin_api::Registry, family: Family, id: &str) -> u64 {
+    type Known = Mutex<HashMap<(Family, String, u64), u64>>;
+    static WGSL: std::sync::OnceLock<Known> = std::sync::OnceLock::new();
+    let source = reg.source(family, id);
+    let Some(p) = reg.get(family, id) else { return source };
+    let of = std::sync::Arc::as_ptr(p) as *const () as u64;
+    let mut known = WGSL.get_or_init(Default::default).lock().unwrap();
+    let wgsl = *known.entry((family, id.to_string(), of)).or_insert_with(|| {
+        let mut h = Xxh3::new();
+        match p.manifest().decl.gpu {
+            kt_plugin_api::Gpu::Wgsl(t) | kt_plugin_api::Gpu::Warp(t) => h.update(t.as_bytes()),
+            _ => {}
+        }
+        for t in p.barrier().map(|b| b.shaders()).unwrap_or_default() {
+            h.update(t.as_bytes());
+        }
+        for s in p.compute_shaders() {
+            h.update(s.text.as_bytes());
+        }
+        h.digest()
+    });
+    source.rotate_left(1) ^ wgsl
+}
+
+/// The plugins whose kernels run in a plan.
+fn plugins_of<'p>(plan: &'p FramePlan<'_>, out: &mut BTreeSet<(u8, &'p str)>) {
+    fn src<'p>(s: &'p LayerSrc<'_>, out: &mut BTreeSet<(u8, &'p str)>) {
+        for f in s.fx.iter() {
+            if let kt_model::FxInstance::Plugin(p) = f {
+                out.insert((0, &p.id));
+            }
+        }
+        for (_, r) in &s.reads {
+            src(r, out);
+        }
+        if let LayerInput::Nest(n) = &s.input {
+            plugins_of(&n.plan, out);
+        }
+    }
+    let mix = |m: &crate::TransMix, out: &mut BTreeSet<(u8, &'p str)>| {
+        if let Some(id) = crate::transitions::plugin_id(m.mode) {
+            out.insert((1, id));
+        }
+    };
+    for layer in &plan.layers {
+        match layer {
+            PlanLayer::One { src: s, fade, .. } => {
+                if let Some(f) = fade {
+                    mix(&f.mix, out);
+                }
+                src(s, out);
+            }
+            PlanLayer::Dissolve { a, b, mix: m, .. } => {
+                mix(m, out);
+                src(a, out);
+                src(b, out);
+            }
+        }
+    }
+}
+
+/// The key on disk: the plan's durable hash, its leaves and the quality it was asked at; what makes it.
+pub fn disk_key(plan: &FramePlan<'_>, leaves: &Leaves, files: &FileIds, made: &Made) -> DiskKey {
     let mut h = Xxh3::new();
     h.update(&durable_hash(plan).to_le_bytes());
     h.update(&leaves.digest(files).to_le_bytes());
-    h.digest()
+    DiskKey { key: h.digest(), salt: made.salt(plan, leaves) }
 }
 
 /// The key the display's memo holds a restored moment under: its present key mixed with the durable
 /// one (D3) — a probe plan of an undecoded moment carries serial 0, and a memo entry under that key
 /// alone could be shown after the file under the same media id was replaced.
-pub fn restored_key(present: u64, durable: u64) -> u64 {
-    present ^ durable.rotate_left(17).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0x5245_5354_4f52_4544
+pub fn restored_key(present: u64, durable: DiskKey) -> u64 {
+    present ^ durable.id().rotate_left(17).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0x5245_5354_4f52_4544
 }
 
 // ---- what to prerender (D4) --------------------------------------------------------------------
@@ -822,7 +1053,7 @@ pub fn candidates(
 // ---- the player's tier ---------------------------------------------------------------------------
 
 /// A moment the store holds: its durable key and the versions it was computed at.
-type OnDisk = (u64, (u64, u64));
+type OnDisk = (DiskKey, (u64, u64));
 
 /// What the host sets (D7).
 #[derive(Clone)]
@@ -830,14 +1061,14 @@ pub struct Config {
     /// What writes and reads the segments: the host's hardware video codec (kt-media
     /// `segment::ffmpeg::FfmpegSegments`), a test's `RawSegments`.
     pub codec: Arc<dyn SegmentCodec>,
-    /// `<data>/render-cache`.
+    /// The project's cache folder (kt-media `cache_folder::beside`).
     pub root: PathBuf,
-    /// The program's build and anything else that makes another picture of the same plan (the
-    /// FFmpeg major): a new build's folder replaces the old.
-    pub build: String,
+    /// What makes the pixels outside the plan.
+    pub made: Made,
     /// The project file's folder: relative media paths resolve against it.
     pub base: Option<PathBuf>,
-    pub cap: u64,
+    /// A cap of the frames alone ([`cap_from_env`]).
+    pub cap: Option<u64>,
 }
 
 /// The player's disk tier: its configuration, the store of the display's device, the files'
@@ -846,10 +1077,12 @@ pub struct Config {
 pub struct RenderCache {
     cfg: Mutex<Option<Config>>,
     store: Mutex<Option<(String, Arc<DiskStore>)>>,
+    /// Held while a store is opened.
+    opening: Mutex<()>,
     files: Mutex<Option<(u64, u64, Arc<FileIds>)>>,
     /// Moments the store holds: tick → (durable key, the versions it was computed at).
     on_disk: Mutex<BTreeMap<i64, OnDisk>>,
-    pub(crate) disk_gen: AtomicU64,
+    pub(crate) disk_gen: Arc<AtomicU64>,
     /// The last input's trace clock (ns); 0 — none yet.
     last_input: AtomicU64,
     /// The prerender's park and its quiet wait.
@@ -870,6 +1103,8 @@ pub struct RenderCache {
     settled: AtomicBool,
     /// Why the tier writes nothing on this machine (no encoder of the codec opens), once found.
     unavailable: Mutex<Option<String>>,
+    /// Moments of a segment that found no room, to be taken again.
+    lost: Mutex<Vec<i64>>,
     /// The encoder the last segment was written with.
     encoder: Mutex<Option<String>>,
 }
@@ -893,21 +1128,28 @@ impl RenderCache {
     /// The store for the display's device, opened at the first ask.
     pub fn store(&self, device: &crate::video_plan::GpuBackendInfo) -> Option<Arc<DiskStore>> {
         let cfg = self.cfg.lock().unwrap().clone()?;
-        let id = format!("{}|{}", device.name, device.backend);
-        let mut g = self.store.lock().unwrap();
-        if let Some((d, s)) = g.as_ref()
-            && *d == id
-        {
-            return Some(s.clone());
+        // the device class: video is byte-equal on one device and one driver only
+        let id = format!("{}|{}|{}", device.name, device.backend, device.driver);
+        let open = || self.store.lock().unwrap().as_ref().filter(|(d, _)| *d == id).map(|(_, s)| s.clone());
+        if let Some(s) = open() {
+            return Some(s);
         }
-        match DiskStore::open(&cfg.root, &cfg.build, &id, cfg.cap, cfg.codec.clone()) {
-            Ok(s) => {
-                let s = Arc::new(s);
-                *g = Some((id, s.clone()));
-                Some(s)
-            }
-            Err(_) => None,
+        // one thread reads the manifests, outside the lock the bars ask under
+        let _one = self.opening.lock().unwrap();
+        if let Some(s) = open() {
+            return Some(s);
         }
+        let mut s = Folder::open(&cfg.root).and_then(|f| DiskStore::open(f, &id, cfg.cap, cfg.codec.clone())).ok()?;
+        s.gone = self.disk_gen.clone();
+        let s = Arc::new(s);
+        *self.store.lock().unwrap() = Some((id, s.clone()));
+        Some(s)
+    }
+
+    /// The key of a probe plan as the tier keeps it.
+    pub(crate) fn key(&self, plan: &FramePlan<'_>, leaves: &Leaves, files: &FileIds) -> DiskKey {
+        let made = self.cfg.lock().unwrap().as_ref().map_or(Made::of(0), |c| c.made);
+        disk_key(plan, leaves, files, &made)
     }
 
     /// The identities of `project`'s files, read again when the state (`stamp`: build, content
@@ -950,7 +1192,7 @@ impl RenderCache {
     }
 
     /// The moment `t` is on disk under `key` for `versions`.
-    pub(crate) fn note_on_disk(&self, t: i64, key: u64, versions: (u64, u64)) {
+    pub(crate) fn note_on_disk(&self, t: i64, key: DiskKey, versions: (u64, u64)) {
         if self.on_disk.lock().unwrap().insert(t, (key, versions)) != Some((key, versions)) {
             self.disk_gen.fetch_add(1, Ordering::Relaxed);
         }
@@ -958,11 +1200,18 @@ impl RenderCache {
 
     /// The moments on disk for `versions`.
     pub(crate) fn disk_moments(&self, versions: (u64, u64)) -> Vec<i64> {
-        self.on_disk.lock().unwrap().iter().filter(|(_, (_, v))| *v == versions).map(|(t, _)| *t).collect()
+        let held = |k: &DiskKey| self.holds(*k);
+        self.on_disk.lock().unwrap().iter().filter(|(_, (k, v))| *v == versions && held(k)).map(|(t, _)| *t).collect()
     }
 
     pub(crate) fn knows(&self, t: i64, versions: (u64, u64)) -> bool {
-        self.on_disk.lock().unwrap().get(&t).is_some_and(|(_, v)| *v == versions)
+        let known = self.on_disk.lock().unwrap().get(&t).filter(|(_, v)| *v == versions).map(|(k, _)| *k);
+        known.is_some_and(|k| self.holds(k))
+    }
+
+    /// Does the open store still hold it? The cycle may have dropped its segment since.
+    fn holds(&self, key: DiskKey) -> bool {
+        self.store.lock().unwrap().as_ref().is_some_and(|(_, s)| s.holds(key))
     }
 
     /// Writes and restores so far.
@@ -1036,7 +1285,7 @@ fn export_runs() -> bool {
 /// What became of a moment the prerender took.
 enum Outcome {
     /// Composed and measured heavy: its key, size and picture go into the open segment.
-    Heavy(u64, u32, u32, Vec<u8>),
+    Heavy(DiskKey, u32, u32, Vec<u8>, u64),
     Light,
     OnDisk,
     Full,
@@ -1052,7 +1301,7 @@ type StateKey = (u64, (u64, u64), kt_media::Quality, Option<(i64, i64)>);
 /// state it belongs to.
 struct OpenSeg {
     build: SegmentBuild,
-    moments: Vec<(i64, u64)>,
+    moments: Vec<(i64, DiskKey)>,
     next: i64,
     state: StateKey,
     store: Arc<DiskStore>,
@@ -1074,7 +1323,11 @@ fn commit(rc: &RenderCache, seg: &mut Option<OpenSeg>) {
             *rc.encoder.lock().unwrap() = Some(encoder);
         }
         Ok(_) => {}
-        Err(_) => {
+        Err(e) => {
+            // a segment longer than the room: its moments are taken again, in shorter ones
+            if e == PutError::Full && n > 1 {
+                rc.lost.lock().unwrap().extend(s.moments.iter().map(|(t, _)| *t));
+            }
             trace::ev(Ev::RenderCache).aux(rc::STOPPED).b(rc::why::CAP).emit();
         }
     }
@@ -1105,6 +1358,9 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
             return;
         }
         rc.news.store(false, Ordering::Release);
+        for t in std::mem::take(&mut *rc.lost.lock().unwrap()) {
+            done.remove(&t);
+        }
         if !rc.is_on() || parts.transport.is_playing() || export_runs() {
             commit(&rc, &mut seg);
             if worked {
@@ -1188,7 +1444,7 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
             rc.wake.wait_timeout(left);
             continue;
         }
-        if seg.as_ref().is_some_and(|s| s.next != t || s.build.len() >= SEGMENT_FRAMES) {
+        if seg.as_ref().is_some_and(|s| s.next != t || s.build.len() >= s.store.segment_frames(q.width, q.height)) {
             commit(&rc, &mut seg);
         }
         // an encoder at this size, asked BEFORE a moment composes (found-defects 813): the tier learnt
@@ -1216,7 +1472,7 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
         let out = one(&parts, &rc, &store, &display, &video, &built.project, built.seq, t, q, versions, layout, &stop);
         rc.busy.store(false, Ordering::Release);
         match out {
-            Outcome::Heavy(dk, w, h, rgba) => {
+            Outcome::Heavy(dk, w, h, rgba, ns) => {
                 done.insert(t);
                 if seg.as_ref().is_some_and(|s| s.build.size() != (w, h)) {
                     commit(&rc, &mut seg);
@@ -1236,11 +1492,19 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
                     }
                 }
                 let s = seg.as_mut().unwrap();
+                if !s.store.room_for(s.build.len() + 1, w, h) {
+                    commit(&rc, &mut seg);
+                    full = true;
+                    worked = false;
+                    trace::ev(Ev::RenderCache).aux(rc::STOPPED).b(rc::why::CAP).emit();
+                    continue;
+                }
                 let pushed = match layout {
                     Some(_) => s.build.push_planes(dk, &rgba),
                     None => s.build.push(dk, &rgba),
                 };
                 if pushed.is_ok() {
+                    s.build.cost(ns);
                     s.moments.push((t, dk));
                     s.next = t + step;
                 } else {
@@ -1306,7 +1570,7 @@ fn scan(
             looked += 1;
             let (plan, leaves) = video.probe_durable(&parts.cache, kt_time::Tick(t), q);
             if display.present_key(&plan).is_some() {
-                let dk = disk_key(&plan, &leaves, &files);
+                let dk = rc.key(&plan, &leaves, &files);
                 if store.contains(dk) {
                     rc.note_on_disk(t, dk, stamp.1);
                     found += 1;
@@ -1340,7 +1604,7 @@ fn one(
     let files = rc.files(project, (seq, versions.1), false);
     let (dk, w, h) = {
         let (plan, leaves) = video.probe_durable(&parts.cache, Tick(t), q);
-        (disk_key(&plan, &leaves, &files), plan.out_w, plan.out_h)
+        (rc.key(&plan, &leaves, &files), plan.out_w, plan.out_h)
     };
     if store.contains(dk) {
         rc.note_on_disk(t, dk, versions);
@@ -1423,12 +1687,12 @@ fn one(
     let step = video.grid.frame_step();
     if ns < rc.heavy(step) {
         span.c(0);
-        trace::ev(Ev::RenderCache).aux(rc::LIGHT).a(t as u64).b(ns).c(dk).emit();
+        trace::ev(Ev::RenderCache).aux(rc::LIGHT).a(t as u64).b(ns).c(dk.id()).emit();
         return Outcome::Light;
     }
-    trace::ev(Ev::RenderCache).aux(rc::HEAVY).a(t as u64).b(ns).c(dk).emit();
+    trace::ev(Ev::RenderCache).aux(rc::HEAVY).a(t as u64).b(ns).c(dk.id()).emit();
     span.c(1);
-    Outcome::Heavy(dk, w, h, buf)
+    Outcome::Heavy(dk, w, h, buf, ns)
 }
 
 #[cfg(test)]
@@ -1439,58 +1703,66 @@ mod tests {
         (0..w * h * 4).map(|i| (i as u8).wrapping_mul(seed).wrapping_add(seed)).collect()
     }
 
-    /// Test t2980 (render-cache-disk D2): the store keeps segments within its cap, least recently used
-    /// out, a touched one stays; each frame reads back as written; the manifest names the codec, the
-    /// encoder, the size and every key; another build's folder is removed at open; a truncated segment
-    /// is a miss and removed; this process's segments are not evicted for the prerender; a codec with no
-    /// encoder refuses the segment.
+    /// Test t2980 (render-cache-disk D2, project-cache-folder D1b): the store keeps segments within its
+    /// cap, least recently used out, a touched one stays; each frame reads back as written; the manifest
+    /// names the codec, the encoder, the size and every key; a frame of another salt is a miss and its
+    /// segment goes, nothing else; a truncated segment is a miss and removed; this process's segments
+    /// are not evicted for the prerender; a codec with no encoder refuses the segment.
     #[test]
     fn t2980_the_store_keeps_segments_within_its_cap() {
-        let root = tempfile::tempdir().unwrap();
-        let other = root.path().join(build_dir_name("an older build"));
-        std::fs::create_dir_all(other.join("dev")).unwrap();
-        std::fs::write(other.join("dev").join("x.idx"), b"old").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let folder = Folder::open(&dir.path().join("kinetren-cache")).unwrap();
+        let open = |device: &str, cap: Option<u64>, codec: Arc<dyn SegmentCodec>| DiskStore::open(folder.clone(), device, cap, codec).unwrap();
         let (w, h) = (32, 16);
         let frame = (w * h * 4) as u64;
         let codec: Arc<dyn SegmentCodec> = Arc::new(RawSegments);
+        let key = |key: u64| DiskKey { key, salt: 7 };
         // three segments of two frames fit, a fourth does not
         let cap = 3 * (2 * frame + 300) + frame;
-        let s = DiskStore::open(root.path(), "build A", "llvmpipe|vulkan", cap, codec.clone()).unwrap();
-        assert!(!other.exists(), "the other build's folder is removed at open");
+        let s = open("llvmpipe|vulkan", Some(cap), codec.clone());
         let write = |s: &DiskStore, k: u64, evict: bool| {
             let mut b = s.begin(w, h, 25).unwrap();
-            b.push(k, &pic(k as u8, w, h)).unwrap();
-            b.push(k + 100, &pic(k as u8 + 1, w, h)).unwrap();
+            b.push(key(k), &pic(k as u8, w, h)).unwrap();
+            b.push(key(k + 100), &pic(k as u8 + 1, w, h)).unwrap();
             s.commit(b, evict)
         };
         for k in 1..=3u64 {
             write(&s, k, true).unwrap();
         }
-        assert_eq!(s.get(103).unwrap(), Picture { w, h, rgba: pic(4, w, h) }, "the second frame of a segment");
-        assert_eq!(s.get(1).unwrap().rgba, pic(1, w, h));
-        let m = s.manifest_of(2).unwrap();
-        assert_eq!((m.codec.as_str(), m.encoder.as_str(), m.w, m.h, m.fps, m.keys.clone()), ("raw", "raw", w, h, 25, vec![2, 102]));
+        assert_eq!(s.get(key(103)).unwrap(), Picture { w, h, rgba: pic(4, w, h) }, "the second frame of a segment");
+        assert_eq!(s.get(key(1)).unwrap().rgba, pic(1, w, h));
+        let m = s.manifest_of(key(2)).unwrap();
+        assert_eq!(
+            (m.codec.as_str(), m.encoder.as_str(), m.w, m.h, m.fps, m.keys.clone()),
+            ("raw", "raw", w, h, 25, vec![key(2), key(102)])
+        );
         assert_eq!(Manifest::parse(&m.to_text()), Some(m), "the manifest is its own text");
         // segments 3 and 1 were read: 2 is the least recently used
         write(&s, 4, true).unwrap();
-        assert!(!s.contains(2) && !s.contains(102) && s.contains(1) && s.contains(3) && s.contains(4), "the least recently used segment goes first");
-        assert!(s.used().0 <= s.cap());
+        assert!(!s.contains(key(2)) && !s.contains(key(102)), "the least recently used segment goes first");
+        assert!(s.contains(key(1)) && s.contains(key(3)) && s.contains(key(4)));
+        assert!(s.used().0 <= cap);
         // the prerender never evicts what this process used
         assert_eq!(write(&s, 5, false), Err(PutError::Full));
-        assert!(!s.contains(5));
+        assert!(!s.contains(key(5)));
         drop(s);
-        // a second process: the segments are there; a truncated segment is a miss and removed
-        let s = DiskStore::open(root.path(), "build A", "llvmpipe|vulkan", cap, codec.clone()).unwrap();
+        // a second process: the segments are there; what makes frame 1 changed: a miss, and its segment
+        // goes with nothing else touched
+        let s = open("llvmpipe|vulkan", Some(cap), codec.clone());
         assert_eq!(s.used().1, 6);
         assert!(s.has_room(2 * frame + 300), "the previous process's segments may go for the prerender");
+        let id = s.ix.lock().unwrap().keys[&1].0;
+        assert!(!s.contains(DiskKey { key: 1, salt: 8 }), "a frame of another salt is a miss");
+        assert!(!s.video(id).exists() && !s.manifest_path(id).exists() && !s.contains(key(101)), "its segment goes");
+        assert!(s.contains(key(3)) && s.contains(key(4)));
+        // a truncated segment is a miss and removed
         let id = s.ix.lock().unwrap().keys[&4].0;
         let v = s.video(id);
         std::fs::write(&v, b"short").unwrap();
-        assert!(s.get(104).is_none() && !v.exists() && !s.contains(4), "a truncated segment is a miss and removed");
-        assert_eq!(s.get(3).unwrap().rgba, pic(3, w, h));
+        assert!(s.get(key(104)).is_none() && !v.exists() && !s.contains(key(4)), "a truncated segment is a miss and removed");
+        assert_eq!(s.get(key(3)).unwrap().rgba, pic(3, w, h));
         // another device has its own folder
-        let d = DiskStore::open(root.path(), "build A", "radv|vulkan", cap, codec).unwrap();
-        assert_eq!(d.used().1, 0);
+        assert_eq!(open("radv|vulkan", Some(cap), codec).used().1, 0);
         // no encoder: no segment
         struct NoEncoder;
         impl SegmentCodec for NoEncoder {
@@ -1504,7 +1776,7 @@ mod tests {
                 Err("none".into())
             }
         }
-        let n = DiskStore::open(root.path(), "build A", "x", cap, Arc::new(NoEncoder)).unwrap();
+        let n = open("x", None, Arc::new(NoEncoder));
         assert!(matches!(n.begin(w, h, 25), Err(PutError::NoEncoder(_))));
     }
 

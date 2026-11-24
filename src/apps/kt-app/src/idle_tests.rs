@@ -54,7 +54,7 @@ fn t1830_more_live_releases_than_the_cap_do_not_go_round() {
 /// Test t1831 (E4): two releases have two rows in the sidecar. With one row per reel each release
 /// overwrote the other, and all but the last rendered again on every opening.
 #[test]
-fn t1831_each_release_has_its_own_sidecar_row() {
+fn t1831_each_release_has_its_own_row() {
     let seq = MediaId(1000);
     let set = |t: &str| vec![Override::value(PubId(1), ParamValue::Text(t.into()))];
     assert_eq!(reel_row(seq, &[]), 1000, "an instance with no overrides keeps the row it always had");
@@ -64,8 +64,8 @@ fn t1831_each_release_has_its_own_sidecar_row() {
     assert_eq!(a, reel_row(seq, &set("A")), "the row must not depend on anything but the set");
     let dir = std::env::temp_dir().join(format!("kt-t1831-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
-    let db_path = dir.join("t.ktindex.db");
-    let mut db = kt_media::index::MediaIndexDb::open(&db_path).unwrap();
+    let db_path = dir.join("kinetren-cache");
+    let mut db = kt_media::index::ReelStore::open(&db_path, None).unwrap();
     let frame: &[u8] = b"jpeg";
     db.put_reel_frames(a, 11, 5, 90_000, 90_000, &[Some(frame)]).unwrap();
     db.put_reel_frames(b, 22, 5, 90_000, 90_000, &[Some(frame)]).unwrap();

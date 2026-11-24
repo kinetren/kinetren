@@ -27,9 +27,9 @@ fn player(root: &std::path::Path) -> Option<(Player, Vec<Tick>)> {
     player.set_render_cache(Some(Config {
         codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
         root: root.to_path_buf(),
-        build: "test build".into(),
+        made: kt_engine::render_cache::Made::of(60),
         base: None,
-        cap: 1 << 30,
+        cap: None,
     }));
     let grid = player.video_grid();
     let start = grid.align_floor(Tick(4 * 90_000));

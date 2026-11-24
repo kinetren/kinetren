@@ -189,11 +189,15 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   `render_cache.rs`; the owner's "Сам в фоне", kkt-26.11.17 S5). The key is DURABLE: `durable_hash` of
   the probe plan (every field kt-gpu's `plan_hash` hashes but the content serials and the input
   frame's presence) mixed with the leaves `layer_src` notes while `probe_durable` builds it
-  (`note_leaf`: a file's path/size/mtime, a generator's `src_rev`, every file for a stream stage),
-  salted by the program build and the device (the folder). **A new field `plan_hash` hashes is
+  (`note_leaf`: a file's path/size/mtime, a generator's `src_rev`, every file for a stream stage); its
+  SALT is what makes the pixels, not the build (project-cache-folder D1b, `Made`): the decoder's major,
+  the plugins that run in the plan (their crates' source hashes, `kt-plugins-builtin/build.rs`, and WGSL),
+  `COMPOSITE_PATH_VERSION` (the hash of `composite-path.txt`'s files — **a new file that can change a
+  composite's pixel goes into that list**, t3808). The device and its driver are the folder. **A new field `plan_hash` hashes is
   hashed by `durable_hash` too**, and a new input of a leaf's picture that a content serial stood for
   reaches `note_leaf`, or a stale picture comes back from disk after a restart. The pictures are
-  SEGMENTS of hardware-encoded video (render-cache-codec, the owner's kkt-26.11.18b U4): the host's
+  SEGMENTS in the project's cache folder (`results/`, written in that folder's cycle; a frame of another
+  salt is a miss and its segment goes when met) of hardware-encoded video (render-cache-codec, the owner's kkt-26.11.18b U4): the host's
   `Config::codec` (`kt_media::segment`), hardware encoders only, every frame a keyframe, a manifest of
   codec, encoder and keys; no hardware encoder → the store writes nothing and `status()` says why; one
   `render-cache-read` thread owns the readers (invariant 5). Tests use `RawSegments`. Reads before composing:

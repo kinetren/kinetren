@@ -323,7 +323,7 @@ impl KtApp {
             place: crate::fx_thumbs::Place::Morph(ed.id),
             t: kt_time::Tick(pv_tick),
             base: self.project_path.as_ref().and_then(|p| p.parent()).map(|p| p.to_path_buf()),
-            index_db: self.index_db_path(),
+            index_db: self.cache_folder(),
         };
         let pv_decode = crate::fx_thumbs::decode_orders_allowed(ed.opened_at.elapsed());
         let shown = crate::window_shell::Shell::new(

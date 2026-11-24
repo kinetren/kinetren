@@ -251,6 +251,8 @@ pub struct Start {
     /// File › Preferences… is open (welcome-window-and-settings): here, so a project open from
     /// the welcome window does not close it.
     pub prefs_open: bool,
+    /// Preferences' list of cache folders.
+    pub caches: crate::cache_prefs::CachesUi,
     /// The Layout & Controls style in force (control-layouts): here, so File → New keeps it.
     pub controls: crate::controls::Controls,
     /// The style window's own state.
@@ -272,6 +274,7 @@ impl Default for Start {
             controls_ui: Default::default(),
             made_from: None,
             prefs_open: false,
+            caches: Default::default(),
         }
     }
 }

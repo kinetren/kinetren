@@ -12,6 +12,7 @@ ffmpeg = ["dep:kt-ffmpeg"]
 
 [dependencies]
 kt-time = { workspace = true }
+kt-dirs = { workspace = true }
 # The generator vocabulary (GeneratorKind, parsing of the gen: path): R.52. The edge
 # is acyclic: kt-model depends only on kt-time and serde.
 kt-model = { workspace = true }

@@ -83,6 +83,15 @@ pub struct Notice {
     /// More text under a collapsed "Details" (the telemetry entry): the line stays calm and
     /// short, the rest is one click away.
     pub details: Option<String>,
+    /// A button under the line.
+    pub action: Option<NoticeAction>,
+}
+
+/// Where a notice's button leads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoticeAction {
+    /// Preferences → “Persistent cache”.
+    PersistentCache,
 }
 
 /// Window “what to name the inserted thing” (R.35 item 4).
@@ -549,6 +558,8 @@ pub struct KtApp {
     /// stays empty: writing `.kt` under a foreign name is not allowed, and silently placing
     /// the file next to it is no better; the person chooses the name in the dialog.
     pub save_hint: Option<PathBuf>,
+    /// The file Save As leaves, while its dialog stands: the caches follow from its folder.
+    save_from: Option<PathBuf>,
     /// Requested READ of the system envelope buffer (R.61).
     ///
     /// There is NO LONGER a mirror of the buffer inside the program: it blocked the button on
@@ -887,6 +898,9 @@ impl KtApp {
     /// version is built on its own thread and its sources open on the media lane
     /// (`load_sources`), so making it never stands on the UI thread.
     fn build_player(project: &Project) -> (Player, Option<audio_out::AudioOutput>) {
+        // where a project's caches go when its own folder takes no files (project-cache-folder D4)
+        kt_media::cache_folder::set_data_root(&crate::journal::data_dir());
+        kt_media::cache_folder::on_notice(crate::wake::now);
         let (player, ring) = Player::new_deferred(project.clone());
         // the harness has no window device: the offline engine composes its frames
         if cfg!(test) {
@@ -912,18 +926,12 @@ impl KtApp {
     /// is FIFO, so a sync an edit posts during the load runs after it.
     fn load_sources(&mut self) {
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
-        // the disk tier of preview composites under the data folder (render-cache-disk D7); the harness
-        // keeps none
+        // the disk tier of preview composites in the project's cache folder (project-cache-folder D1b);
+        // the harness keeps none
         if !cfg!(test) {
-            self.player.set_render_cache(Some(kt_engine::render_cache::Config {
-                codec: std::sync::Arc::new(kt_media::segment::ffmpeg::FfmpegSegments::from_env()),
-                root: crate::journal::data_dir().join("render-cache"),
-                build: render_cache_build(),
-                base: base.clone(),
-                cap: kt_engine::render_cache::cap_from_env(),
-            }));
+            self.set_render_cache();
         }
-        let db = self.index_db_path();
+        let db = self.cache_folder();
         let doc = self.model.doc();
         let media: Vec<(MediaId, String, String)> = doc
             .media
@@ -1098,6 +1106,7 @@ impl KtApp {
             recovery_open: false,
             recovery_written: None,
             save_hint: None,
+            save_from: None,
             snap_line: None,
             preview_gen: (0, 0),
             snap_off: false,
@@ -1312,7 +1321,11 @@ impl KtApp {
         let loudness_map: Arc<Mutex<crate::util::LoudnessMap>> =
             Arc::new(Mutex::new(Default::default()));
         let index = crate::util::IndexService::start(peaks.clone(), loudness_map.clone());
-        index.enqueue(Some(path.with_extension("ktindex.db")), media);
+        let cache = cache_folder_of(Some(path));
+        if let Some(c) = &cache {
+            index.open_cache(c.clone(), path.to_path_buf());
+        }
+        index.enqueue(cache, media);
         let ui_state = project.ui.clone();
         let mut app = KtApp {
             model: TimelineModel::new(project),
@@ -1436,6 +1449,7 @@ impl KtApp {
             recovery_open: false,
             recovery_written: None,
             save_hint: None,
+            save_from: None,
             snap_line: None,
             preview_gen: (0, 0),
             snap_off: false,
@@ -2155,6 +2169,7 @@ impl KtApp {
                 self.warn(crate::tf!(k::msg::INDEX_FAILED, e));
             }
         }
+        self.take_cache_notices();
         self.take_saved(std::time::Duration::ZERO);
         self.take_media(std::time::Duration::ZERO);
         self.take_opening(std::time::Duration::ZERO);
@@ -2437,6 +2452,14 @@ impl KtApp {
                                 ui.weak(format!("×{}", n.repeats));
                             }
                         });
+                        if let Some(NoticeAction::PersistentCache) = n.action {
+                            let r = ui.button(tr(k::prefs::CACHE_OPEN));
+                            crate::widgets::field_probe::note("notices.persistent_cache", r.rect);
+                            if r.clicked() {
+                                self.start.prefs_open = true;
+                                self.start.caches.show = true;
+                            }
+                        }
                         // the rest of a long notice — collapsed until asked for
                         if let Some(d) = &n.details {
                             let r = egui::CollapsingHeader::new(tr(k::win::DETAILS))
@@ -3271,9 +3294,22 @@ impl KtApp {
         self.model.revision().wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ place
     }
 
-    /// Path of the sidecar index DB of the current project (None for unnamed).
-    pub(crate) fn index_db_path(&self) -> Option<std::path::PathBuf> {
-        self.project_path.as_ref().map(|p| p.with_extension("ktindex.db"))
+    /// Keep the preview's frames in the project's cache folder.
+    fn set_render_cache(&self) {
+        let cfg = self.cache_folder().map(|root| kt_engine::render_cache::Config {
+            codec: std::sync::Arc::new(kt_media::segment::ffmpeg::FfmpegSegments::from_env()),
+            root,
+            made: kt_engine::render_cache::Made::of(kt_media::ffmpeg::backend_info().map_or(0, |b| b.avcodec_version.0)),
+            base: self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf())),
+            cap: kt_engine::render_cache::cap_from_env(),
+        });
+        self.player.set_render_cache(cfg);
+    }
+
+    /// The cache folder of the current project: beside it, an untitled one's under the user's data
+    /// folder (project-cache-folder D1, D4). A name only: the lanes open it.
+    pub(crate) fn cache_folder(&self) -> Option<std::path::PathBuf> {
+        cache_folder_of(self.project_path.as_deref())
     }
 
     /// Per-component maximum resolution over the project’s video sources
@@ -3331,7 +3367,7 @@ impl KtApp {
             .collect();
         let mut h = std::collections::hash_map::DefaultHasher::new();
         paths.hash(&mut h);
-        (h.finish(), paths, self.index_db_path())
+        (h.finish(), paths, self.cache_folder())
     }
 
     /// Esc cascade (item 11): windows → active drag → region+selection.
@@ -4568,7 +4604,7 @@ impl KtApp {
             self.notices_unread += 1;
             return;
         }
-        self.notices.push_back(Notice { at, severity, text, repeats: 1, details });
+        self.notices.push_back(Notice { at, severity, text, repeats: 1, details, action: None });
         if self.notices.len() > 200 {
             self.notices.pop_front();
         }
@@ -5039,7 +5075,7 @@ impl KtApp {
             let f = resolve_media_path(base, &k);
             (k, f)
         });
-        crate::listen::service().ask(self.index_db_path(), files.collect());
+        crate::listen::service().ask(self.cache_folder(), files.collect());
     }
 
     pub(crate) fn sync_media_sources(&mut self) {
@@ -5071,7 +5107,7 @@ impl KtApp {
             return;
         }
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
-        let db = self.index_db_path();
+        let db = self.cache_folder();
         let mut opens = Vec::new();
         for (id, path) in &cur {
             let known = self.media_paths.get(id).cloned();
@@ -5285,7 +5321,7 @@ impl KtApp {
         }
         let offline = self.offline.lock().unwrap().clone();
         let base = self.project_path.as_deref().and_then(|p| p.parent());
-        let db = self.project_path.as_deref().map(|p| p.with_extension("ktindex.db"));
+        let db = self.cache_folder();
         let back: Vec<(MediaId, String, String)> = self
             .model
             .project()
@@ -5771,7 +5807,7 @@ impl KtApp {
             return;
         };
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
-        let index = self.index_db_path();
+        let index = self.cache_folder();
         let path = resolve_media_path(base.as_deref(), &m.path);
         let rev = self.model_rev;
         let kind = crate::analysis::AnalysisKind::Loudness(id);
@@ -6309,7 +6345,9 @@ impl KtApp {
     /// project_path opens it itself); cancel returns the old path.
     pub fn save_as(&mut self) {
         let old = self.project_path.take();
+        self.save_from = old.clone();
         self.save();
+        self.save_from = None;
         if self.project_path.is_none() {
             self.project_path = old; // the user changed their mind
         }
@@ -6340,7 +6378,18 @@ impl KtApp {
                 self.project_path = Some(p.clone());
                 self.claim_project(&p);
                 // the index DB and thumbnails can now live next to the project
-                self.index.enqueue(Some(p.with_extension("ktindex.db")), {
+                // the caches follow the project (project-cache-folder D4, D6): the lanes and the preview
+                // go to the new folder now, what lies in the old one is carried on the index lane
+                let was = self.save_from.take();
+                let to = kt_media::cache_folder::beside(&p);
+                if let Some(from) = cache_folder_of(was.as_deref()) {
+                    self.index.carry_cache(from, to.clone(), was, p.clone());
+                }
+                self.thumbs.set_cache(Some(to.clone()));
+                if !cfg!(test) {
+                    self.set_render_cache();
+                }
+                self.index.enqueue(Some(to), {
                     let base = p.parent();
                     self.model
                         .project()
@@ -6996,7 +7045,7 @@ impl KtApp {
         // the file opens on the media lane (one-scheduler, row 148: FFmpeg's probe and the sidecar
         // stood on the UI thread, twice — once for the clip's length, once for the player); the
         // gesture lands when it answers (`take_media`)
-        let db = self.index_db_path();
+        let db = self.cache_folder();
         let (answer, reply) = kt_time::sched::Answer::new();
         let r = resolved.clone();
         media_lane().post(move |_| {
@@ -7041,7 +7090,7 @@ impl KtApp {
         // in the index DB — the resolved path (item 150: a raw relative path
         // gave the file a SECOND media_id in the cache next to the resolved one)
         self.index.enqueue(
-            self.project_path.as_ref().map(|p| p.with_extension("ktindex.db")),
+            self.cache_folder(),
             vec![(media_id, resolved.clone())],
         );
         self.note(crate::tf!(k::msg::ADDED, path));
@@ -7116,7 +7165,7 @@ impl KtApp {
                         index.push((id, path));
                         self.note(crate::tf!(k::msg::MEDIA_ONLINE, label));
                     }
-                    self.index.enqueue(self.index_db_path(), index);
+                    self.index.enqueue(self.cache_folder(), index);
                 }
                 _ => {}
             }
@@ -7220,7 +7269,7 @@ impl KtApp {
         let resolved = resolve_media_path(base.as_deref(), &path);
         // the file's passport from the media lane (one-scheduler, row 148); the clips land when it
         // answers
-        let db = self.index_db_path();
+        let db = self.cache_folder();
         let (answer, reply) = kt_time::sched::Answer::new();
         media_lane().post(move |_| {
             let info = open_source_indexed(&resolved, db.as_deref()).map(|s| s.info().clone());
@@ -8336,6 +8385,17 @@ impl KtApp {
                 ui.weak(tr(k::perf::VIDEO_FX_NONE));
             }
         }
+        // where the project's caches lie, and why elsewhere (project-cache-folder D8); known since a lane
+        // opened the folder, the disk is not asked
+        if let Some(f) = self.cache_folder().and_then(|p| kt_media::cache_folder::Folder::peek(&p)) {
+            use kt_media::cache_folder::{CloudTool, Place};
+            let at = f.root().display();
+            ui.weak(match (f.place(), f.cloud()) {
+                (Place::NoFiles(why), _) => crate::tf!(k::perf::CACHE_PLACE_ELSEWHERE, at, why),
+                (_, Some(CloudTool::OneDrive)) => crate::tf!(k::perf::CACHE_PLACE_SYNCED, at),
+                _ => crate::tf!(k::perf::CACHE_PLACE, at),
+            });
+        }
         // the disk prerender (render-cache-disk): its hardware encoder, or why it writes nothing here
         match self.player.render_cache().status() {
             Some(Ok(enc)) if !enc.is_empty() => {
@@ -9264,7 +9324,8 @@ impl KtApp {
             p.cameras = cams;
         }
         let base = self.project_path.as_ref().and_then(|p| p.parent()).map(|p| p.to_path_buf());
-        let db = self.index_db_path();
+        let db = self.cache_folder();
+        self.reel_previews.set_project(self.project_path.clone());
         self.reel_previews.request(key, p, db, base);
     }
 
@@ -10554,7 +10615,7 @@ fn release(old: KtApp) {
 
 /// The media gestures' lane: class `Answer` (the person waits for the clip), one open at a time
 /// in the order asked.
-fn media_lane() -> &'static kt_time::sched::LaneRef {
+pub(crate) fn media_lane() -> &'static kt_time::sched::LaneRef {
     static L: std::sync::OnceLock<kt_time::sched::LaneRef> = std::sync::OnceLock::new();
     L.get_or_init(|| kt_time::sched::Lane::open("media", kt_time::sched::Class::Answer))
 }
@@ -12082,10 +12143,13 @@ impl KtApp {
     }
 }
 
-/// The build salt of the disk tier (render-cache-disk D1): the program's build and the FFmpeg it decodes
-/// with — another of either may be another picture of the same plan.
-fn render_cache_build() -> String {
-    format!("{} avcodec {:?}", kt_version::FULL, kt_media::ffmpeg::backend_info().map(|b| b.avcodec_version))
+/// The cache folder of a project file; an untitled project's lies under the user's data folder.
+pub(crate) fn cache_folder_of(project: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+    match project {
+        // an unnamed recovery lies in the user's data folder: its project is untitled
+        Some(p) if !p.starts_with(crate::journal::data_dir()) => Some(kt_media::cache_folder::beside(p)),
+        _ => kt_media::cache_folder::untitled(),
+    }
 }
 
 #[cfg(test)]

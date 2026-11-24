@@ -133,7 +133,7 @@ impl KtApp {
             place: crate::fx_thumbs::Place::Clip(side),
             t: kt_time::Tick(w0.0 + win_len / 2),
             base: self.project_path.as_ref().and_then(|p| p.parent()).map(|p| p.to_path_buf()),
-            index_db: self.index_db_path(),
+            index_db: self.cache_folder(),
         });
         let decode_ok = crate::fx_thumbs::decode_orders_allowed(ed.opened_at.elapsed());
         let mut pv = scene.map(|sc| crate::fx_thumbs::PickerCtx::for_scene(&self.fx_thumbs, sc, decode_ok));

@@ -3250,7 +3250,7 @@ fn t185_gpu_loss_notice_once() {
     }
     let mut h = harness();
     h.state_mut().player.set_video_gpu(Some(std::sync::Arc::new(DeadGpu(
-        kt_engine::GpuBackendInfo { name: "test".into(), backend: "Test".into(), software: true },
+        kt_engine::GpuBackendInfo { name: "test".into(), backend: "Test".into(), software: true, driver: String::new() },
     ))));
     // force a recomposition (the preview key has already settled on the previous
     // frames): key reset → compose calls the executor → DeviceLost →
@@ -3305,6 +3305,7 @@ fn t3819_a_lost_shared_device_poisons_both_and_the_work_is_saved() {
             name: "shared".into(),
             backend: "Test".into(),
             software: true,
+            driver: String::new(),
         }))));
         // the same loss on the compute side: a job failed, the host is marked unusable
         kt_plugin_api::compute::fail("the device was lost".into());
@@ -6920,25 +6921,23 @@ fn t503_gesture_frame_touches_no_media_paths() {
     assert_eq!(h.state().player.worker_spawns(), spawns, "the level gesture raised the sources");
 }
 
-/// Test 504 (R.53, item 413): a pseudo-path does NOT open the sidecar DB. A generator
-/// has no file, yet opening sqlite (connection + WAL pragma + schema version) hung on
-/// every parameter edit
-/// and on every clip placement.
+/// Test 504 (R.53, item 413): a pseudo-path does NOT open the cache folder. A generator
+/// has no file, yet opening the index hung on every parameter edit and on every clip placement.
 #[test]
-fn t504_pseudo_path_never_opens_sqlite() {
+fn t504_pseudo_path_never_opens_the_cache_folder() {
     crate::plugins::install();
     let dir = std::env::temp_dir().join(format!("kt-t504-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let db = dir.join("x.ktindex.db");
+    let db = dir.join("kinetren-cache");
     assert!(!db.exists());
 
     let src = crate::util::open_source_indexed("gen:solid:c=ff8800", Some(&db));
     assert!(src.is_ok(), "the generator must open");
-    assert!(!db.exists(), "the pseudo-path opened the sidecar DB");
+    assert!(!db.exists(), "the pseudo-path opened the cache folder");
 
     let src = crate::util::open_source_indexed("synth:ramp", Some(&db));
     assert!(src.is_ok());
-    assert!(!db.exists(), "the test schema opened the sidecar DB");
+    assert!(!db.exists(), "the test schema opened the cache folder");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

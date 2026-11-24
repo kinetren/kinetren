@@ -1191,8 +1191,6 @@ fn t1670_fixture_runs_that_meet_do_not_spoil_each_other() {
 #[test]
 fn t1671_a_test_does_not_bound_its_wait_by_the_clock() {
     const LIMIT_IS_THE_CHECK: &[(&str, &str)] = &[
-        // inside the 5 s busy timeout: a thread still running here sits behind a lock across an fsync
-        ("libs/kt-media/tests/sidecar_stall.rs", "from_secs(3)"),
         // the output ring is the yardstick of audio after a jump, and the video must follow it
         ("libs/kt-engine/tests/video_stall.rs", "from_millis(250)"),
         ("libs/kt-engine/tests/video_stall.rs", "from_millis(900)"),

@@ -1279,8 +1279,8 @@ mod records_tests {
             .collect();
         names.sort();
         assert!(
-            // the project's own sidecar (with its WAL files) is the project's, not the poster's
-            names.iter().all(|n| n == "edit.kt" || n.starts_with("edit.ktindex.db")),
+            // the project's own cache folder is the project's, not the poster's
+            names.iter().all(|n| n == "edit.kt" || n == kt_media::cache_folder::DIR_NAME),
             "a poster file appeared next to the project: {names:?}"
         );
         assert!(!names.iter().any(|n| n.ends_with(".png")), "a PNG in the project folder: {names:?}");

@@ -197,6 +197,18 @@ pub fn ffmpeg_download_root() -> PathBuf {
     local_dir().join("ffmpeg")
 }
 
+/// Where the caches of projects live whose own folder takes no files, and of untitled projects
+/// (project-cache-folder D4): `<data>/project-caches`.
+pub fn project_caches_root(data: &std::path::Path) -> PathBuf {
+    data.join("project-caches")
+}
+
+/// The list of every cache folder the program made (project-cache-folder D3):
+/// `<data>/cache-folders.tsv`.
+pub fn cache_folders_registry(data: &std::path::Path) -> PathBuf {
+    data.join("cache-folders.tsv")
+}
+
 /// No per-user root was found; the program should say so once.
 pub fn is_fallback() -> bool {
     system().fallback
@@ -238,6 +250,87 @@ pub fn canonical(p: &std::path::Path) -> std::io::Result<PathBuf> {
     // a path that is not UTF-8 is left as the system gave it: a lossy copy would name another file
     let plain = c.to_str().map(|s| plain_path(s, Os::NATIVE).into_owned());
     Ok(plain.map(PathBuf::from).unwrap_or(c))
+}
+
+/// What the disk under `dir` has: the bytes free for this user and its size. `None` — it cannot say.
+pub fn disk_space(dir: &std::path::Path) -> Option<(u64, u64)> {
+    disk_space_sys(dir)
+}
+
+#[cfg(unix)]
+fn disk_space_sys(dir: &std::path::Path) -> Option<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    let mut st = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    if unsafe { libc::statvfs(c.as_ptr(), st.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let st = unsafe { st.assume_init() };
+    let block = st.f_frsize as u64;
+    Some((st.f_bavail as u64 * block, st.f_blocks as u64 * block))
+}
+
+#[cfg(windows)]
+fn disk_space_sys(dir: &std::path::Path) -> Option<(u64, u64)> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let w: Vec<u16> = dir.as_os_str().encode_wide().chain([0]).collect();
+    let (mut free, mut total) = (0u64, 0u64);
+    let ok = unsafe { GetDiskFreeSpaceExW(w.as_ptr(), &mut free, &mut total, std::ptr::null_mut()) };
+    (ok != 0).then_some((free, total))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn disk_space_sys(_: &std::path::Path) -> Option<(u64, u64)> {
+    None
+}
+
+/// Mark a folder as one Dropbox does not sync (`com.dropbox.ignored`: an extended attribute, on
+/// Windows a data stream of the folder). `false` — the file system takes no such mark.
+pub fn mark_unsynced(dir: &std::path::Path) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let Ok(c) = std::ffi::CString::new(dir.as_os_str().as_bytes()) else { return false };
+        let v = b"1";
+        unsafe { libc::setxattr(c.as_ptr(), c"user.com.dropbox.ignored".as_ptr(), v.as_ptr().cast(), v.len(), 0) == 0 }
+    }
+    #[cfg(windows)]
+    {
+        let mut s = dir.as_os_str().to_owned();
+        s.push(":com.dropbox.ignored");
+        std::fs::write(s, b"1").is_ok()
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        let _ = dir;
+        false
+    }
+}
+
+/// Whether [`mark_unsynced`]'s mark stands on `dir`.
+pub fn is_unsynced(dir: &std::path::Path) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let Ok(c) = std::ffi::CString::new(dir.as_os_str().as_bytes()) else { return false };
+        let mut v = [0u8; 4];
+        let n = unsafe {
+            libc::getxattr(c.as_ptr(), c"user.com.dropbox.ignored".as_ptr(), v.as_mut_ptr().cast(), v.len())
+        };
+        n == 1 && v[0] == b'1'
+    }
+    #[cfg(windows)]
+    {
+        let mut s = dir.as_os_str().to_owned();
+        s.push(":com.dropbox.ignored");
+        std::fs::read(s).is_ok_and(|b| b == b"1")
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        let _ = dir;
+        false
+    }
 }
 
 /// Project locks (capability `durability`): the lock of a project is a file in

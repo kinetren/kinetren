@@ -287,7 +287,7 @@ fn t1293_preferences_window_holds_every_preference() {
     h.state_mut().update = Some(u.clone());
     open_preferences(&mut h);
     assert!(h.ctx.memory(|m| m.area_rect(egui::Id::new("kt_prefs"))).is_some(), "no `kt_prefs` window");
-    for key in [k::prefs::SECTION_START, k::prefs::SECTION_INTERFACE, k::prefs::SECTION_PRIVACY, k::prefs::SECTION_FFMPEG] {
+    for key in [k::prefs::SECTION_START, k::prefs::SECTION_INTERFACE, k::prefs::SECTION_PRIVACY, k::prefs::SECTION_FFMPEG, k::prefs::SECTION_CACHE] {
         assert!(h.query_by_label(tr(key)).is_some(), "the window has no section “{}”", tr(key));
     }
     h.get_by_label(tr(k::prefs::ECONOMY)).click();

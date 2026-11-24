@@ -102,7 +102,7 @@ pub fn can_retune_gen(old: &kt_model::GenState, new: &kt_model::GenState) -> boo
 #[cfg(feature = "ffmpeg")]
 pub fn open_indexed(
     path: &str,
-    db: Option<&mut crate::index::MediaIndexDb>,
+    db: Option<&mut crate::index::MediaStore>,
 ) -> Result<Box<dyn MediaSource>, String> {
     if let Some(r) = open_pseudo(path) {
         return r;

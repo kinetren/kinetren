@@ -18,6 +18,7 @@ mod eyedropper;
 mod bench;
 mod bg;
 mod bin_panel;
+mod cache_prefs;
 mod camera_editor;
 mod controls;
 mod ctx_menu;

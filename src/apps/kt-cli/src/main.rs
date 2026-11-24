@@ -63,6 +63,14 @@ fn main() {
         kt_gpu::trace_machine();
         args.drain(i..i + 2);
     }
+    // `--cache-dir DIR` on any command: the project's caches lie there in this run
+    if let Some(i) = args.iter().position(|a| a == "--cache-dir")
+        && let Some(dir) = args.get(i + 1).cloned()
+    {
+        let _ = CACHE_DIR.set(dir.into());
+        args.drain(i..i + 2);
+    }
+    kt_media::cache_folder::set_data_root(&kt_dirs::data_dir());
     let code = run(&args);
     kt_time::trace::flush();
     std::process::exit(code);
@@ -829,10 +837,7 @@ fn media_facts(project: &Project, project_path: &str) -> kt_engine::SourceFacts 
         if kt_media::factory::synth_pattern(&m.path).is_some() {
             continue;
         }
-        let mut idx_db = kt_media::index::MediaIndexDb::open(
-            &std::path::Path::new(project_path).with_extension("ktindex.db"),
-        )
-        .ok();
+        let mut idx_db = media_store(project_path);
         if let Ok(src) = kt_media::factory::open_indexed(&m.path, idx_db.as_mut()) {
             out.observe(m.id, kt_media::MediaSource::info(&*src));
         }
@@ -998,10 +1003,7 @@ fn pause_scan(
     preview_decode_threads(project);
     let mut sources: Vec<(kt_model::MediaId, Box<dyn kt_media::MediaSource>)> = Vec::new();
     for m in &project.media {
-        let mut db = kt_media::index::MediaIndexDb::open(
-            &std::path::Path::new(path).with_extension("ktindex.db"),
-        )
-        .ok();
+        let mut db = media_store(path);
         match kt_media::factory::open_indexed(&m.path, db.as_mut()) {
             Ok(s) => sources.push((m.id, s)),
             Err(e) => eprintln!("  skipped: {}: {e}", m.path),
@@ -1092,10 +1094,9 @@ fn largest_step(s: &[f32]) -> (f32, usize) {
     best
 }
 
-/// The build salt of the disk tier (render-cache-disk D1): the program's build and the FFmpeg it decodes
-/// with — another of either may be another picture of the same plan.
-fn render_cache_build() -> String {
-    format!("{} avcodec {:?}", kt_version::FULL, kt_media::ffmpeg::backend_info().map(|b| b.avcodec_version))
+/// What makes the pixels of the disk tier here (project-cache-folder D1b).
+fn render_cache_made() -> kt_engine::render_cache::Made {
+    kt_engine::render_cache::Made::of(kt_media::ffmpeg::backend_info().map_or(0, |b| b.avcodec_version.0))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1125,10 +1126,7 @@ fn preview_run(
     }
     let mut sources: Vec<(kt_model::MediaId, Box<dyn kt_media::MediaSource>)> = Vec::new();
     for m in &project.media {
-        let mut db = kt_media::index::MediaIndexDb::open(
-            &std::path::Path::new(path).with_extension("ktindex.db"),
-        )
-        .ok();
+        let mut db = media_store(path);
         match kt_media::factory::open_indexed(&m.path, db.as_mut()) {
             Ok(s) => sources.push((m.id, s)),
             Err(e) => eprintln!("  skipped: {}: {e}", m.path),
@@ -1158,7 +1156,7 @@ fn preview_run(
         player.set_render_cache(Some(kt_engine::render_cache::Config {
             codec: std::sync::Arc::new(kt_media::segment::ffmpeg::FfmpegSegments::from_env()),
             root: dir.into(),
-            build: render_cache_build(),
+            made: render_cache_made(),
             base: std::path::Path::new(path).parent().map(|p| p.to_path_buf()),
             cap: kt_engine::render_cache::cap_from_env(),
         }));
@@ -1363,10 +1361,7 @@ fn open_sources(
         // target_url from the project directory, item 316) — a second
         // join doubled the prefix and “lost” the file on a relative call
         let resolved = m.path.clone();
-        let mut idx_db = kt_media::index::MediaIndexDb::open(
-            &std::path::Path::new(project_path).with_extension("ktindex.db"),
-        )
-        .ok();
+        let mut idx_db = media_store(project_path);
         match kt_media::ffmpeg::FfmpegSource::open_indexed(&resolved, idx_db.as_mut()) {
             Ok(src) => fetcher.add_source(m.id, Box::new(src)),
             Err(e) if strict => return Err(format!("{resolved}: {e}")),
@@ -1494,6 +1489,54 @@ fn load_project_file(input: &str) -> Result<(Project, Retained), i32> {
     }
 }
 
+/// `kt-cli cache <project> [size|prune|clear]` (project-cache-folder D8): what the project's cache folder
+/// holds, per cache; `prune` drops down to the room it has, `clear` empties it.
+fn cache_command(project: &str, what: &str) -> i32 {
+    use kt_media::cache_folder::{Folder, Place, Tenant};
+    let folder = match Folder::open(&cache_dir(project)) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("{}: {e}", cache_dir(project).display());
+            return 1;
+        }
+    };
+    println!("{}", folder.root().display());
+    match folder.place() {
+        Place::Project => {}
+        Place::Untitled => println!("the project's file lies in the user's data folder"),
+        Place::NoFiles(why) => println!("the project's folder takes no files: {why}"),
+    }
+    match what {
+        "size" => {}
+        "prune" => println!("dropped {} bytes", folder.prune()),
+        "clear" => println!("dropped {} bytes", folder.clear(None)),
+        _ => {
+            eprintln!("usage: kt-cli cache <in.kt> [size|prune|clear]");
+            return 2;
+        }
+    }
+    let sizes = folder.sizes();
+    for t in Tenant::ALL {
+        let (bytes, n) = sizes.get(&t).copied().unwrap_or_default();
+        println!("{:<7} {bytes} bytes in {n}", t.name());
+    }
+    println!("total   {} bytes, the cap {} bytes", sizes.values().map(|v| v.0).sum::<u64>(), folder.cap());
+    folder.flush();
+    0
+}
+
+/// The media index of a project: its cache folder's, or `--cache-dir`'s (project-cache-folder).
+fn media_store(project: &str) -> Option<kt_media::index::MediaStore> {
+    kt_media::index::MediaStore::open(&cache_dir(project)).ok()
+}
+
+/// `--cache-dir DIR` of this run.
+static CACHE_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+fn cache_dir(project: &str) -> std::path::PathBuf {
+    CACHE_DIR.get().cloned().unwrap_or_else(|| kt_media::cache_folder::beside(std::path::Path::new(project)))
+}
+
 /// The project for render/probe: relative media paths are resolved from the
 /// project directory ONCE, here (t307: otherwise `sub/p.kt` looked for `sub/sub/clip.mp4`
 /// from the directory above it). In the file they stay
@@ -1504,7 +1547,7 @@ fn load_project_resolved(input: &str) -> Result<Project, i32> {
     kt_otio::resolve_project_media(&mut p, std::path::Path::new(input).parent());
     // what the audio-reactive generators hear, before any of them is raised (gen-audio-reactive): a
     // render never depends on a background job; the sidecar keeps the series between runs
-    let mut db = kt_media::index::MediaIndexDb::open(&std::path::Path::new(input).with_extension("ktindex.db")).ok();
+    let mut db = media_store(input);
     kt_engine::listen::ensure(
         &p,
         &|path| path.to_string(),
@@ -1909,6 +1952,13 @@ fn run(args: &[String]) -> i32 {
                 }
             }
         }
+        Some("cache") => {
+            let (Some(input), what) = (args.get(1), args.get(2).map_or("size", String::as_str)) else {
+                eprintln!("usage: kt-cli cache <in.kt> [size|prune|clear]");
+                return 2;
+            };
+            cache_command(input, what)
+        }
         Some("pause-scan") => {
             let (Some(input), Some(step)) = (args.get(1), args.get(2).and_then(|s| s.parse::<f64>().ok())) else {
                 eprintln!("usage: kt-cli pause-scan <in.kt> <step_s> [--size WxH] [--wait-s N] [--from S] [--to S]");
@@ -2001,10 +2051,7 @@ fn run(args: &[String]) -> i32 {
                             // the path is already resolved on load (item 316)
                             let resolved = m.path.clone();
                             {
-                                let mut idx_db = kt_media::index::MediaIndexDb::open(
-                                    &std::path::Path::new(input).with_extension("ktindex.db"),
-                                )
-                                .ok();
+                                let mut idx_db = media_store(input);
                                 Box::new(
                                     kt_media::ffmpeg::FfmpegSource::open_indexed(
                                         &resolved,
