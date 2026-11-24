@@ -18,7 +18,8 @@ Cache of bursts + coverage. Without FFmpeg/audio hardware.
   that puts NEW bytes at an old address must invalidate the source first.
 - **A live source has an identity, and every entry of it was decoded from it** (durable-moment-key D1,
   t4110): `adopt` sets it and drops the entries of another in one step, a worker's insert names it and is
-  refused once it is another's, `invalidate_source` drops bytes and keeps it, `forget` drops both. A frame
+  refused once it is another's, `invalidate_source` drops bytes and keeps it, `forget` drops both. `adopt_picture` is `adopt` for the
+  pictures alone (a copy of a heavy source, persistent-cache D3): the decoded sound stays (t3612). A frame
   and its identity are read in one look (`get_video_leaf`). A private cache has none: its frames are named
   by their serials.
 - Evictions go into the trace with the key's parts and the insert that pushed them out (`trace_evict`).

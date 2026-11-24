@@ -168,6 +168,9 @@ pub fn cache(run: &Run) -> String {
     if !scans.is_empty() {
         let _ = writeln!(o, "scans for the bars: {} ({} moments looked at, {} found on disk)", scans.len(), scans.iter().map(|r| r.a).sum::<u64>(), scans.iter().map(|r| r.b).sum::<u64>());
     }
+    for r in recs.iter().filter(|r| r.aux == k::ABANDON && r.c > 0) {
+        let _ = writeln!(o, "left at the close: a segment of {} moments ({} ms of the device)", r.c, r.dur / 1_000_000);
+    }
     let mut why: BTreeMap<&'static str, usize> = BTreeMap::new();
     for r in recs.iter().filter(|r| r.aux == k::ABANDON || r.aux == k::STOPPED) {
         *why.entry(k::why::name(r.b)).or_default() += 1;

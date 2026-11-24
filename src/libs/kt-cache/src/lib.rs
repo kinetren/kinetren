@@ -1176,22 +1176,6 @@ mod v12_tests {
 }
 
 #[cfg(test)]
-mod postfx_tests {
-    use super::*;
-
-    fn vframe(bytes: usize) -> Arc<VideoFrame> {
-        Arc::new(VideoFrame {
-            pts: kt_time::Tick(0),
-            width: 2,
-            height: 2,
-            rgba: vec![7u8; bytes].into_boxed_slice(),
-            has_alpha: false,
-        })
-    }
-
-}
-
-#[cfg(test)]
 mod perf_counter_tests {
     use super::*;
     use kt_time::Tick;
@@ -1546,6 +1530,33 @@ mod serial_tests {
         c.insert_video(s, q, 0, frame());
         assert!(matches!(c.get_video_leaf(s, q, 0), (Some(_), None)), "a private cache names its frames by serials");
         assert_ne!(SourceIdent::once(), SourceIdent::once());
+    }
+
+    /// Test 3612 (persistent-cache D3): a source whose PICTURES come from another file from now on keeps its
+    /// decoded sound and the sound's coverage; a late picture of the old file is refused, and the same
+    /// identity again drops nothing.
+    #[test]
+    fn t3612_a_swapped_picture_keeps_the_sound() {
+        let c = BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: 1 << 20 });
+        let (s, q) = (SourceId(7), Some(Quality { width: 4, height: 4 }));
+        let (file, copy) = (SourceIdent::of("file"), SourceIdent::of("copy"));
+        c.adopt(s, file);
+        assert!(c.insert_video_from(s, file, q, 0, 1, frame()) && c.insert_audio_from(s, file, Arc::new(AudioBurst::silence(0))));
+        let (video, audio) = (BurstKind::video(q), BurstKind::Audio);
+        assert!(!c.coverage(s, video, 0..4).is_empty() && !c.coverage(s, audio, 0..4).is_empty());
+        let bytes = c.audio_bytes();
+        c.adopt_picture(s, copy);
+        assert!(!c.contains_video(s, q, 0) && c.contains_audio(s, 0));
+        assert!(c.coverage(s, video, 0..4).is_empty() && !c.coverage(s, audio, 0..4).is_empty());
+        assert_eq!((c.video_bytes(), c.audio_bytes()), (0, bytes));
+        assert!(!c.insert_video_from(s, file, q, 0, 1, frame()), "the file's last span, after the swap");
+        assert!(c.insert_video_from(s, copy, q, 0, 1, frame()));
+        let epoch = c.epoch();
+        c.adopt_picture(s, copy);
+        assert!(c.contains_video(s, q, 0) && c.epoch() == epoch, "the same picture drops nothing");
+        // what stayed is the source's still: it goes with it
+        c.forget(s);
+        assert!(!c.contains_audio(s, 0) && c.audio_bytes() == 0);
     }
 }
 

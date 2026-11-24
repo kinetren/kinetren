@@ -207,7 +207,9 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   rest: moments the cost map measured at least half a frame period and their unmeasured neighbours,
   after `QUIET` with no `note_input`, never while playing or under an export's vote; its decodes at
   `Thumbnail`, its device work at class `background`. No export reads it. With no `Config` (tests,
-  the CLI without `--render-cache`) nothing changes. t2980–t2985, t2988.
+  the CLI without `--render-cache`) nothing changes. t2980–t2985, t2988. A thread stopped by the PROCESS's end
+  (`shutdown::ending`) leaves its open segment (and an unfinished source copy) with no call to the disk; a player
+  dropped in a running program commits it (t3611).
 - **The memory ledger sizes the preview's memos** (memory-ledger): the prefetch thread tells the
   display's executor the loop region's moments (`tell_loop` → `VideoGpuExec::keep_loop`; never from
   the UI thread, the executor's lock may stand behind a composite), and `size_stream_memo` asks the

@@ -385,7 +385,10 @@ fn make(
         }
         Err(CopyError::Failed(why)) => failed = Some(why),
     }
-    let _ = std::fs::remove_file(&tmp);
+    // a process that ends leaves it to the next open's sweep (found-defects 972)
+    if !kt_time::shutdown::ending() {
+        let _ = std::fs::remove_file(&tmp);
+    }
     c.with(id, |s| {
         s.making = None;
         s.failed = failed;

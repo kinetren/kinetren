@@ -229,7 +229,8 @@ is no picture, and an export refuses.
 - **Background GPU work holds the exit** (`exit.rs`, row 172, t2129): a thread of ours that compiles or
   draws off a frame takes `crate::exit::busy()` (refused once the process exits) and checks
   `exit::exiting()` between steps; an `atexit` hook waits for the guards, so libLLVM's destructors never
-  run under a compile. A new background GPU thread takes the guard too.
+  run under a compile. A new background GPU thread takes the guard too. `begin` (the program's close) only
+  stops new work; the hook's wait has its own flag and ends a second before the exit watcher (t3610).
 - **The disk tier** (`pipeline_cache.rs`): every pipeline descriptor passes `cache`; the folder is set by
   the program (`set_cache_dir`), never by a test. Lavapipe's blob is its 96-byte header.
 
@@ -468,7 +469,7 @@ is no picture, and an export refuses.
 - **Pass times outlive the process** (`seeds.rs`, gpu-throughput D2): `<shader-cache>/pass-times-v1.tsv`,
   (adapter name + driver, label, work units) → ns; a label never measured in the process is predicted
   from it (scaled by work from the nearest size). Notes only when a time is new or moved by a quarter;
-  written at most every 30 s and in the exit hook; no cache dir (tests) — memory only. A run shape's
+  written at most every 30 s, in the program's close on a thread, and in the exit hook of a process that closes no program; no cache dir (tests) — memory only. A run shape's
   label is never seeded (process-local number). A cache: it moves cuts, never bytes.
 - **A compute job learns from its own pieces** (D2): at a cut the piece's timestamps are resolved into
   their own aligned part of the job's resolve buffer and mapped; the next `due` reads what came back

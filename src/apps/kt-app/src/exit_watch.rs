@@ -18,6 +18,7 @@ pub const EXIT_BOUND: Duration = Duration::from_secs(8);
 /// Arm the watcher: past `bound` it records what the close still waited for and calls `fire`
 /// (the product's: `end_now`). Once per process; a second arm is ignored.
 pub fn arm(bound: Duration, fire: impl FnOnce() + Send + 'static) {
+    kt_time::shutdown::ends_by(std::time::Instant::now() + bound);
     static ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if !ARMED.swap(true, std::sync::atomic::Ordering::AcqRel) && !watch(bound, fire) {
         // no thread: the exit goes unwatched, as before

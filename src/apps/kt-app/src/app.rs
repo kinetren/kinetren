@@ -11664,6 +11664,10 @@ impl eframe::App for KtApp {
             };
             std::thread::Builder::new().name("close-workspace".into()).spawn(write).ok()
         });
+        // the effects' pass times measured since the last write: the exit hook no longer touches the disk
+        // (found-defects 972)
+        #[cfg(not(test))]
+        let passes = std::thread::Builder::new().name("close-passes".into()).spawn(kt_gpu::flush_pass_times).ok();
         // closing a named project renders its poster (D5): one frame, within a budget
         self.queue_poster();
         let since = std::time::Instant::now();
@@ -11671,6 +11675,10 @@ impl eframe::App for KtApp {
         record("poster", since, ended);
         if let Some(h) = workspace {
             kt_time::shutdown::join("workspace", h, until);
+        }
+        #[cfg(not(test))]
+        if let Some(h) = passes {
+            kt_time::shutdown::join("pass-times", h, until);
         }
         // past its budget the poster stops: it would hold the offline engine's park and the GPU exit
         // hook past the exit's bound (found-defects 791)

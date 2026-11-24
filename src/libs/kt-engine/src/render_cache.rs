@@ -1129,6 +1129,16 @@ fn commit(rc: &RenderCache, seg: &mut Option<OpenSeg>) {
     }
 }
 
+/// The process ends under an open segment: it is left as it is, with no call to the disk and none to the
+/// encoder (found-defects 972). Its file has no manifest, and the next open removes it; what its moments
+/// cost is in the trace.
+fn leave(seg: Option<OpenSeg>) {
+    let Some(s) = seg else { return };
+    let (n, first) = (s.moments.len() as u64, s.moments.first().map_or(0, |m| m.0));
+    trace::ev(Ev::RenderCache).aux(rc::ABANDON).a(first as u64).b(rc::why::CLOSED).c(n).lasted(s.build.cost).emit();
+    std::mem::forget(s.build);
+}
+
 /// The player's `render-cache` thread (D4): parks with no clock while there is nothing to do; at rest,
 /// after the quiet, composes the moments [`candidates`] names one at a time and writes the heavy ones
 /// into a segment, a run of consecutive moments one video file holds.
@@ -1153,8 +1163,13 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
         let seen = rc.wake.seen();
         if stop.load(Ordering::Acquire) {
             // no stamps here (found-defects 831): they are conveniences, and a rename on a saturated disk
-            // stood 20 s in the kernel, where a process cannot end
-            commit(&rc, &mut seg);
+            // stood 20 s in the kernel, where a process cannot end. Nor the open segment, when the process
+            // ends with the player: the encoder's rest, the trailer and the manifest
+            if kt_time::shutdown::ending() {
+                leave(seg.take());
+            } else {
+                commit(&rc, &mut seg);
+            }
             return;
         }
         rc.news.store(false, Ordering::Release);

@@ -7,12 +7,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
-type WriteFn = Box<dyn FnMut(&Path, &str, bool) + Send>;
+type WriteFn = Box<dyn FnMut(&Path, &str) + Send>;
 
 #[derive(Default)]
 struct St {
-    /// In the order of the first ask: path, text, whether it must survive a power cut.
-    queue: Vec<(PathBuf, String, bool)>,
+    /// In the order of the first ask: path, text.
+    queue: Vec<(PathBuf, String)>,
     /// What the thread is writing now.
     at: Option<(PathBuf, String)>,
 }
@@ -28,7 +28,7 @@ impl Later {
         let me = l.clone();
         let _ = std::thread::Builder::new().name("small-files".into()).spawn(move || {
             loop {
-                let (path, text, sync) = {
+                let (path, text) = {
                     let mut st = me.st.lock().unwrap_or_else(|e| e.into_inner());
                     st.at = None;
                     me.cv.notify_all();
@@ -36,20 +36,20 @@ impl Later {
                         st = me.cv.wait(st).unwrap_or_else(|e| e.into_inner());
                     }
                     let d = st.queue.remove(0);
-                    st.at = Some((d.0.clone(), d.1.clone()));
+                    st.at = Some(d.clone());
                     d
                 };
-                write(&path, &text, sync);
+                write(&path, &text);
             }
         });
         l
     }
 
-    pub(crate) fn push(&self, path: &Path, text: String, sync: bool) {
+    pub(crate) fn push(&self, path: &Path, text: String) {
         let mut st = self.st.lock().unwrap_or_else(|e| e.into_inner());
         match st.queue.iter_mut().find(|q| q.0 == path) {
-            Some(q) => (q.1, q.2) = (text, q.2 || sync),
-            None => st.queue.push((path.to_path_buf(), text, sync)),
+            Some(q) => q.1 = text,
+            None => st.queue.push((path.to_path_buf(), text)),
         }
         self.cv.notify_all();
     }
@@ -74,14 +74,10 @@ fn the() -> &'static Arc<Later> {
     L.get_or_init(|| Later::start(Box::new(put)))
 }
 
-/// The file itself: tmp + rename, with `sync` by the project's own atomic write.
-fn put(path: &Path, text: &str, sync: bool) {
+/// The file itself: tmp + rename, no fsync — conveniences, and the close waits for them (found-defects 831).
+fn put(path: &Path, text: &str) {
     if let Some(d) = path.parent() {
         let _ = std::fs::create_dir_all(d);
-    }
-    if sync {
-        let _ = kt_otio::write_atomic(path, text);
-        return;
     }
     let tmp = path.with_extension("json.tmp");
     if std::fs::write(&tmp, text).is_ok() {
@@ -90,11 +86,11 @@ fn put(path: &Path, text: &str, sync: bool) {
 }
 
 /// Write `text` into `path` soon; a test's is in the file at once.
-pub(crate) fn write(path: &Path, text: String, sync: bool) {
+pub(crate) fn write(path: &Path, text: String) {
     if cfg!(test) {
-        put(path, &text, sync);
+        put(path, &text);
     } else {
-        the().push(path, text, sync);
+        the().push(path, text);
     }
 }
 
@@ -118,35 +114,35 @@ mod tests {
     #[test]
     fn t3728_a_small_file_waits_for_no_disk() {
         let disk = Arc::new((Mutex::new(false), Condvar::new()));
-        let wrote = Arc::new(Mutex::new(Vec::<(PathBuf, String, bool)>::new()));
+        let wrote = Arc::new(Mutex::new(Vec::<(PathBuf, String)>::new()));
         let l = {
             let (disk, wrote) = (disk.clone(), wrote.clone());
-            Later::start(Box::new(move |p, t, s| {
+            Later::start(Box::new(move |p, t| {
                 let mut free = disk.0.lock().unwrap();
                 while !*free {
                     free = disk.1.wait(free).unwrap();
                 }
-                wrote.lock().unwrap().push((p.to_path_buf(), t.to_string(), s));
+                wrote.lock().unwrap().push((p.to_path_buf(), t.to_string()));
             }))
         };
         let (a, b) = (Path::new("a.json"), Path::new("b.json"));
-        l.push(b, "b0".into(), false);
+        l.push(b, "b0".into());
         // the thread holds `b0` in its hands: what follows waits in the queue
         let deadline = kt_time::test_deadline();
         while l.st.lock().unwrap().at.is_none() {
             assert!(std::time::Instant::now() < deadline);
             std::thread::yield_now();
         }
-        l.push(a, "a1".into(), true);
-        l.push(a, "a2".into(), false);
+        l.push(a, "a1".into());
+        l.push(a, "a2".into());
         assert_eq!(l.pending(a).as_deref(), Some("a2"));
         assert_eq!(l.pending(b).as_deref(), Some("b0"), "the one being written is read too");
         assert!(!l.flush(Duration::ZERO) && wrote.lock().unwrap().is_empty());
         *disk.0.lock().unwrap() = true;
         disk.1.notify_all();
         assert!(l.flush(kt_time::TEST_WAIT));
-        let want = vec![(b.to_path_buf(), "b0".to_string(), false), (a.to_path_buf(), "a2".to_string(), true)];
-        assert_eq!(*wrote.lock().unwrap(), want, "the newest text, synced since the older one had to be");
+        let want = vec![(b.to_path_buf(), "b0".to_string()), (a.to_path_buf(), "a2".to_string())];
+        assert_eq!(*wrote.lock().unwrap(), want, "the newest text");
         assert_eq!(l.pending(a), None);
     }
 }

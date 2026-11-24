@@ -910,7 +910,9 @@ flushes the trace and ends the process with `_exit(0)`. Every owner's drop joins
 released the same way on its `app-drop` thread. Every disk call of the close SHALL run off the UI thread, be waited
 for with a bound and be named in the trace; a record of conveniences (the workspace, the cache folder's stamps) SHALL
 be written with no fsync, and the stamps not at the close but at the rest after playing: a process cannot end while a
-thread of it stands in a disk call of the kernel.
+thread of it stands in a disk call of the kernel. For the same reason a thread stopped by the process's end starts no
+disk call: an open prerender segment and an unfinished source copy are left as they are for the next open's sweep, and
+the exit hook writes nothing.
 Why: found-defects 831 — on a saturated disk the workspace's two fsyncs held a paused close for 21 s at no load, and
 the stamps' rename held the end of a process that had returned for 20 s. Close-while-busy (kkt-26.11.18 T1): the owner closed the window while a loop caught up and had to
 kill the process; the player's drop joined a prefetch pass that walked a Datamosh history for up to 37 s,
@@ -931,6 +933,18 @@ and the decoder, the sound device's thread, the effect cells and kt-gpu's exit h
 - **WHEN** a disk call of the close never ends, and a program with unsaved work is closed
 - **THEN** the call is left behind at its bound and named; the close writes the recovery, says the work is safe, and only then writes the workspace, with no fsync on the UI thread
 - **TEST** t3609 (`src/apps/kt-app/src/reach_tests.rs`)
+
+#### Scenario: The exit hook waits after the close began, and under the watcher
+- **WHEN** the close begins (background GPU work starts nothing more and an engine's build stops between two pipelines) while a piece of background GPU work is still up and the exit watcher fires in a moment
+- **THEN** the hook waits for it once, ends a second before the watcher, names it as left, and writes nothing to the disk; the pass times are written in the close, on a thread; with no watcher its bound is 10 s
+- **TEST** t3610 (`src/libs/kt-gpu/tests/exit_hook.rs`)
+- **TEST** t3604 (`src/libs/kt-gpu/tests/exit_begins.rs`)
+
+#### Scenario: A process that ends leaves the segment being prerendered
+- **PATH** rest on a heavy moment until the prerender writes it → the window's cross → the process ends with no wait for the segment; the trace (`kt-cli trace … summary`) says how many moments were left and what they cost
+- **WHEN** the process ends while the prerender's thread stands in a frame of an open segment
+- **THEN** the segment is not finished and no manifest is written, the trace names its moments and their device time, and the next open removes the file; a project closed in a running program keeps its segment
+- **TEST** t3611 (`src/libs/kt-engine/tests/close_segment.rs`)
 
 #### Scenario: A stuck exit is forced and names what it waited for
 - **WHEN** the exit's watcher passes its bound while a wait of the close left a thread behind

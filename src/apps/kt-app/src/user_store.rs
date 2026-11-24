@@ -595,7 +595,7 @@ pub fn save_workspace_at(path: &std::path::Path, w: &Workspace) {
         doc["geom_controls"] = serde_json::json!(on);
     }
     // no fsync: two of them held a close for 21 s on a busy disk (found-defects 831)
-    crate::later::write(path, format!("{doc:#}\n"), false);
+    crate::later::write(path, format!("{doc:#}\n"));
 }
 
 // ---- between-projects records (welcome-window-and-tour) -------------------
@@ -897,7 +897,7 @@ impl StartStore {
         doc["version"] = serde_json::json!(RECORDS_VERSION);
         // tmp + rename, WITHOUT fsync: a break midway leaves no stump, and these records are
         // conveniences — a lost recent list costs nothing (t985 took 90 s with `write_atomic`)
-        crate::later::write(&path, format!("{doc:#}\n"), false);
+        crate::later::write(&path, format!("{doc:#}\n"));
     }
 
     fn save_recent(&mut self) {

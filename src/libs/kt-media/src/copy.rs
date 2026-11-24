@@ -316,6 +316,11 @@ pub mod ffmpeg {
             };
             let mut mux = Muxer::open(&cfg).map_err(|e| CopyError::NoEncoder(e.to_string()))?;
             let gone = |mux: Muxer, e: CopyError| {
+                if kt_time::shutdown::ending() {
+                    // the process ends: no trailer, no unlink; the next open sweeps the file
+                    std::mem::forget(mux);
+                    return Err(e);
+                }
                 let _ = mux.finish();
                 let _ = std::fs::remove_file(dest);
                 Err(e)

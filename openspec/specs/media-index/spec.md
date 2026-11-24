@@ -1046,7 +1046,7 @@ second fell to 2; with the key of `durable-moment-key` it does not.
 - **TEST** t4112 (`src/libs/kt-engine/tests/moment_key.rs`)
 
 #### Scenario: An edit elsewhere asks no decode, an edit here asks its own
-- **WHEN** the loop of the scenario above plays from its kept composites and a title outside it is edited, then a parameter of an event inside it
+- **WHEN** the loop of the scenario above plays from its kept composites, its sources evicted by another range, and a title outside it is edited, then a parameter of an event inside it
 - **THEN** after the first edit no source frame of the loop is asked and the moments are confirmed from the playhead outward; after the second the changed moments' sources are asked within 300 ms, the moment on screen first, and the picture on screen is complete again
 - **TEST** t4113 (`src/libs/kt-engine/tests/moment_key.rs`)
 
