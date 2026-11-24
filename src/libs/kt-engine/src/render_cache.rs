@@ -1139,6 +1139,8 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
     let mut state: Option<StateKey> = None;
     let mut scanned: Option<(StateKey, i64)> = None;
     let mut worked = false;
+    // it played since the stamps were last written: what it read is known to the folder at the next rest
+    let mut played = false;
     let mut full = false;
     // the size an encoder was seen to open at (found-defects 813): asked before any moment composes
     let mut opens: Option<(u32, u32)> = None;
@@ -1149,14 +1151,16 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
     loop {
         let seen = rc.wake.seen();
         if stop.load(Ordering::Acquire) {
+            // no stamps here (found-defects 831): they are conveniences, and a rename on a saturated disk
+            // stood 20 s in the kernel, where a process cannot end
             commit(&rc, &mut seg);
-            rc.flush();
             return;
         }
         rc.news.store(false, Ordering::Release);
         for t in std::mem::take(&mut *rc.lost.lock().unwrap()) {
             done.remove(&t);
         }
+        played |= parts.transport.is_playing();
         if !rc.is_on() || parts.transport.is_playing() || export_runs() {
             commit(&rc, &mut seg);
             if worked {
@@ -1208,6 +1212,9 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
         }
         let unavailable = rc.unavailable.lock().unwrap().is_some();
         if full || unavailable {
+            if std::mem::take(&mut played) {
+                rc.flush();
+            }
             rc.settled.store(true, Ordering::Release);
             rc.wake.wait_since(seen);
             continue;
@@ -1228,7 +1235,8 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
             commit(&rc, &mut seg);
             if worked {
                 trace::ev(Ev::RenderCache).aux(rc::STOPPED).b(rc::why::DONE).emit();
-                worked = false;
+            }
+            if std::mem::take(&mut worked) | std::mem::take(&mut played) {
                 rc.flush();
             }
             rc.settled.store(true, Ordering::Release);

@@ -1663,6 +1663,13 @@ impl KtApp {
     /// Remember the workspace. Called where the program already writes:
     /// on project save and on exit — it does not need its own schedule.
     pub(crate) fn save_workspace(&mut self) {
+        if let Some((path, w)) = self.workspace_now() {
+            crate::user_store::save_workspace_at(&path, &w);
+        }
+    }
+
+    /// The workspace as it is now and the file it goes to; `None` — the file is newer than this build.
+    fn workspace_now(&mut self) -> Option<(std::path::PathBuf, crate::user_store::Workspace)> {
         // a file newer than our build — we do not touch it, but we must not stay silent:
         // otherwise panel widths “are not remembered” without any explanation
         if self.workspace.is_readonly() {
@@ -1671,7 +1678,7 @@ impl KtApp {
                 .clone()
                 .unwrap_or_else(|| crate::user_store::store_dir().join("workspace.json"));
             self.warn(crate::tf!(k::msg::WORKSPACE_READONLY, p.display()));
-            return;
+            return None;
         }
         self.workspace.meters_w = self.meters_w;
         self.workspace.set_view(
@@ -1682,10 +1689,8 @@ impl KtApp {
                 cursor: self.player.transport.playhead().0,
             },
         );
-        match &self.workspace_file {
-            Some(p) => crate::user_store::save_workspace_at(p, &self.workspace),
-            None => crate::user_store::save_workspace(&self.workspace),
-        }
+        let path = self.workspace_file.clone().unwrap_or_else(crate::user_store::workspace_path);
+        Some((path, self.workspace.clone()))
     }
 
     #[cfg(test)]
@@ -11596,23 +11601,54 @@ impl eframe::App for KtApp {
         // Unsaved work goes to the recovery file; saved work carries its own recovery file
         // away with it, so that the next start does not offer
         // to restore what is already in the project.
-        self.save_workspace();
+        // Every disk call of the close runs on a thread and is waited for with a bound, and the trace
+        // names the wait (found-defects 831): on a saturated disk an fsync or a rename stands for tens of
+        // seconds in the kernel, and the close stood with it, at no load, unnamed
         if self.dirty_content || self.dirty_ui {
             self.model.set_ui_state(Some(self.ui_state()));
-            self.write_recovery_now();
-        } else {
-            self.drop_own_recovery();
+            let target = self.recovery_target();
+            let json = self.project_text(&self.model.document(), target.parent());
+            let (guard, rev) = (self.recovery_rev.clone(), self.model_rev);
+            let path = target.clone();
+            let failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let f = failed.clone();
+            close_write("recovery", CLOSE_RECOVERY_WAIT, move || {
+                if let Err(e) = write_project_guarded(&guard, &path, rev, &json) {
+                    crate::journal::log("WARN", &format!("recovery write failed: {} ({e})", path.display()));
+                    f.store(true, std::sync::atomic::Ordering::Release);
+                }
+            });
+            // the drop's write is for an app that never came here: after this one it repeated it, both
+            // fsyncs on this thread, and stood on the guard of one still running. A failed one is tried
+            // once more there
+            if !failed.load(std::sync::atomic::Ordering::Acquire) {
+                self.recovery_on_drop = false;
+                self.recovery_written = Some(target);
+            }
+        } else if let Some(p) = self.recovery_written.take() {
+            close_write("recovery-removed", CLOSE_WAIT, move || {
+                let _ = std::fs::remove_file(p);
+            });
         }
         // the work is safe (the recovery written; the lock goes with the app): from here the exit is
         // bounded, whatever is still busy (close-while-busy, kkt-26.11.18 T1)
         kt_time::shutdown::mark(kt_time::trace::shutdown::DURABLE, "recovery");
         #[cfg(not(test))]
         crate::exit_watch::arm(crate::exit_watch::EXIT_BOUND, crate::exit_watch::end_now);
+        // a convenience, and the exit is bounded by now: it goes beside the poster's wait
+        let until = std::time::Instant::now() + CLOSE_WAIT;
+        let workspace = self.workspace_now().and_then(|(path, w)| {
+            let write = move || crate::user_store::save_workspace_at(&path, &w);
+            std::thread::Builder::new().name("close-workspace".into()).spawn(write).ok()
+        });
         // closing a named project renders its poster (D5): one frame, within a budget
         self.queue_poster();
         let since = std::time::Instant::now();
         let ended = crate::welcome::wait_posters(std::time::Duration::from_secs(3));
         record("poster", since, ended);
+        if let Some(h) = workspace {
+            kt_time::shutdown::join("workspace", h, until);
+        }
         // past its budget the poster stops: it would hold the offline engine's park and the GPU exit
         // hook past the exit's bound (found-defects 791)
         if !ended {
@@ -11639,6 +11675,21 @@ impl eframe::App for KtApp {
         // what the close did is in the file before the drops join threads (a clean exit flushed
         // nothing, and the owner's trace ended a second before his close)
         kt_time::trace::flush();
+    }
+}
+
+/// How long the close waits for a write nobody loses by.
+const CLOSE_WAIT: std::time::Duration = if cfg!(test) { kt_time::TEST_WAIT } else { kt_time::shutdown::WAIT };
+/// How long it waits for the unsaved work's recovery file, as for a Ctrl+S being written.
+const CLOSE_RECOVERY_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// A disk call of the close, on a thread of its own, waited for at most `bound` and recorded as `who`:
+/// past it the call is left to end with the process. `true` — it ended.
+pub(crate) fn close_write(who: &'static str, bound: std::time::Duration, f: impl FnOnce() + Send + 'static) -> bool {
+    let until = std::time::Instant::now() + bound;
+    match std::thread::Builder::new().name(format!("close-{who}")).spawn(f) {
+        Ok(h) => kt_time::shutdown::join(who, h, until),
+        Err(_) => false,
     }
 }
 

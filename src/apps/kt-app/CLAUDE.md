@@ -96,6 +96,10 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 
 ## Closing the program (close-while-busy, kkt-26.11.18 T1)
 
+- **A disk call of the close runs through `close_write`** (found-defects 831, 971, t3609): on a thread, bounded, named
+  in the trace. On a saturated disk an fsync or a rename over a file stands for tens of seconds in the kernel: on the
+  UI thread it holds the close, on any thread it holds the end of the PROCESS (`_exit` waits for it too). So a record
+  of conveniences has no fsync and is written at rest rather than at the close.
 - **The close is bounded after its durability.** `on_exit`: pause, the autosave in flight (5 s), a
   Ctrl+S being written (30 s), the recovery file — then `Shutdown DURABLE` and `exit_watch::arm`: the rest
   (poster, offline park, telemetry, the drops, eframe's teardown, the C exit hooks) gets `EXIT_BOUND`

@@ -8404,3 +8404,42 @@ fn t3941_copy_and_paste_are_icons_that_say_their_name() {
         assert!(h.state().status_line_shown.0.starts_with(name), "{name}: {:?}", h.state().status_line_shown);
     }
 }
+
+/// Test t3609 (durability, found-defects 831): a disk call of the close that never ends is left behind at
+/// its bound and named in the trace; a close of unsaved work writes its recovery, says it is safe, and only
+/// then writes the workspace — a convenience, with no fsync on the UI thread.
+#[test]
+fn t3609_a_disk_call_of_the_close_is_bounded_and_named() {
+    use kt_time::trace::{Ev, shutdown};
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let items = kt_time::trace::testing::capture(|| {
+        assert!(!crate::app::close_write("t3609-stuck", std::time::Duration::from_millis(30), move || {
+            let _ = rx.recv();
+        }));
+        assert!(crate::app::close_write("t3609-quick", kt_time::TEST_WAIT, || ()));
+    });
+    let _ = tx.send(());
+    let recs = kt_time::trace::testing::recs(&items);
+    let left = |who: &str| recs.iter().find(|r| r.ev == Ev::Shutdown as u16 && r.aux == kt_time::trace::name(who)).map(|r| r.b);
+    assert_eq!((left("t3609-stuck"), left("t3609-quick")), (Some(1), Some(0)), "each wait is named, left or ended");
+
+    let dir = std::env::temp_dir().join(format!("kt-t3609-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().project_path = Some(dir.join("film.kt"));
+    h.state_mut().workspace_file = Some(dir.join("workspace.json"));
+    h.state_mut().dirty_content = true;
+    let synced = kt_time::block::here();
+    let items = kt_time::trace::testing::capture(|| eframe::App::on_exit(h.state_mut()));
+    assert_eq!(kt_time::block::here(), synced, "the close waited for an fsync on the UI thread");
+    let recs = kt_time::trace::testing::recs(&items);
+    let at = |who: &str, id: u64| recs.iter().position(|r| r.ev == Ev::Shutdown as u16 && r.id == id && r.aux == kt_time::trace::name(who));
+    let (wrote, safe, conv) = (at("recovery", shutdown::WAIT), at("recovery", shutdown::DURABLE), at("workspace", shutdown::WAIT));
+    assert!(wrote.is_some() && wrote < safe && safe < conv, "recovery, safe, workspace: {wrote:?} {safe:?} {conv:?}");
+    assert!(dir.join("workspace.json").is_file());
+    let left: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    assert!(left.iter().any(|n| n.contains("recovery")), "{left:?}");
+    h.state_mut().dirty_content = false;
+    let _ = std::fs::remove_dir_all(&dir);
+}

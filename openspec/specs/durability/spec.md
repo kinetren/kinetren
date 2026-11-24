@@ -881,13 +881,17 @@ system, past six seconds.
 Closing the window or File → Quit SHALL end the process within a bound whatever the program is doing (a
 loop catching up, a stream history walking, the render-ahead producer, a decoder span, GPU or compute
 work in flight). `on_exit` SHALL first do the durability work, each wait bounded (the autosave in flight
-5 s, a Ctrl+S being written 30 s, the recovery file); from then on the rest of the exit (the poster, the
-offline engine's park, telemetry's last event, the drops that join threads, eframe's teardown, the C exit
+5 s, a Ctrl+S being written 30 s, the recovery file 30 s); from then on the rest of the exit (the workspace's
+record, the poster, the offline engine's park, telemetry's last event, the drops that join threads, eframe's teardown, the C exit
 hooks) SHALL take at most `EXIT_BOUND` (8 s): past it a watcher records what was still waited for,
 flushes the trace and ends the process with `_exit(0)`. Every owner's drop joins its threads with a bound
 (`kt_time::shutdown`, 2 s) and leaves a thread past it behind; the replaced app of File → Open/New is
-released the same way on its `app-drop` thread.
-Why: close-while-busy (kkt-26.11.18 T1): the owner closed the window while a loop caught up and had to
+released the same way on its `app-drop` thread. Every disk call of the close SHALL run off the UI thread, be waited
+for with a bound and be named in the trace; a record of conveniences (the workspace, the cache folder's stamps) SHALL
+be written with no fsync, and the stamps not at the close but at the rest after playing: a process cannot end while a
+thread of it stands in a disk call of the kernel.
+Why: found-defects 831 — on a saturated disk the workspace's two fsyncs held a paused close for 21 s at no load, and
+the stamps' rename held the end of a process that had returned for 20 s. Close-while-busy (kkt-26.11.18 T1): the owner closed the window while a loop caught up and had to
 kill the process; the player's drop joined a prefetch pass that walked a Datamosh history for up to 37 s,
 and the decoder, the sound device's thread, the effect cells and kt-gpu's exit hook waited with no bound.
 
@@ -900,6 +904,12 @@ and the decoder, the sound device's thread, the effect cells and kt-gpu's exit h
 - **WHEN** a process registers a library's destructor (as a library loaded before the end), registers a last step, calls `kt_time::shutdown::end_before_libraries`, leaves a thread working, and exits with status 7; separately the same without the end
 - **THEN** with the end the last step runs, the status stays 7 and the library's destructor never runs; without it the destructor runs and the step does not. The end is registered after every native library the program loads: each GPU device (kt-gpu `errors::watch`, so llvmpipe's libLLVM and a card driver's statics), FFmpeg's libraries, the first hardware (libva) device, the first sound device; its last steps are the GPU's background work waited for, the trace and C's stdio flushed (found-defects 784/785, 695, 172)
 - **TEST** t3600 (`src/libs/kt-time/tests/end.rs`)
+
+#### Scenario: A disk call of the close is bounded and named
+- **PATH** edit a clip → the window's cross → "Do not save" → the window goes and the process ends, whatever the disk does; the trace names each disk call of the close
+- **WHEN** a disk call of the close never ends, and a program with unsaved work is closed
+- **THEN** the call is left behind at its bound and named; the close writes the recovery, says the work is safe, and only then writes the workspace, with no fsync on the UI thread
+- **TEST** t3609 (`src/apps/kt-app/src/reach_tests.rs`)
 
 #### Scenario: A stuck exit is forced and names what it waited for
 - **WHEN** the exit's watcher passes its bound while a wait of the close left a thread behind
