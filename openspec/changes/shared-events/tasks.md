@@ -15,7 +15,7 @@
 
 ## 1. The before numbers
 
-- [ ] 1.1 `cargo build --release -p kt-cli`; `kt-cli showcase` ×1 and ×10 (the 1357- and 13 357-event projects
+- [x] 1.1 `cargo build --release -p kt-cli`; `kt-cli showcase` ×1 and ×10 (the 1357- and 13 357-event projects
       of found-defects 192/641); `kt-cli edit-cost` on both; paste the drag line, the handover and the
       incremental build times into design D5 under "before"
 

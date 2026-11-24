@@ -136,6 +136,16 @@ Guesses to check, not promises: ×10 UI-thread handover 4 ms → well under 0.5 
 lookups (~5 ms); a drag's CPU falls in the same proportion. The guards do not time anything: they count
 `EventClone` and `EventHash` (t3367–t3372), as test-stability requires.
 
+**Before** (2026-11-25, `41d149bc`, release `kt-cli edit-cost`, `showcase --heavy` over the fixture videos: 518 events, grown to
+×1 and ×10 of rows 192/641 by `--far 420` and `--far 6420`; minima of three runs, load average 10 on the machine):
+
+| | 518 events | 1358 | 13 358 |
+|---|---|---|---|
+| document clone | 0.11 ms | 0.24 ms | 2.47 ms |
+| a build, fresh / incremental (the root's resolve in it) | 3.4 / 2.0 (0.2) ms | 6.4 / 4.6 (0.3) ms | 51.4 / 44.4 (4.8) ms |
+| one edit, UI thread p50 / CPU of the process | 0.52 / 4.0 ms | 0.74 / 7.0 ms | 3.86 / 54.0 ms |
+| a 60 Hz drag of 120 steps: UI thread p50 / CPU / builds | 0.36 ms / 18 % / 240 | 0.53 ms / 34 % / 240 | 4.23 ms / 120 % / 76–82 |
+
 ## D6. Class walk: every place that copies, compares or hashes the whole project per edit or per frame
 
 | Place | Per | Today | After |
