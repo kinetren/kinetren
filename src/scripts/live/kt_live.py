@@ -452,6 +452,10 @@ class Live:
         now = geometry()
         if any(abs(now[k] - want[k]) > 4 for k in ("x", "y", "w", "h")):
             win = the_window(what="the stand's window")
+            # a scenario that left it MAXIMIZED (a resize to nearly the screen does, under openbox): the
+            # window manager ignores a configure of a maximized window, and the next scenario measured a
+            # picture a third larger (`masks` after `node_graph_branch`, found-defects 908)
+            unmaximize(win)
             win.configure(x=want["x"], y=want["y"], width=want["w"], height=want["h"])
             probe.d.sync()
             self._raised = False
@@ -2023,6 +2027,22 @@ def pattern_media(out_dir, name, seconds, fps=30, size="640x360"):
         check=True,
     )
     return path
+
+
+def unmaximize(win):
+    """Ask the window manager to take the maximized state off the window."""
+    from Xlib import X
+    from Xlib.protocol import event
+
+    d = probe.d
+    root = d.screen().root
+    atom = d.intern_atom
+    data = (32, [0, atom("_NET_WM_STATE_MAXIMIZED_HORZ"), atom("_NET_WM_STATE_MAXIMIZED_VERT"), 1, 0])
+    # the client window carries the state, not the frame the window manager put it in
+    for w in [win] + list(win.query_tree().children):
+        ev = event.ClientMessage(window=w, client_type=atom("_NET_WM_STATE"), data=data)
+        root.send_event(ev, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask)
+    d.sync()
 
 
 def geometry():
