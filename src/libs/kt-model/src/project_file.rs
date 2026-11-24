@@ -97,12 +97,19 @@ pub const PROJECT_FILE_VERSION_TEXT_SOURCE: u32 = 7;
 /// — so it is told the version and refuses.
 pub const PROJECT_FILE_VERSION_FX_GRAPH: u32 = 8;
 
+/// The version a file is written with WHEN the project names a loudness target or has a program stage
+/// (loudness-norms). An older build would drop the stage on its next save and change the mix — so it
+/// is told the version and refuses.
+pub const PROJECT_FILE_VERSION_LOUDNESS: u32 = 9;
+
 /// The highest version this build reads.
-pub const PROJECT_FILE_READS: u32 = PROJECT_FILE_VERSION_FX_GRAPH;
+pub const PROJECT_FILE_READS: u32 = PROJECT_FILE_VERSION_LOUDNESS;
 
 /// The version this project needs — by its content.
 pub fn version_for(project: &Project) -> u32 {
-    if project.has_fx_graph() {
+    if project.has_program_loudness() {
+        PROJECT_FILE_VERSION_LOUDNESS
+    } else if project.has_fx_graph() {
         PROJECT_FILE_VERSION_FX_GRAPH
     } else if project.has_text_sources() {
         PROJECT_FILE_VERSION_TEXT_SOURCE

@@ -150,9 +150,9 @@ pub struct LoudnessMeter {
 }
 
 /// Length of the true-peak interpolator kernel per phase.
-const TP_TAPS: usize = 8;
+pub(crate) const TP_TAPS: usize = 8;
 /// Oversampling ×4 — the minimum required by BS.1770-4 for 48 kHz.
-const TP_OVER: usize = 4;
+pub(crate) const TP_OVER: usize = 4;
 /// Fraction of the largest sample from which interpolation is computed.
 /// 0.7 ≈ −3 dB: the inter-sample overshoot of a band-limited signal does not exceed
 /// the neighboring sample by more than about 1.5 dB, so the margin is threefold.
@@ -371,7 +371,7 @@ fn loudness_range(short: &[f64]) -> f64 {
 /// Polyphase interpolator kernel: Hann window on sinc. Computed once per
 /// (tap, phase) — the table is small, and the hot path has eight multiplications anyway. Fetched
 /// once per `feed`, not per tap.
-fn tp_table() -> &'static [[f64; TP_OVER]; TP_TAPS] {
+pub(crate) fn tp_table() -> &'static [[f64; TP_OVER]; TP_TAPS] {
     static TABLE: std::sync::OnceLock<[[f64; TP_OVER]; TP_TAPS]> = std::sync::OnceLock::new();
     TABLE.get_or_init(|| {
         let mut t = [[0.0f64; TP_OVER]; TP_TAPS];

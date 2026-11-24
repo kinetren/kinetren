@@ -7,6 +7,7 @@ mod graph;
 pub mod loudness;
 mod nodes;
 pub mod primitives;
+pub mod program;
 mod sinc;
 mod warp;
 
