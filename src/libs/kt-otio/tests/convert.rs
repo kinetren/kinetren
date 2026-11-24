@@ -3155,3 +3155,27 @@ fn t3234_a_track_sound_link_in_the_exchange_file() {
     assert_eq!(b.project.tracks, p.tracks, "the link did not survive the round trip");
     assert_eq!(save_project(&b.project, &b.retained, None), text, "write idempotence");
 }
+
+/// t3729 (loudness-norms; capability `project-format`): the loudness target and the program stage travel in
+/// the timeline's envelope, raise the file to v19 and read back; at the defaults nothing is written and
+/// the version stays; numbers out of range read as the defaults.
+#[test]
+fn t3729_the_loudness_in_the_exchange_file() {
+    kt_plugins_builtin::install();
+    let mut p = rich_project();
+    let text0 = save_project(&p, &Retained::default(), None);
+    assert!(kt_otio::kt_version(&parse_document(&text0).unwrap()).unwrap() < kt_otio::KT_META_V19);
+    assert!(!text0.contains("\"loudness\"") && !text0.contains("\"program\""));
+    p.loudness = kt_model::LoudnessTarget::of(kt_model::LoudnessStandard::Streaming);
+    p.program = Some(kt_model::ProgramStage { gain_db: 5.5, measured: None });
+    p.validate().unwrap();
+    let text = save_project(&p, &Retained::default(), None);
+    assert_eq!(kt_otio::kt_version(&parse_document(&text).unwrap()), Some(kt_otio::KT_META_V19));
+    let b = load_project(&text, None).expect("readable");
+    assert_eq!((b.project.loudness, b.project.program), (p.loudness, p.program));
+    assert_eq!(save_project(&b.project, &b.retained, None), text, "write idempotence");
+    let broken = text.replace("\"gain_db\": 5.5", "\"gain_db\": 555.0");
+    assert_ne!(broken, text);
+    let b = load_project(&broken, None).expect("a hand-written number does not close the file");
+    assert_eq!((b.project.loudness, b.project.program), (p.loudness, None));
+}

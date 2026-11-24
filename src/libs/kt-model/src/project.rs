@@ -4,6 +4,7 @@ use kt_plugin_api::math::FrozenMath;
 use kt_time::{Tick, TickRange};
 use serde::{Deserialize, Serialize};
 
+use crate::loudness::{LoudnessTarget, ProgramStage};
 use crate::published::{Override, ParamAddr, ParamOwner, PubId, PublishedParam, ResolvedReel};
 
 pub const FORMAT_VERSION: u32 = 1;
@@ -1451,6 +1452,12 @@ pub struct Project {
     /// The real root's set is always empty: the root is an instance of nothing.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub published: Vec<PublishedParam>,
+    /// The loudness the document is mixed for (loudness-norms). Not written at its default.
+    #[serde(default, skip_serializing_if = "LoudnessTarget::is_default")]
+    pub loudness: LoudnessTarget,
+    /// The stage on the master; `None` — none, and the sound is byte for byte what it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<ProgramStage>,
 }
 
 fn default_true() -> bool {
@@ -6247,6 +6254,8 @@ pub enum ProjectError {
     UnsupportedVersion(u32),
     #[error("invalid json: {0}")]
     Json(String),
+    #[error("the loudness target or the program stage is out of range")]
+    BadLoudness,
     #[error("clip {0:?}: duration must be positive")]
     NonPositiveDuration(ClipId),
     #[error("clip {0:?}: negative source_in")]
@@ -6569,6 +6578,12 @@ impl Project {
         self.tracks.iter().chain(self.sequences.iter().flat_map(|s| s.tracks.iter())).any(|t| t.sound.is_some())
     }
 
+    /// Whether the document names a loudness target or has a program stage (loudness-norms): the file
+    /// is then format 9.
+    pub fn has_program_loudness(&self) -> bool {
+        !self.loudness.is_default() || self.program.is_some()
+    }
+
     /// Whether a marker carries a note (marker-notes): the file is then format 5.
     pub fn has_marker_notes(&self) -> bool {
         self.markers.iter().any(|m| !m.note.is_empty())
@@ -6638,6 +6653,8 @@ impl Project {
             legacy_camera_lanes: 0,
             cameras: Vec::new(),
             areas: Vec::new(),
+            loudness: LoudnessTarget::default(),
+            program: None,
         }
     }
 
@@ -7125,6 +7142,8 @@ impl Project {
         let mut p = self.clone();
         p.swap_reel(seq);
         p.sequences.retain(|s| s.id != seq);
+        // a reel is not the program (loudness-norms D3)
+        p.program = None;
         Some(p)
     }
 
@@ -7554,6 +7573,9 @@ impl Project {
         }
         if self.settings.fps == 0 || kt_time::TICK_HZ % self.settings.fps as i64 != 0 {
             return Err(ProjectError::BadFps);
+        }
+        if !self.loudness.valid() || self.program.is_some_and(|g| !g.valid()) {
+            return Err(ProjectError::BadLoudness);
         }
         for c in self.reels().flat_map(|(_, r)| r.clips().iter()) {
             if c.geometry_pos > c.fx.len() {

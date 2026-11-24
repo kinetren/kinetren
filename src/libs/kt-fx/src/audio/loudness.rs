@@ -99,6 +99,20 @@ pub struct Loudness {
     pub lra: f64,
     /// True peak, dBTP.
     pub dbtp: f64,
+    /// Each channel on its own (render-loudness-norms, F-EXP-010): BS.1770 SUMS the channels'
+    /// energies, so a silent right channel measures only 3 LU quieter than a balanced mix — the
+    /// summed value hides it. Measured on the same samples, the audio is not touched.
+    pub channels: [ChannelLoudness; AUDIO_CHANNELS],
+}
+
+/// One channel of a [`Loudness`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChannelLoudness {
+    /// The channel's level over the blocks the SUMMED measurement's two gates kept (so the two
+    /// channels are compared over the same moments), LUFS; `None` — silent over them.
+    pub lufs: Option<f64>,
+    /// The channel's true peak, dBTP.
+    pub dbtp: f64,
 }
 
 /// Accumulator: fed with pieces of audio in any slicing order.
@@ -115,14 +129,19 @@ pub struct LoudnessMeter {
     steps: std::collections::VecDeque<[f64; AUDIO_CHANNELS]>,
     /// Mean squares of blocks (for gates and LRA).
     blocks: Vec<f64>,
+    /// The same blocks' mean squares per channel (unweighted), for `ChannelLoudness`.
+    blocks_ch: Vec<[f64; AUDIO_CHANNELS]>,
     /// Short blocks of 3 s for LRA.
     short_steps: std::collections::VecDeque<[f64; AUDIO_CHANNELS]>,
     short_blocks: Vec<f64>,
-    peak: f64,
-    /// Largest SAMPLE magnitude — gates the expensive interpolation.
-    sample_peak: f32,
-    /// How many frames to keep computing interpolation after a “large” sample.
-    tp_countdown: usize,
+    /// The true peak per channel (the summed one is their maximum).
+    peak: [f64; AUDIO_CHANNELS],
+    /// Largest SAMPLE magnitude per channel — gates the expensive interpolation. Per channel
+    /// (render-loudness-norms): a gate shared by the channels never let a much quieter channel
+    /// through, and its own true peak read as silence.
+    sample_peak: [f32; AUDIO_CHANNELS],
+    /// How many frames to keep computing interpolation after a “large” sample, per channel.
+    tp_countdown: [usize; AUDIO_CHANNELS],
     /// Tail for polyphase true-peak oversampling: a DOUBLED ring per channel (each sample written
     /// at `pos` and `pos + TP_TAPS`), so the last `TP_TAPS` samples, oldest first, are the slice
     /// `[pos, pos + TP_TAPS)` — no rotate of the tail per sample (kernel-specialization).
@@ -131,9 +150,9 @@ pub struct LoudnessMeter {
 }
 
 /// Length of the true-peak interpolator kernel per phase.
-const TP_TAPS: usize = 8;
+pub(crate) const TP_TAPS: usize = 8;
 /// Oversampling ×4 — the minimum required by BS.1770-4 for 48 kHz.
-const TP_OVER: usize = 4;
+pub(crate) const TP_OVER: usize = 4;
 /// Fraction of the largest sample from which interpolation is computed.
 /// 0.7 ≈ −3 dB: the inter-sample overshoot of a band-limited signal does not exceed
 /// the neighboring sample by more than about 1.5 dB, so the margin is threefold.
@@ -155,11 +174,12 @@ impl LoudnessMeter {
             frames_per_step: sr * STEP_MS / 1000,
             steps: std::collections::VecDeque::new(),
             blocks: Vec::new(),
+            blocks_ch: Vec::new(),
             short_steps: std::collections::VecDeque::new(),
             short_blocks: Vec::new(),
-            peak: 0.0,
-            sample_peak: 0.0,
-            tp_countdown: 0,
+            peak: [0.0; AUDIO_CHANNELS],
+            sample_peak: [0.0; AUDIO_CHANNELS],
+            tp_countdown: [0; AUDIO_CHANNELS],
             tp_ring: [[0.0; 2 * TP_TAPS]; AUDIO_CHANNELS],
             tp_pos: [0; AUDIO_CHANNELS],
         }
@@ -206,6 +226,11 @@ impl LoudnessMeter {
         }
         if self.steps.len() == BLOCK_MS / STEP_MS {
             self.blocks.push(block_power(&self.steps));
+            let mut ch = [0.0f64; AUDIO_CHANNELS];
+            for (c, v) in ch.iter_mut().enumerate() {
+                *v = self.steps.iter().map(|s| s[c]).sum::<f64>() / self.steps.len() as f64;
+            }
+            self.blocks_ch.push(ch);
         }
         // short block of 3 s — for LRA
         self.short_steps.push_back(mean);
@@ -235,18 +260,16 @@ impl LoudnessMeter {
         self.tp_ring[ch][pos + TP_TAPS] = x;
         self.tp_pos[ch] = (pos + 1) % TP_TAPS;
         let a = x.abs();
-        if a > self.sample_peak {
-            self.sample_peak = a;
+        if a > self.sample_peak[ch] {
+            self.sample_peak[ch] = a;
         }
-        if a >= self.sample_peak * TP_GATE {
-            self.tp_countdown = TP_TAPS;
+        if a >= self.sample_peak[ch] * TP_GATE {
+            self.tp_countdown[ch] = TP_TAPS;
         }
-        if self.tp_countdown == 0 {
+        if self.tp_countdown[ch] == 0 {
             return;
         }
-        if ch + 1 == AUDIO_CHANNELS {
-            self.tp_countdown -= 1;
-        }
+        self.tp_countdown[ch] -= 1;
         let from = self.tp_pos[ch];
         let tail = &self.tp_ring[ch][from..from + TP_TAPS];
         for phase in 0..TP_OVER {
@@ -254,7 +277,7 @@ impl LoudnessMeter {
             for (&s, k) in tail.iter().zip(table) {
                 acc += s as f64 * k[phase];
             }
-            self.peak = self.peak.max(acc.abs());
+            self.peak[ch] = self.peak[ch].max(acc.abs());
         }
     }
 
@@ -264,10 +287,21 @@ impl LoudnessMeter {
         if self.step_frames > 0 {
             self.close_step();
         }
-        let dbtp = if self.peak > 0.0 { 20.0 * self.peak.flog10() } else { -f64::INFINITY };
+        let to_db = |p: f64| if p > 0.0 { 20.0 * p.flog10() } else { -f64::INFINITY };
+        let dbtp = to_db(self.peak.iter().copied().fold(0.0, f64::max));
         let lufs = gated_lufs(&self.blocks);
         let lra = loudness_range(&self.short_blocks);
-        Loudness { lufs, lra, dbtp }
+        let kept = gated_blocks(&self.blocks);
+        let channels = std::array::from_fn(|c| {
+            let mean = if kept.is_empty() {
+                0.0
+            } else {
+                kept.iter().map(|&i| self.blocks_ch[i][c]).sum::<f64>() / kept.len() as f64
+            };
+            let l = power_to_lufs(mean);
+            ChannelLoudness { lufs: l.is_finite().then_some(l), dbtp: to_db(self.peak[c]) }
+        });
+        Loudness { lufs, lra, dbtp, channels }
     }
 }
 
@@ -301,6 +335,17 @@ fn gated_lufs(blocks: &[f64]) -> Option<f64> {
     Some(power_to_lufs(pass2.iter().sum::<f64>() / pass2.len() as f64))
 }
 
+/// The indices of the blocks both BS.1770 gates keep (the same selection as `gated_lufs`).
+fn gated_blocks(blocks: &[f64]) -> Vec<usize> {
+    let pass1: Vec<usize> = (0..blocks.len()).filter(|&i| power_to_lufs(blocks[i]) > ABS_GATE_LUFS).collect();
+    if pass1.is_empty() {
+        return pass1;
+    }
+    let prelim = power_to_lufs(pass1.iter().map(|&i| blocks[i]).sum::<f64>() / pass1.len() as f64);
+    let gate = prelim + REL_GATE_LU;
+    pass1.into_iter().filter(|&i| power_to_lufs(blocks[i]) > gate).collect()
+}
+
 /// LRA (EBU Tech 3342): the difference between the 95th and 10th percentiles of short blocks
 /// that passed the absolute −70 and relative −20 LU gates.
 fn loudness_range(short: &[f64]) -> f64 {
@@ -326,7 +371,7 @@ fn loudness_range(short: &[f64]) -> f64 {
 /// Polyphase interpolator kernel: Hann window on sinc. Computed once per
 /// (tap, phase) — the table is small, and the hot path has eight multiplications anyway. Fetched
 /// once per `feed`, not per tap.
-fn tp_table() -> &'static [[f64; TP_OVER]; TP_TAPS] {
+pub(crate) fn tp_table() -> &'static [[f64; TP_OVER]; TP_TAPS] {
     static TABLE: std::sync::OnceLock<[[f64; TP_OVER]; TP_TAPS]> = std::sync::OnceLock::new();
     TABLE.get_or_init(|| {
         let mut t = [[0.0f64; TP_OVER]; TP_TAPS];

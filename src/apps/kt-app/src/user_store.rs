@@ -685,6 +685,8 @@ pub struct StartChoice {
     pub controls_by_style: Vec<(u8, String)>,
     /// The style question was asked once (L1: on the first entry).
     pub controls_offered: bool,
+    /// The last pick of "Match loudness…" and its number (loudness-norms).
+    pub match_pick: Option<(u8, f64)>,
 }
 
 impl Default for StartChoice {
@@ -700,6 +702,7 @@ impl Default for StartChoice {
             controls: None,
             controls_by_style: Vec::new(),
             controls_offered: false,
+            match_pick: None,
         }
     }
 }
@@ -856,6 +859,9 @@ impl StartStore {
                 // a record without the key was written by an older build: that person has
                 // entered the program long ago, the first entry is behind them
                 controls_offered: v.get("controls_offered").and_then(|x| x.as_bool()).unwrap_or(true),
+                match_pick: v
+                    .get("match_pick")
+                    .and_then(|r| Some((r.get(0)?.as_u64()? as u8, r.get(1)?.as_f64()?))),
             };
         }
         s
@@ -965,6 +971,9 @@ impl StartStore {
             v["controls_by_style"] = serde_json::json!(self.start.controls_by_style);
         }
         v["controls_offered"] = serde_json::json!(self.start.controls_offered);
+        if let Some(p) = &self.start.match_pick {
+            v["match_pick"] = serde_json::json!(p);
+        }
         self.write(F_START, v);
     }
 
@@ -1071,6 +1080,13 @@ impl StartStore {
     pub fn set_persistent_cache(&mut self, mode: &str) {
         self.start.persistent_cache = Some(mode.to_string());
         self.save_start();
+    }
+
+    pub fn set_match_pick(&mut self, pick: u8, number: f64) {
+        if self.start.match_pick != Some((pick, number)) {
+            self.start.match_pick = Some((pick, number));
+            self.save_start();
+        }
     }
 
     /// The Layout & Controls style as its code, also remembered for its tile (rule 23).

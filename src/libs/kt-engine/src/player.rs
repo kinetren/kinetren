@@ -47,6 +47,9 @@ const PREFETCH_AUDIO_LOOKAHEAD_FRAMES: i64 = 2 * AUDIO_SAMPLE_RATE as i64; // 2 
 
 /// The part shared with the audio callback: ring + consumption counter + flush.
 pub struct AudioShared {
+    /// The program stage's deepest reduction since it was read, hundredths of a decibel (the stage's
+    /// light takes it with a swap).
+    pub program_cut: AtomicU32,
     /// Frames actually consumed by the callback (for advancing the playhead).
     pub consumed_frames: AtomicI64,
     /// A request to the callback to discard everything from the ring (after a seek).
@@ -310,6 +313,7 @@ impl Player {
         let cache = Arc::new(BurstCache::new(config));
         let transport = Arc::new(Transport::new());
         let shared = Arc::new(AudioShared {
+            program_cut: AtomicU32::new(0),
             consumed_frames: AtomicI64::new(0),
             flush: AtomicBool::new(false),
             callback_underruns: AtomicU64::new(0),
@@ -877,6 +881,10 @@ impl Player {
         });
         if missed {
             return None;
+        }
+        // a level, not a sound: the stage's gain and a clamp (loudness-norms D3)
+        if let Some(p) = crate::program::params(&self.builds.latest().project) {
+            p.clamp(&mut chunk);
         }
         let gain = self.master_gain();
         let mut pl = 0f32;
@@ -2528,7 +2536,8 @@ fn build_version(
             let facts = media.natives.read().unwrap().clone();
             let audio = Arc::new(AudioRenderer::new(project));
             let video = Arc::new(preview_video(project, &facts, cache));
-            crate::builds::Built { seq, version, project: project.clone(), audio, video, cost: Default::default() }
+            let sound = project.program.map(|_| crate::program::sound(project));
+            crate::builds::Built { seq, version, project: project.clone(), audio, video, sound, cost: Default::default() }
         })
     })));
     built.cost = cost;
@@ -2636,8 +2645,11 @@ fn audio_render_loop(ctx: RenderCtx) {
     // over before this thread started (a deferred opening, scheduler-followups D1) cleared its flag
     // above, so it is read here
     let (mut have, mut wanted) = (first.seq, builds.want_seq().max(first.seq));
+    let first_program = crate::program::PlayStage::new(crate::program::params(&first.project));
     drop(first);
     renderer.sync_fx(&mut store);
+    // the document's stage on the master (loudness-norms)
+    let mut program = first_program;
     // the final mix of what was heard (cached-range-plays): a covered range plays from it
     let mut mix = crate::mix::MixPlay::with_store(crate::mix::MixStore::with_budget(mix_coverage.budget.clone()));
     let mut mix_published = std::time::Instant::now();
@@ -2701,6 +2713,7 @@ fn audio_render_loop(ctx: RenderCtx) {
             let swap = std::time::Instant::now();
             let old = std::mem::replace(&mut renderer, b.audio.clone());
             have = b.seq;
+            program.ask(crate::program::params(&b.project));
             drop(b);
             // only what changed: the state survives a rebuild (inv. 3), and an event the
             // edit did not touch costs this thread nothing
@@ -2739,6 +2752,7 @@ fn audio_render_loop(ctx: RenderCtx) {
             store.reset_all(); // pre-roll at the next read
             render_head = transport.playhead_frames();
             mix.fx_reset(&renderer, render_head);
+            program.reset();
             shared.consumed_frames.store(0, Ordering::Release);
             flight.push(crate::flight::Ev::Seek, render_head, 0);
         }
@@ -2764,6 +2778,7 @@ fn audio_render_loop(ctx: RenderCtx) {
             store.reset_all();
             render_head = transport.playhead_frames();
             mix.fx_reset(&renderer, render_head);
+            program.reset();
             shared.consumed_frames.store(0, Ordering::Release);
             shared.flush.store(true, Ordering::Release);
         }
@@ -2795,6 +2810,7 @@ fn audio_render_loop(ctx: RenderCtx) {
             store.reset_all();
             render_head = transport.playhead_frames();
             mix.fx_reset(&renderer, render_head);
+            program.reset();
             shared.consumed_frames.store(0, Ordering::Release);
             shared.flush.store(true, Ordering::Release);
             starting = true;
@@ -2864,12 +2880,14 @@ fn audio_render_loop(ctx: RenderCtx) {
                         })
                     })
             };
+            // the program stage reads the mix a little ahead of the head
+            let lead = if dir > 0 { program.lead() } else { 0 };
             let look_now =
                 (PLAYBACK_AUDIO_LOOKAHEAD_FRAMES as f32 * rate_now.abs().max(1.0)) as i64;
             // request the nearest audio with Playback priority (idempotent);
             // in a loop we request via the wrap mapping
             match effective_region {
-                _ if held(render_head, look_now) => {}
+                _ if held(render_head, look_now + lead) => {}
                 Some((rs, re))
                     if re > rs && (if dir < 0 { render_head <= re } else { render_head >= rs }) =>
                 {
@@ -2954,8 +2972,9 @@ fn audio_render_loop(ctx: RenderCtx) {
             // a start waits until the bursts of a whole ring are there: the fill below is one
             // pass over all of it, and what is missing now would be silence, not a late burst.
             // Plus the look-ahead margin: the first refill reads just past the ring.
-            let audio_missing = starting && !held(render_head, RING_CAPACITY_FRAMES as i64) && {
+            let audio_missing = starting && !held(render_head, RING_CAPACITY_FRAMES as i64 + lead) && {
                 let ring = RING_CAPACITY_FRAMES as i64
+                    + lead
                     + (PLAYBACK_AUDIO_LOOKAHEAD_FRAMES as f32 * rate_now.abs().max(1.0)) as i64;
                 let wins: Vec<std::ops::Range<i64>> = if dir < 0 {
                     std::iter::once((render_head - ring).max(0)..render_head).collect()
@@ -3039,10 +3058,17 @@ fn audio_render_loop(ctx: RenderCtx) {
                         _ => renderer.render_frames_raw(&mut fetcher, start, &mut chunk),
                     };
                     reverse_frames(&mut chunk);
+                    program.clamp(&mut chunk);
                     render_head = start;
                     live_frames += AUDIO_BURST_FRAMES as u64;
                     st
                 } else {
+                    if program.wants_prime() {
+                        let mut ahead = [0f32; kt_fx::audio::program::LOOKAHEAD * AUDIO_CHANNELS];
+                        let st = mix.render(&renderer, &mut fetcher, &mut store, effective_region, render_head, &mut ahead);
+                        underruns.fetch_add(st.stats.underruns, Ordering::Relaxed);
+                        program.prime(&ahead);
+                    }
                     // through the final-mix store: a held chunk is handed out with no decode and
                     // no effect run; the rest renders live and is kept (cached-range-plays)
                     let out = mix.render(
@@ -3050,9 +3076,13 @@ fn audio_render_loop(ctx: RenderCtx) {
                         &mut fetcher,
                         &mut store,
                         effective_region,
-                        render_head,
+                        render_head + lead,
                         &mut chunk,
                     );
+                    let cut = program.process(&mut chunk);
+                    if cut > 0 {
+                        shared.program_cut.fetch_max(cut, Ordering::Relaxed);
+                    }
                     kt_time::work::bump(if out.replayed {
                         kt_time::work::Work::MixReplay
                     } else {

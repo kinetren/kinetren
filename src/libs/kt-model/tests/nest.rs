@@ -271,6 +271,10 @@ fn t426_sequence_does_not_lag_behind_the_root() {
         settings: _,
         media: _,
         sequences: _,
+        // the loudness of the DELIVERY and the stage on the master (loudness-norms): a reel is not
+        // the program
+        loudness: _,
+        program: _,
         // --- convenience and markup: live only in the root ---
         markers: _,
         areas: _,

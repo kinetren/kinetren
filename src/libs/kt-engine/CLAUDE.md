@@ -605,4 +605,9 @@ keeps the set asks nothing (t2127). The export prewarms its devices and waits (`
 
 - **What walks, sizes or counts stream stages goes over `streams_of(clip)`** (fx-graph-dag D2, t3228): a
   layer's own stage and its reads'. A read is linked (`link_stages`) and masked (`ClipMaskPlan::of_line`)
-  as the event whose chain is its line; the layer's own program drops the masks of the slots its reads run.
+  as the event whose chain is its line; the layer's own program drops the masks of the slots its reads run.- **The program stage stands at the OUTPUT, after the kept mix** (loudness-norms D3, `program.rs`): its
+  gain never enters `scene_hash`, a change of it drops no kept burst (t4202). It is fed the mix
+  `LOOKAHEAD` frames ahead (`PlayStage::lead`), primed after every reset of the render head; a new reset
+  of `render_head` in `audio_render_loop` resets it too. `render_raw_audio_range` takes it as an argument:
+  only an export gives the document's. A reel has none (`reel_document`, `reel_as_root` clear it).
+  `program::sound` is what is heard, not a revision; the builder counts it only where a stage exists.

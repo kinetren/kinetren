@@ -405,3 +405,8 @@ frozen form follow from `FxInstance::all()`; the semantic test — in geo_fuse (
   the content position of a zero-latency value (the chain input's); the caller reads the read's
   own line processor there. A Merge is `AudioNode::Merge`; with no Foreground it passes its
   Background, so a line holding a Merge sounds as before. Tests t3213–t3215.
+- **The program stage's kernel is `audio::program`** (loudness-norms): its detector is the METER's
+  interpolator (`loudness::tp_table`), so the limiter holds what the report measures; a change of the
+  table changes both and their tests (t2174, t4201). A frame is taken alone (the slicing changes
+  nothing), a signal under the inner ceiling passes to the bit, no allocation after `new`. The R.48
+  limiter effect is a SAMPLE-peak limiter: it holds no dBTP ceiling.

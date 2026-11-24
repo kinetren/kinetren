@@ -178,3 +178,9 @@ The whole walk, the axes and the numbers: `openspec/changes/archive/2026-11-08-b
   export, the probe renderer checked and unaffected; a fresh track chain ≠ a reset one (row 421); the
   list is in the archived change's design D4.
 
+
+## The program stage at the output (loudness-norms, 2026-11-25)
+
+A gain and a true-peak limiter on the master, the document's, absent until asked. After the kept mix, not in the
+renderer: a change of its gain drops no kept burst. The callers, the look-ahead, the kernel and what was rejected: the
+archived change `2026-11-25-loudness-norms` (D3, D4, D10).

@@ -1985,6 +1985,14 @@ impl KtApp {
                 ui.close();
             }
         }
+        if lk == LaneKind::Audio {
+            let r = ui.button(tr(k::loudness::MENU_MATCH));
+            crate::widgets::field_probe::note("track.menu.match", r.rect);
+            if r.clicked() {
+                self.open_match(self.audio_events_of(lane));
+                ui.close();
+            }
+        }
     }
 
     /// The CLIP row menu — one for the row header and for the track itself
@@ -6686,9 +6694,24 @@ impl KtApp {
                     }
                     ui.close();
                 }
-                if is_audio && ui.button(tr(k::tl::menu::RESET_GAIN)).clicked() {
-                    self.apply(Command::SetGain { id, gain_db: 0.0 });
-                    ui.close();
+                if is_audio {
+                    let r = ui.button(tr(k::loudness::MENU_MATCH));
+                    crate::widgets::field_probe::note("clip.menu.match", r.rect);
+                    if r.clicked() {
+                        if !self.is_selected(id) {
+                            self.select_only(id);
+                        }
+                        self.open_match(self.selected.iter().copied().collect());
+                        ui.close();
+                    }
+                }
+                if is_audio {
+                    let r = ui.button(tr(k::tl::menu::RESET_GAIN));
+                    crate::widgets::field_probe::note("clip.menu.reset_gain", r.rect);
+                    if r.clicked() {
+                        self.apply(Command::SetGain { id, gain_db: 0.0 });
+                        ui.close();
+                    }
                 }
                 // transitions (R.24): crossfade with the butted neighbour / remove
                 {

@@ -1,6 +1,6 @@
 # Proposal: loudness-norms
 
-> DESIGN ONLY (spec session), revision 3 (2026-11-24): re-read against stage 24's tree (`286c406c`), no open question.
+> Revision 3 (2026-11-24): re-read against stage 24's tree (`286c406c`), no open question.
 > Revision 2 (2026-11-22) followed the owner's answer (`kkt-26.11.20b` B6). Registry `v26.10-index.md` T14. Note
 > F-AUD-005; the report's note is the branch's F-EXP-009 renumbered at the merge. Tests: t3919–t3923, t3966, t4200–t4203; t3106, t3107 come with the branch
 > `render-loudness-norms`.

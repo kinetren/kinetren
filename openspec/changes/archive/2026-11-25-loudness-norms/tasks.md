@@ -1,6 +1,6 @@
 # Tasks: loudness-norms
 
-> DESIGN ONLY until the orchestrator's go; no open question. Revision 3. Tests: t3919–t3923, t3966, t4200–t4203; from
+> Revision 3. Tests: t3919–t3923, t3966, t4200–t4203; from
 > the branch t3106, t3107.
 
 ## 0. Notes
@@ -10,7 +10,7 @@
 
 ## 1. The unmerged half
 
-- [ ] 1.1 `git merge --no-ff render-loudness-norms` (53fe3a33, 6eec28ce; the orchestrator confirmed it 2026-11-24). It
+- [x] 1.1 `git merge --no-ff render-loudness-norms` (53fe3a33, 6eec28ce; the orchestrator confirmed it 2026-11-24). It
       brings t3106, t3107 and the live scenario `render_loudness`, its archived change `2026-11-18-render-loudness-norms`
       and its text in `openspec/specs/export/`. Six files conflict at `0c2a4065` (`git merge-tree` run there); the others
       merge by themselves:
@@ -23,31 +23,31 @@
     `python3 src/scripts/subset-fonts.py` over the merged catalogs (ours has 944 code points, theirs 939; the
     result is a new set). t125/t1283 and `font_tests.rs` say whether it is right.
   - `src/apps/kt-app/src/layout_tests.rs`: both sides appended at the end; keep ours whole and put `t3107` after it.
-- [ ] 1.2 Their note `docs/features/export/pipeline/render-loudness-report.md` is F-EXP-009, taken by `picture-check.md`:
+- [x] 1.2 Their note `docs/features/export/pipeline/render-loudness-report.md` is F-EXP-009, taken by `picture-check.md`:
       it becomes **F-EXP-010** in the note, the README row, t3107's comment, `render_loudness.py`, the archived change and
       `docs/ktprompts/v26.10-index.md`; `python3 src/scripts/features-index.py --check`
-- [ ] 1.3 What the merge cannot see: `Loudness` gains `channels` and the true-peak gate becomes per channel. Today it is
+- [x] 1.3 What the merge cannot see: `Loudness` gains `channels` and the true-peak gate becomes per channel. Today it is
       built in one place (`loudness.rs:270`); t2174 (`kernel_specialization.rs`) holds the bits of LUFS, LRA and dBTP and
       stays green as it is — a red there is a cause to find, not numbers to print again
 
 ## 2. Model and format
 
-- [ ] 2.1 `ProjectSettings.loudness`, `Project.program`, `SetLoudness`, `SetProgram`, the `sound` hash; format by content; t3966
+- [x] 2.1 `Project.loudness` (a field of the settings would touch 216 literals; the document's either way), `Project.program`, `SetLoudness`, `SetProgram`, the `sound` hash; format by content; t3966
 
 ## 3. Engine
 
-- [ ] 3.1 the kernel `kt_fx::audio::program`; t4201
-- [ ] 3.2 the stage at the player's output and in `render_raw_audio_range` (every caller of design D3's table); t3919, t4200, t4202, t407
-- [ ] 3.3 the jobs: program (two passes), events with short ones grouped; `AnalysisKind` and t774's lock by name; t3920, t4203
-- [ ] 3.4 the report against the project's target, the spans; t3921, t406
+- [x] 3.1 the kernel `kt_fx::audio::program`; t4201
+- [x] 3.2 the stage at the player's output and in `render_raw_audio_range` (every caller of design D3's table); t3919, t4200, t4202, t407
+- [x] 3.3 the jobs: program (two passes), events with short ones grouped; `AnalysisKind` and t774's lock by name; t3920, t4203
+- [x] 3.4 the report against the project's target, the spans; t3921, t406
 
 ## 4. Interface
 
-- [ ] 4.1 Project settings → Sound, "Match loudness…", the stage in the meters column, the report; kt-cli export's lines; i18n ×5; t3922, t3923; live `render_norms`
-- [ ] 4.2 the limiter effect's hint (sample peaks)
-- [ ] 4.3 the load check: playing the heavy showcase with the stage on, paused with it on (nothing)
+- [x] 4.1 Project settings → Sound, "Match loudness…", the stage in the meters column, the report; kt-cli export's lines; i18n ×5; t3922, t3923; live `render_norms`
+- [x] 4.2 the limiter effect's hint (sample peaks)
+- [x] 4.3 (release: 1.8 ms of a second of sound under the ceiling, 3.5 ms at +12 dB of noise; `idle` with `--program` green: a pause runs and wakes nothing) the load check: playing the heavy showcase with the stage on, paused with it on (nothing)
 
 ## 5. Close
 
-- [ ] 5.1 What's new; F-AUD-005's verdict; registry T14 and B6 moved; OTIO row "planned" → the change's date
+- [x] 5.1 What's new; F-AUD-005's verdict; registry T14 and B6 moved; OTIO row "planned" → the change's date
 - [ ] 5.2 `src/scripts/finish.sh` (orchestrator), version in the report

@@ -33,6 +33,10 @@ use kt_model::MediaId;
 pub enum AnalysisKind {
     /// Media loudness: LUFS, dBTP, LRA.
     Loudness(MediaId),
+    /// "Match the program" (loudness-norms): the whole edit's mix.
+    Program,
+    /// "Match loudness" of chosen events.
+    Clips,
 }
 
 impl AnalysisKind {
@@ -41,18 +45,27 @@ impl AnalysisKind {
     pub fn media(self) -> Vec<MediaId> {
         match self {
             AnalysisKind::Loudness(m) => vec![m],
+            // their staleness is the sound's own fingerprint, carried by the result
+            AnalysisKind::Program | AnalysisKind::Clips => Vec::new(),
         }
     }
 }
 
 /// Task result.
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum AnalysisOut {
     Loudness {
         media: MediaId,
         lufs: Option<f64>,
         dbtp: f64,
         lra: f64,
+    },
+    /// `None` — the mix is silent.
+    Program(Option<kt_model::ProgramStage>),
+    Clips {
+        matched: kt_engine::program::Matched,
+        /// What was heard when it was asked.
+        sound: u64,
     },
 }
 
@@ -90,6 +103,11 @@ impl Analysis {
     /// Completion fraction of the current task.
     pub fn progress(&self) -> f32 {
         self.running.as_ref().and_then(|(_, j)| j.progress).unwrap_or(0.0)
+    }
+
+    /// Whether a task waits for its turn.
+    pub fn waits(&self, k: AnalysisKind) -> bool {
+        self.queue.contains(&k)
     }
 
     pub fn queued(&self) -> usize {
@@ -336,10 +354,12 @@ mod sidechain_tests {
     /// is alive and still serves loudness.
     #[test]
     fn t774_no_ducking_job_in_the_queue() {
-        // compile lock: the only kind of offline analysis is loudness
+        // compile lock: the kinds of offline analysis are loudness and the two matches by name
+        // (loudness-norms)
         let k = AnalysisKind::Loudness(MediaId(1));
         match k {
             AnalysisKind::Loudness(m) => assert_eq!(m, MediaId(1)),
+            AnalysisKind::Program | AnalysisKind::Clips => unreachable!(),
         }
         assert_eq!(k.media(), vec![MediaId(1)], "volume still names its own media");
 

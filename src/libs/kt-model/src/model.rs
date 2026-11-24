@@ -6,6 +6,7 @@
 //! TimelineEditor, where push went before the checks).
 
 use crate::genmedia::GeneratorKind;
+use crate::loudness::{LoudnessTarget, ProgramStage};
 use crate::project::*;
 use crate::published::*;
 use kt_time::{Tick, TickRange};
@@ -761,6 +762,14 @@ pub enum Command {
     SetSettings {
         settings: ProjectSettings,
     },
+    /// The document's loudness target (loudness-norms).
+    SetLoudness {
+        target: LoudnessTarget,
+    },
+    /// The document's program stage; `None` — none.
+    SetProgram {
+        stage: Option<ProgramStage>,
+    },
     /// Morpher (v1 port). Unlike v1, ALL operations are undo-able (defect D6).
     AddMorpher(MorpherEvent),
     RemoveMorpher {
@@ -1033,6 +1042,8 @@ impl Command {
             | Command::SetMediaPath { .. }
             | Command::RemoveMedia { .. }
             | Command::SetSettings { .. }
+            | Command::SetLoudness { .. }
+            | Command::SetProgram { .. }
             | Command::SetTrimStretchesAuto { .. }
             | Command::AddMarker { .. }
             | Command::RemoveMarker { .. }
@@ -1116,6 +1127,8 @@ impl Command {
             | Command::SetTrackFxOff { .. }
             | Command::RemoveMedia { .. }
             | Command::SetSettings { .. }
+            | Command::SetLoudness { .. }
+            | Command::SetProgram { .. }
             | Command::AddMorpher(_)
             | Command::RemoveMorpher { .. }
             | Command::SetMorpher(_)
@@ -1368,6 +1381,8 @@ impl Band {
                 | Command::SetMarkerDuration { .. }
                 | Command::RemoveMedia { .. }
                 | Command::SetSettings { .. }
+                | Command::SetLoudness { .. }
+                | Command::SetProgram { .. }
                 | Command::AddMorpher(_)
                 | Command::RemoveMorpher { .. }
                 | Command::SetMorpher(_)
@@ -1577,6 +1592,8 @@ impl TimelineModel {
         let mut p = self.project.clone();
         if let Some(cur) = self.editing {
             p.sequences.retain(|s| s.id != cur);
+            // a reel opened for editing is not the program (loudness-norms D3)
+            p.program = None;
         }
         p
     }
@@ -2424,6 +2441,16 @@ impl TimelineModel {
                     return Err(CommandError::IdInUse(*first_id));
                 }
             }
+            Command::SetLoudness { target } => {
+                if !target.valid() {
+                    return Err(CommandError::InvalidClip(ProjectError::BadLoudness));
+                }
+            }
+            Command::SetProgram { stage } => {
+                if stage.is_some_and(|g| !g.valid()) {
+                    return Err(CommandError::InvalidClip(ProjectError::BadLoudness));
+                }
+            }
             Command::SetSettings { settings } => {
                 if settings.fps == 0 || kt_time::TICK_HZ % settings.fps as i64 != 0 {
                     return Err(CommandError::InvalidClip(ProjectError::BadFps));
@@ -2987,6 +3014,8 @@ impl TimelineModel {
                 Self::clip_mut_on(p, id).overrides.retain(|x| x.pub_id != pub_id);
             }
             Command::SetSettings { settings } => p.settings = settings,
+            Command::SetLoudness { target } => p.loudness = target,
+            Command::SetProgram { stage } => p.program = stage,
             Command::AddMorpher(mut m) => {
                 p.ensure_tracks(LaneKind::Morph, m.lane + 1);
                 sync_pairs_in_patch(&mut m.patch, None);

@@ -72,6 +72,9 @@ mod meters;
 mod morpher_editor;
 mod graph_layout;
 mod node_editor;
+mod program_ui;
+#[cfg(test)]
+mod program_tests;
 mod project_lock;
 mod plugins;
 mod pubparam;

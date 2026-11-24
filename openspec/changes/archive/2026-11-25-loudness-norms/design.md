@@ -1,6 +1,6 @@
 # Design: loudness-norms
 
-> DESIGN ONLY, revision 3 (2026-11-24), base `286c406c`. Revision 2 (2026-11-22, the owner's B6) put the norm in the
+> Revision 3 (2026-11-24), base `286c406c`; built 2026-11-25, what differs is D10. Revision 2 (2026-11-22, the owner's B6) put the norm in the
 > project; revision 1 in the render settings. What revision 3 corrected is D8.
 
 ## Context
@@ -139,6 +139,24 @@ project the preview always plays what is delivered, so the switch has no work. I
   1 LU; the line "measured before the codec"; a red row is a line of the render log too;
 - `kt-cli export` prints the same rows.
 Not taken: a memo of the measurement (the stage stores it), a −14 factory render preset, the target as render keys.
+
+## D10. As built
+
+- The target and the stage are fields of `Project`, not of `ProjectSettings` (216 literals of it); `swap_reel` leaves
+  both, `reel_document` and `reel_as_root` clear the stage.
+- `LOOKAHEAD` is 80 frames: a box of 72 and the interpolator's 8, and the reduction is held 88 — found by asking which
+  samples a peak was computed from. t4201 was green with it at the first run; the noise at +12 dB reads −1.1 dBTP.
+- A stage taken away while it plays stays as a plain delay until the next seek: the head does not jump by 1.7 ms.
+- `measured` carries the target, the ceiling and the gain it was found for: "changed since measured" covers another
+  target and a hand-moved gain, and "the limiter holds back" is said only of the state that was measured.
+- `sound` takes a media's path and not its length: the length is read anew when the file opens (t3923 found it).
+- An event's level has at most +6.02 dB: what the match cannot reach is named ("the level has no more travel").
+- A missing file refuses the match by name: a placeholder is silence, and the number would be of another mix.
+- The match needs no window of its own per kind: one dialog, its last pick in the store.
+- Clipped samples are not a finding of their own: the true peak over the ceiling is at each of them.
+- 4.2: no parameter has a hint of its own, so the limiter effect's row says it in its name ("Sample-peak ceiling").
+- The program window opened fitted to its content without a stage and did not grow when the stage came: its gain and
+  the "changed" line lay under the fold. Found by the live scenario; it has a size of its own, and the scenario asks.
 
 ## Rejected
 

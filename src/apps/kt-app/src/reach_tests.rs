@@ -2707,6 +2707,8 @@ const WINDOWS: &[(&str, &str)] = &[
     ("track_window", "object track: name, level, switches, chain and ducking"),
     ("env_fit", "field matching on envelope paste — a question that must be answered before the paste"),
     ("project_settings", "project settings: frame size, frame rate, alignment rule"),
+    ("kt_program", "the stage on the master: its gain, what was measured, Match the program — it is watched while the edit plays, and the meters column is 64 points wide (loudness-norms)"),
+    ("kt_match_loudness", "what the chosen events are: dialogue, music, effects or a number — answered before their levels move (loudness-norms)"),
     ("kt_render_settings", "export parameters: filled in before the start and checked at once"),
     ("kt_render_progress", "export progress: it runs for minutes and can be cancelled"),
     ("kt_analysis", "progress of background analyses — the same for loudness, sync and ducking"),
@@ -3034,6 +3036,10 @@ pub(crate) fn window_openers() -> Vec<(&'static str, OpenWin, Closes)> {
             app.open_track_window(id);
         }), Closes::Action),
         ("project_settings", OpenWin::By(|h| h.state_mut().open_project_settings()), Closes::Action),
+        ("kt_program", OpenWin::By(|h| h.state_mut().program_win = true), Closes::Action),
+        ("kt_match_loudness", OpenWin::By(|h| {
+            h.state_mut().match_win = Some(crate::program_ui::MatchWin { ids: vec![ClipId(1)], pick: 0, number: -14.0 });
+        }), Closes::Action),
         ("kt_notices", OpenWin::By(|h| h.state_mut().notices_open = true), Closes::Titlebar { title: || crate::i18n::tr(crate::i18n::k::win::NOTICES_TITLE).to_string(), why: "the message log is closed by the title cross: the list has no action of its own" }),
         ("kt_search", OpenWin::By(|h| h.state_mut().search_open = true), Closes::Titlebar { title: || crate::i18n::tr(crate::i18n::k::win::SEARCH_TITLE).to_string(), why: "search is closed by the title cross: the list of finds lives as long as one walks through it" }),
         ("kt_diag", OpenWin::By(|h| h.state_mut().perf.diag_open = true), Closes::Titlebar { title: || crate::i18n::tr(crate::i18n::k::win::DIAG_TITLE).to_string(), why: "diagnostics is closed by the title cross: it is a developer window with no actions" }),
