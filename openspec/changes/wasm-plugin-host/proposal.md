@@ -1,7 +1,7 @@
 # Proposal: wasm-plugin-host
 
-> DESIGN ONLY (spec session, 2026-11-20). Registry `v26.10-index.md` P1–P6 (no). Note F-EXT-003 (refreshed). Stage 2
-> of `plugin-api-stage1` (its D10: built-in → wasm → dlopen/OpenFX). Tests reserved: t3957–t3963.
+> IMPLEMENTATION-READY (spec-engine, revision 2, 2026-11-25, orch `fc60a5d9`; written 2026-11-20). Registry `v26.10-index.md` P1–P6 (no). Note F-EXT-003 (refreshed). Stage 2
+> of `plugin-api-stage1` (its D10: built-in → wasm → dlopen/OpenFX). Tests: t3957–t3963, t4151, t4152.
 
 ## Why
 
@@ -23,16 +23,17 @@ Stage 1 moved every picked effect, transition and generator into plugin crates a
   by its id as a built-in kind.
 - **The same kernels**: an audio kernel's block runs inside the module (f32 48 kHz stereo in, out; its state lives in
   the module's memory, touched only by the render thread); a generator's frame and tone; a transition's numbers; a
-  video kernel gives its WGSL passes as text (validated by the same shader compiler, run on the one GPU path) and a
-  CPU reference in the module for the tests (Q2).
+  video kernel gives its WGSL passes as text (validated by the same shader compiler, run on the one GPU path); the module only
+  gives its numbers (Q2; a pixel reference on the processor was dropped for built-in effects too).
 - **A sandbox that is a property, not a promise**: the module imports only what the host gives — no clock, no files,
   no network; a trap (a panic, an out-of-bounds read) is caught, the plugin's kind is switched off with a notice
   naming it, and the project keeps playing with that slot bypassed; a block that runs past its budget is stopped the
-  same way (fuel). Determinism: the module is pure and its floats are wasm's (IEEE, no fast-math), so the same bytes
+  same way (fuel, counted in instructions, not in time). A new package first meets a throwaway process of our own (a trial), so a
+  shader that never ends cannot take the window's device. Determinism: the module is pure and its floats are wasm's (IEEE, no fast-math), so the same bytes
   on every machine.
 - **A plugin SDK for Rust**: a crate `kt-plugin-sdk` (the passport macros and kernel traits re-exported for
   `wasm32-unknown-unknown`) and a template, so "write in Rust, build, run" is `cargo build --target wasm32` and a
-  drop into the library.
+  drop into the library. An installed plugin works from the next start.
 - **Plugins are library items**: a plugin is installed, updated and removed through the library of downloads (change
   `download-library`, kind `plugin`), or added from a file ("Add a plugin…"); a project that names a plugin the
   machine lacks keeps its bytes (`Missing`, as today) and the Library offers it.
@@ -54,7 +55,8 @@ Stage 1 moved every picked effect, transition and generator into plugin crates a
   kt-app/kt-cli install the wasm host after the built-ins.
 - New crate `kt-plugin-sdk` (no host code; builds for wasm32), a template under `src/plugins/template-wasm`.
 - kt-gpu: shader text from a plugin goes through the existing naga validation and pipeline cache.
-- The binary grows by the runtime (Q1); no libav link changes.
+- The binary grows by the runtime (Q1; measured by the executor on the dist build); no libav link changes. wasmtime's signal handlers are off: the crash report's
+  handlers stay the only ones.
 - Idle: a loaded plugin does nothing until a frame or block needs it.
 
 ## Questions to the owner
