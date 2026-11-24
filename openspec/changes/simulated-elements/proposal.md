@@ -1,6 +1,6 @@
 # Proposal: simulated-elements
 
-> DESIGN ONLY (spec session), revision 3 (2026-11-24; revision 2 of 2026-11-23) after the owner's answer to Q56 (`kkt-26.11.22` D3): not a
+> IMPLEMENTATION-READY (revision 4, 2026-11-25, orch `fc60a5d9`; revision 2 of 2026-11-23) after the owner's answer to Q56 (`kkt-26.11.22` D3): not a
 > letter-physics animator but a COMPOSITING SYSTEM in which the parts of a picture are objects with simulated state,
 > and a walk of the whole program for where it applies. Revision 1 was `text-letter-physics` (a title's Physics
 > animator). Registry `v26.10-index.md` F2; notes F-FX-005 (physics), F-FX-006 (particles). Tests reserved:

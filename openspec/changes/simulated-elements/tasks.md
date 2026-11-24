@@ -1,9 +1,7 @@
 # Tasks: simulated-elements
 
-> DESIGN ONLY until the orchestrator's go; no open question. Engine contract (D10, D12) reviewed with spec-engine at
-> `d613b228`, anchors re-checked at `5986f08e` (D13–D18). Tests: t3968–t3973, t3983–t3992, t4107. Depends on
-> `durable-moment-key` (one key function) and `motion-driven-params` (the outer map's channels, D13 `Outer`); the tracker home of a mask works when `point-tracker`
-> is in (a link to its samples), and is not needed to build this.
+> IMPLEMENTATION-READY (revision 4, 2026-11-25, orch `fc60a5d9`: design D19); no open question. Tests: t3968–t3973, t3983–t3992, t4107. After `motion-driven-params` (`OuterPath`) and `shared-events`; better after `track-stream-stage` 1.2 (`Look`), else it brings its own probe form. Areas: new `kt-sim`, kt-plugin-api, MODEL (**v+**), the plan (`video.rs`,
+> `video_plan.rs`, `moment_key.rs`), GPU (a sprite op), PLAYER (a thread), SHELL. Five sessions: A1 (1, 3), A2 (2.1, 2.3, 2.4, 4.2), A3 (2.2, 2.5, 4.1), A4 (2.6, 4.3), A5 (5, 6); a merge after each. The tracker home of a mask works when `point-tracker` is in and is not needed to build this.
 
 ## 0. Notes
 
@@ -21,8 +19,8 @@
 
 ## 2. In the plan (kt-engine, kt-gpu) — design D10, D12
 
-- [ ] 2.1 plan-side sets: `layer_src` (`video.rs:2497`) asks `Sim::state_at` and writes simulated numbers into
-      `LayerSrc.masks` (`video_plan.rs:118`) and the sub-plan transforms; the `SimKey` joins the per-event memo key
+- [ ] 2.1 plan-side sets: `layer_src` asks `Sim::state_at` and writes simulated numbers into
+      `LayerSrc.masks` and the sub-plan transforms; the `SimKey` joins the per-event memo key
       (`incremental.rs`, t2004); zero cost without sets; t3969, t3971, t3987
 - [ ] 2.2 source-side producers draw only what does not move (design D12.1): the title's glyph atlas (one sprite per
       cluster, `GeneratorSource`, `kt-media/src/generator.rs:169` `render_at`), the emitter's sprite; the poses of
@@ -31,7 +29,7 @@
       keeps salt 0 and its bytes; t4107
 - [ ] 2.3 catch-up: the player's `sim` thread (class `near`, joined through `kt_time::shutdown`); `layer_src` calls
       `state_at` with a small budget and on `Behind` notes `note_sim_short` beside `note_stream_short`
-      (`video.rs:2399`); the worker never steps; `render_ahead::Waits` on `sim::walked`; `Sim::preroll` in both export
+      ; the worker never steps; `render_ahead::Waits` on `sim::walked`; `Sim::preroll` in both export
       bodies; t3986
 - [ ] 2.4 the key `SimKey(t)` over the drivers' prefix [origin, t] (design D12.2, the table of D16); sound not analysed
       answers `Behind` (t3992); the plan and the probe hash

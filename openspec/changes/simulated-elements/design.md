@@ -1,6 +1,6 @@
 # Design: simulated-elements
 
-> DESIGN ONLY, revision 2 (2026-11-23), base `e7b19346`: the owner's D3 — an architecture, not an animator. Revision 1
+> IMPLEMENTATION-READY (revision 4, 2026-11-25): D19 re-reads the contract against orch `fc60a5d9`; where it differs from D1–D18, D19 holds. The owner's D3 — an architecture, not an animator. Revision 1
 > (`text-letter-physics`, 2026-11-22) was a title's Physics animator; its physics survives as the first application
 > (D8). Q1–Q2 decided by the owner's own words (`proposal.md` "Decided"). D13–D18 (2026-11-24, orch `5986f08e`) close
 > what an implementer would have had to invent: the model, the origin under cuts, the key of each driver, the frame of
@@ -465,6 +465,30 @@ over the first letter's fill. So:
   and a section in a window): reel layers (9), transition pieces (11), the camera and Geometry (12), the reactive bars
   (14), lens drops (8, from the emitter), a link reading a pose, word effects (2) and subtitle words (3) with their
   changes, the tracker, the magic wand and 3D planes (5, 6, 13) after the changes that build their producers.
+
+## D19. Re-read against orch `fc60a5d9` (spec-engine, 2026-11-25)
+
+Names decide; every line number above has moved.
+
+1. **One key function, one builder.** `kt_engine::moment_key` (`put_src`) and the probe/full pair are one text: `plan_key`, `durable_hash`, `note_leaf` and t2981 of D10–D12 are gone. With `track-stream-stage`'s `Look` (names instead of frames) a set is keyed by `Sim::key_only` as a stream stage by its kernel: `Look::Names` never steps.
+2. **Where the key enters.** Not through `fx_hash` and not through the evaluated numbers:
+   - `LayerSrc.sims: SmallVec<(set id, SimKey(t))>`, hashed by `put_src` when not empty, with `t` as an offset from the event's start;
+   - `MaskOp` gains `sim: bool`; `put_src` hashes a simulated mask's static part (mode, feather, opacity, its id) and not its vertices: a probe has none. The other masks are hashed as today;
+   - the sprite op (letters, particles) hashes nothing of its poses: the key above and the atlas's leaf say them.
+   `picture_key` (cached-final-render) hashes the same; a simulated moment keeps its place (the path's placements are in `SimKey`), so it is not reused after a ripple, as a stream stage is not. Said there.
+3. **The outer clock and the path** are `motion-driven-params`' `OuterPath` (its D2): `PlanCtx.outer`, set for every reel's sub-plan. A set's state is asked with (its owner, the path); the origin through instances (D14) walks the path's maps back with their first crossing (`OuterPath::first`). A frozen instance goes on
+   simulating: the clock is the outer time (letters settle while the composition stands), and a held frame (`FrameHold`) stops by `SimSpan.stop`. `SimKey` hashes each map's prefix by its own time (D16).
+4. **The budget of a plan is steps, not time**: `layer_src` may advance a set by at most 200 000 element-steps in one plan (4 ms at 20 ns); past it the answer is `Behind`. No clock steers a plan. Offline there is no budget.
+5. **Who advances.** The `sim` thread walks `VideoRenderer::sims_at(t)` (the active layers' sets through the reels with their paths, beside `streams_at`), the shown moment first, then ahead: `now` for the moment on screen, `near` for the rest; it parks with no clock (an edit, a seek, Play, a build wake it) and registers in
+   `rest` (rest-is-said D1). `render_ahead::Waits`, the Loading line, `BenchReport` take its count beside the stream's.
+6. **Every offline plan** pre-rolls (`Sim::preroll(t)` over `sims_at`): both exports, at the first frame of EVERY rendered span (cached-final-render D8), reel strips, posters, effect cells, `kt-cli`. A missing pre-roll is an incomplete frame, never rest poses.
+7. **A read** (a time kind in an arm) is a line of the same event: its masks' sets are the event's, evaluated at the read's moment. A track's masks have no sets (no curves). A 3D group's member (`real-3d-groups`) is a layer like any.
+8. **The memory ledger**: tenants are 0–7 today; `Sim` takes the next number at the merge. Its account is the process's; a project's close drops its simulations.
+9. **The title's face** (found-defects 837, `download-library` 4.1): the atlas's identity carries what the family resolved to, as the title's own does; the atlas is another address of the same `GenState` (D17).
+10. **The sprite op in the plan** is `LayerInput::Sprites { atlas: Option<Arc<VideoFrame>>, leaf, table, layers, poses: Arc<[SpritePose]> }`; the executor draws it into the layer's canvas (D17's passes A, S, B) and the chain goes on as over any input. `starved()`: no atlas, or an atlas of another identity. Pass A's target is `Rg8Unorm` with MAX blending:
+    with `real-3d-groups` the second place with blending; the rule of kt-gpu's `CLAUDE.md` names both.
+11. **`shared-events`** makes events shared pointers: `ClipEvent.sets` is a field like `masks`; the per-event derive key (`incremental`) takes its static part.
+12. **Sizes of the work**, each an executor's session: A1 the system (`kt-sim`, the family, the model, the format: sections 1 and 3), A2 masks in the plan with the thread and the keys (2.1, 2.3, 2.4, 4.2), A3 sprites and letters (2.2, 2.5, 4.1), A4 the emitter (2.6, 4.3), A5 the interface (5). A2 is useful alone and is merged before A3.
 
 ## Rejected
 
