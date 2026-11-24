@@ -974,3 +974,30 @@ of the selected segments are the key selection, "а еще можно шифто
 - **THEN** the keys selected are 1, 2, 3, then 1, 3; the drag moves 1 and 3 together and leaves 2; the sweeps leave the first segment, then the first and the last; the plain click leaves nothing selected
 - **PATH** Ctrl+click a segment → Shift+click the next key, it turns white → Shift+click the segment's right key, it turns back to colour → pull a white key, both whites move → sweep empty space over the first segment → Shift+sweep over the last, both tinted → click another key, the tint goes off
 - **TEST** t3115 (`src/apps/kt-app/src/segfield_tests.rs`), live scenario `src/scripts/live/curve_keys.py` (`./scripts/live-check.sh`)
+
+### Requirement: An address of an effect slot follows the slot
+When an edit moves, inserts or removes slots of an event's chain, every address of those slots SHALL
+name the effect it named before, in the same undo step: a reel's published parameter (a slot, a slot's
+mask), and a link's text in any curve of any event of the reel (effect, generator, geometry, mask and
+override curves; a link's `self` is its own event, an override's `self` the published parameter's event). A
+removed leader SHALL free its followers (their own keys, or the base value) and drop its publications with
+the instances' values of them. The model's own removals (a pair's mirrored device half or speed) and a
+window's Cancel SHALL obey the same rule. A chain edit SHALL hand the map (`MapFxSlots`) in one batch with
+its slots.
+Why: found-defects 906 — a drag, a cross or a branch bound a handle or a link to another effect, silently.
+
+#### Scenario: A move, an insertion and a removal
+- **WHEN** a reel's glow is published, leads another event's blur and a mask's row, and an instance's value of it is led by the event's vignette; the glow is moved to the front, a slot is inserted before it, then the glow is removed; each step undone
+- **THEN** every address names the same effect after the move and the insertion; after the removal the followers are free, the handle and the instance's value are gone, the vignette's addresses follow it; one undo gives each back
+- **TEST** t3244, t3247 (`src/libs/kt-model/tests/slot_addr.rs`)
+
+#### Scenario: The model removes a slot itself
+- **WHEN** the sound half of a pair's tape, then its speed, is removed while a third event is led by the picture's glow and the glow's slot has a mask
+- **THEN** the link, the mask and the Geometry's place follow the glow
+- **TEST** t3246 (`src/libs/kt-model/tests/slot_addr.rs`)
+
+#### Scenario: In the effects window
+- **PATH** an event with Blur, Glow, Vignette and another event whose blur is led by the Glow's strength → in the first event's effects window drag Glow onto Blur → the other event still follows the Glow → start a branch from Geometry → still the Glow → Cancel → the chain and the link as they were → the cross of Glow → the follower is free
+- **WHEN** the person moves, branches, cancels and removes in the node editor
+- **THEN** the link names the Glow's number after each, Cancel restores the slots and the link together
+- **TEST** t3245 (`src/apps/kt-app/src/node_editor_tests.rs`)

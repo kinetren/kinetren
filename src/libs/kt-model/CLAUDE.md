@@ -736,3 +736,8 @@ what the model holds costs nothing. A new mutation path that writes the canon mu
   by slot address over one or two lanes, `settle` gives the order (the Output last), `wiring` the stored
   list (t3296). A Merge's class and lane are its MODE's (`MergeMode::is_sound`, t3298).
 - The file is format 8 by content (`has_fx_graph`). Tests t3209–t3210, t3222–t3224.
+
+- **An edit that moves an event's effect slots sends `MapFxSlots` in its batch** (found-defects 906,
+  `slot_addr.rs`): published parameters and links address a slot by number. Last in the batch when the
+  lists beside it were taken before the move, first when they are an earlier state's own (Cancel). A model
+  function that removes a slot calls `slot_addr::remap` and `slot_gone`.

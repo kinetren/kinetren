@@ -225,7 +225,8 @@ fn sync_warp_to_link_group(p: &mut Project, id: ClipId) {
             }
             // it disappeared from one — we remove it from the partner along with its curves
             (Some(j), None) => {
-                crate::fx_graph::remove_slot(&mut c.fx_in, c.fx.len(), j);
+                let n = c.fx.len();
+                crate::fx_graph::remove_slot(&mut c.fx_in, n, j);
                 c.fx.remove(j);
                 if j < c.fx_auto.len() {
                     c.fx_auto.remove(j);
@@ -233,9 +234,23 @@ fn sync_warp_to_link_group(p: &mut Project, id: ClipId) {
                 if j < c.fx_bypass.len() {
                     c.fx_bypass.remove(j);
                 }
+                slot_gone(c, j);
+                crate::slot_addr::remap(p, pid, &crate::slot_addr::without(n, j));
             }
             (None, None) => {}
         }
+    }
+}
+
+/// What of an event follows a slot the MODEL removed from its chain: the slot's masks and the leading
+/// Geometry node's place (its curves, switch and wires are the remover's).
+fn slot_gone(c: &mut ClipEvent, i: usize) {
+    if i < c.masks.slots.len() {
+        c.masks.slots.remove(i);
+    }
+    c.masks.canonicalize();
+    if c.geometry_pos > i {
+        c.geometry_pos -= 1;
     }
 }
 
@@ -266,16 +281,15 @@ fn sync_pairs_to_link_group(p: &mut Project, id: ClipId) {
         .collect();
     for pid in partners {
         let Some(c) = p.clips.iter_mut().find(|c| c.id == pid) else { continue };
+        let mut n = c.fx.len();
         let removed = mirror_halves(&mine, &mut c.fx, &mut c.fx_auto, &mut c.fx_bypass, &mut c.fx_in);
-        for i in removed {
-            if i < c.masks.slots.len() {
-                c.masks.slots.remove(i);
-            }
-            if c.geometry_pos > i {
-                c.geometry_pos -= 1;
-            }
+        for i in &removed {
+            slot_gone(c, *i);
         }
-        c.masks.canonicalize();
+        for i in removed {
+            crate::slot_addr::remap(p, pid, &crate::slot_addr::without(n, i));
+            n -= 1;
+        }
     }
 }
 
@@ -604,6 +618,14 @@ pub enum Command {
         id: ClipId,
         masks: crate::mask::EventMasks,
     },
+    /// The event's effect slots moved (found-defects 906): `to[old]` — the new number of each slot of the
+    /// chain as it stands, `None` — gone. Moves every ADDRESS of them (published parameters, links) and
+    /// nothing else. It stands LAST in its batch when the lists sent with it were taken before the move (they
+    /// carry links in the old numbers too), and first when they are an earlier state's own.
+    MapFxSlots {
+        id: ClipId,
+        to: crate::slot_addr::SlotMap,
+    },
     /// The event chain's wiring (fx-graph-dag D1): a full replacement, canonical on apply. A gesture
     /// that moves slots sends it with `SetFx` in one batch; the batch's validation sees both.
     SetFxIn {
@@ -899,6 +921,7 @@ impl Command {
             | Command::SetFxAuto { id, .. }
             | Command::SetMasks { id, .. }
             | Command::SetFxIn { id, .. }
+            | Command::MapFxSlots { id, .. }
             | Command::SetClipGen { id, .. }
             | Command::SetClipGenAuto { id, .. }
             | Command::UnlinkClip { id }
@@ -953,6 +976,7 @@ impl Command {
             | Command::SetFxAuto { id, .. }
             | Command::SetMasks { id, .. }
             | Command::SetFxIn { id, .. }
+            | Command::MapFxSlots { id, .. }
             | Command::SetClipGen { id, .. }
             | Command::SetClipGenAuto { id, .. }
             | Command::UnlinkClip { id }
@@ -1069,6 +1093,7 @@ impl Command {
             | Command::SetFxAuto { .. }
             | Command::SetMasks { .. }
             | Command::SetFxIn { .. }
+            | Command::MapFxSlots { .. }
             | Command::ApplyGenToAll { .. }
             | Command::SetGenSound { .. }
             | Command::LinkClips { .. }
@@ -1325,6 +1350,7 @@ impl Band {
                 | Command::SetFxAuto { .. }
                 | Command::SetMasks { .. }
                 | Command::SetFxIn { .. }
+                | Command::MapFxSlots { .. }
                 | Command::SetClipGen { .. }
                 | Command::SetClipGenAuto { .. }
                 | Command::ApplyGenToAll { .. }
@@ -1754,7 +1780,13 @@ impl TimelineModel {
     /// one undo entry (live editing of FX parameters from the window). `Ok(false)`: the command
     /// changed nothing and was not taken as an edit.
     pub fn apply_coalesced(&mut self, cmd: Command, gesture: u64) -> Result<bool, CommandError> {
-        let scratch = self.simulate(std::slice::from_ref(&cmd))?;
+        self.apply_batch_coalesced(vec![cmd], gesture)
+    }
+
+    /// `apply_coalesced` of several commands that only make sense together (a chain edit that moves slots
+    /// and their addresses): all or none, one gesture token.
+    pub fn apply_batch_coalesced(&mut self, cmds: Vec<Command>, gesture: u64) -> Result<bool, CommandError> {
+        let scratch = self.simulate(&cmds)?;
         // an equal value written again is no edit (input-without-work): a frame of a window
         // that re-sends what the model holds must not end in an undo step or a rebuild
         if scratch == self.project {
@@ -1766,7 +1798,7 @@ impl TimelineModel {
         }
         self.project = scratch;
         for b in &mut self.bands {
-            b.after_batch(std::slice::from_ref(&cmd));
+            b.after_batch(&cmds);
         }
         self.bands.retain(|b| self.project.clips.iter().any(|c| c.id == b.inst));
         self.rebuild_bench();
@@ -2000,6 +2032,9 @@ impl TimelineModel {
                 let c = find(*id)?;
                 crate::check_event_masks(*id, c.kind, c.fx.len(), masks)
                     .map_err(CommandError::InvalidClip)?;
+            }
+            Command::MapFxSlots { id, .. } => {
+                find(*id)?;
             }
             Command::SetFxIn { id, fx_in } => {
                 let c = find(*id)?;
@@ -2751,6 +2786,7 @@ impl TimelineModel {
                     t.masks = masks;
                 }
             }
+            Command::MapFxSlots { id, to } => crate::slot_addr::remap(p, id, &to),
             Command::SetFxIn { id, mut fx_in } => {
                 let c = Self::clip_mut_on(p, id);
                 crate::fx_graph::canonical(&mut fx_in, c.fx.len());

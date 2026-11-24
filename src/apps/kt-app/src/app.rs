@@ -4831,6 +4831,28 @@ impl KtApp {
         true
     }
 
+    /// `apply_coalesced` of commands that only make sense together (a chain edit that moves slots, their
+    /// lists and their addresses).
+    pub fn apply_batch_coalesced(&mut self, cmds: Vec<Command>, gesture: u64) -> bool {
+        self.warn_shared_band(&cmds);
+        crate::telemetry::signal(crate::telemetry::Signal::Commands(&cmds, &self.model));
+        match self.model.apply_batch_coalesced(cmds, gesture) {
+            Err(e) => {
+                self.refuse_command(&e);
+                return false;
+            }
+            Ok(false) => return true,
+            Ok(true) => {}
+        }
+        self.model_rev += 1;
+        kt_time::work::bump(kt_time::work::Work::ModelEdit);
+        self.push_project_to_player();
+        self.sync_media_sources();
+        self.dirty_content = true;
+        self.bump_clip_hw();
+        true
+    }
+
     /// A command batch + restoration of the crossfade “handles” that this gesture kills
     /// (R.26): pulled clips apart or deleted a neighbour — the material cut off by an overlap
     /// is restored by the same undo step. All new paths for deleting and
