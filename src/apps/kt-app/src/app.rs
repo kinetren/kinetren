@@ -10742,7 +10742,7 @@ thread_local! {
     static MEDIA_GRACE: std::cell::Cell<Option<std::time::Duration>> = const { std::cell::Cell::new(None) };
 }
 
-fn media_grace() -> std::time::Duration {
+pub(crate) fn media_grace() -> std::time::Duration {
     MEDIA_GRACE.with(|g| g.get()).unwrap_or(ANSWER_GRACE)
 }
 

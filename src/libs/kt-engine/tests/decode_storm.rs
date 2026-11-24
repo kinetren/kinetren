@@ -417,6 +417,7 @@ fn t2044_a_short_loop_over_a_mosh_plays() {
             to: Tick(5 * SEC + 8 * STEP),
             settle: Duration::ZERO,
             loop_for: Some(Duration::from_secs(10)),
+            first_shown_by: Some(kt_time::test_deadline()),
             ..Default::default()
         },
     );
