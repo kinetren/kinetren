@@ -1315,6 +1315,10 @@ impl KtApp {
         if revert {
             // “Cancel” rolls back the WHOLE window: for a pair, both chains
             for (id, fx, auto, bypass, off) in ed.backup.clone() {
+                // a sound event the window's own edit took (a tone unticked) has nothing to roll back
+                if self.model.clip(id).is_none() {
+                    continue;
+                }
                 self.set_fx_coalesced(id, fx, ed.gesture);
                 self.set_fx_auto_coalesced(id, auto, ed.gesture);
                 self.apply_coalesced(Command::SetFxBypass { id, bypass }, ed.gesture);
@@ -1326,7 +1330,14 @@ impl KtApp {
                 if self.model.clip(id).is_none_or(|c| c.r#gen == kind && c.gen_auto == auto) {
                     continue;
                 }
-                self.apply_coalesced(Command::SetClipGen { id, kind: kind.clone() }, ed.gesture);
+                match kind.as_ref().and_then(|k| self.gen_value_cmds(id, k)) {
+                    Some(cmds) => {
+                        self.apply_batch(cmds);
+                    }
+                    None => {
+                        self.apply_coalesced(Command::SetClipGen { id, kind: kind.clone() }, ed.gesture);
+                    }
+                }
                 self.apply_coalesced(Command::SetClipGenAuto { id, auto }, ed.gesture);
             }
             // ...and the leading “Geometry” node (R.62) — the same strip
@@ -1420,19 +1431,17 @@ impl KtApp {
             // Generator values: the command ONLY on a really changed value (item 200) — otherwise the
             // revision would grow on every frame of the gesture.
             if let Some(kind) = e.r#gen
-                && let Some(c) = self.model.clip(e.clip).filter(|c| c.r#gen.as_ref() != Some(&kind))
+                && self.model.clip(e.clip).is_some_and(|c| c.r#gen.as_ref() != Some(&kind))
             {
                 // a value that switches the generator's sound on or off (SMPTE's tone, Sync flash's
                 // beep) brings or takes its sound event in the same step (found-defects 1000)
-                let sounds = |k: &kt_model::GeneratorKind| kt_media::generator::GeneratorSource::info_for(k).has_audio;
-                let (media, was) = (c.media, c.r#gen.as_ref().is_some_and(sounds));
-                if sounds(&kind) != was {
-                    let set = Command::SetClipGen { id: e.clip, kind: Some(kind.clone()) };
-                    let (remove, add) = self.gen_pair_cmds(media, sounds(&kind));
-                    let cmds: Vec<Command> = remove.into_iter().chain(std::iter::once(set)).chain(add).collect();
-                    self.apply_batch(cmds);
-                } else {
-                    self.apply_coalesced(Command::SetClipGen { id: e.clip, kind: Some(kind) }, gesture);
+                match self.gen_value_cmds(e.clip, &kind) {
+                    Some(cmds) => {
+                        self.apply_batch(cmds);
+                    }
+                    None => {
+                        self.apply_coalesced(Command::SetClipGen { id: e.clip, kind: Some(kind) }, gesture);
+                    }
                 }
             }
             if let Some(mut auto) = e.gen_auto {
@@ -1450,12 +1459,10 @@ impl KtApp {
                 && let Some(c) = self.model.clip(e.clip).cloned()
                 && let Some(kind) = c.r#gen.clone()
             {
-                self.gesture_counter += 1;
-                let g = self.gesture_counter;
-                self.apply_coalesced(
-                    Command::ApplyGenToAll { media: c.media, kind, auto: c.gen_auto.clone() },
-                    g,
-                );
+                // every event of the generator takes the values, and the sound that goes with them
+                let (remove, add) = self.gen_pair_cmds(c.media, None, &kind);
+                let set = Command::ApplyGenToAll { media: c.media, kind, auto: c.gen_auto.clone() };
+                self.apply_batch(remove.into_iter().chain(std::iter::once(set)).chain(add).collect());
             }
         }
         // the slot masks moved with their slots (after `SetFx`, which trimmed them)

@@ -10,7 +10,10 @@ PATH (generators "The technical generators: a sync flash and the safe areas"):
    the preview at 0 s is a white field;
 2. the playhead at 0.5 s: the preview is dark, the bar along the bottom half full;
 3. Edit → Create a generator… → Signal check → Safe areas at 0.5 s on the next track: the guides stand
-   over the dark field (a light line where the action-safe frame is, dark inside it).
+   over the dark field (a light line where the action-safe frame is, dark inside it);
+4. the cursor at 7 s, SMPTE bars there: one silent picture; Tone ticked in its window → a linked sound
+   event of the same span under it (found-defects 1000), off → gone, on → back; Space in a loop inside
+   it → the meters move.
 """
 import os
 import sys
@@ -64,6 +67,38 @@ def main(out):
         line = app.pixel_settled(edge, differs_from=dark)
         app.step("guides", "Safe areas over the flash: the action- and title-safe frames and the centre cross")
         app.expect(line is not None and max(line) > max(dark) + 40, f"a guide line stands at the action-safe edge: {line} over {dark}")
+
+        # 4) the tone of the bars brings its sound event (gen-sound-pair, ui-reach t3720)
+        app.click(app.x_at(7 * SEC), app.ruler_y())
+        before = len(app.live_clips())
+        app.new_generator("smpte", what="SMPTE bars")
+        app.expect(app.until(lambda: len(app.live_clips()) == before + 1), f"the bars are one silent event: {app.live_clips()}")
+        app.step("bars", "SMPTE bars at 7 s, its window open: a picture with no sound event")
+        app.click_probe("tone", "the Tone tick")
+        app.expect(app.until(lambda: len(app.live_clips()) == before + 2), f"the tick brought the sound event: {app.live_clips()}")
+        tpp = app.geom()["ticks_per_px"]
+        at = [c for c in app.live_clips() if abs(c[0] - 7 * SEC) <= 2 * tpp]
+        app.expect(len(at) == 2 and at[0][:2] == at[1][:2], f"the picture and its sound span the same time: {at}")
+        app.step("tone-on", "Tone ticked: a linked sound event under the bars, of the same span")
+        app.click_probe("tone", "the Tone tick")
+        app.expect(app.until(lambda: len(app.live_clips()) == before + 1), f"the tick off took the sound event: {app.live_clips()}")
+        app.click_probe("tone", "the Tone tick")
+        app.expect(app.until(lambda: len(app.live_clips()) == before + 2), f"the tick brought it again: {app.live_clips()}")
+        app.key("Escape")
+        ry = app.ruler_y()
+        app.drag(app.x_at(int(7.5 * SEC)), ry, app.x_at(int(9 * SEC)), ry)
+        app.key("l")
+        app.key("space")
+        app.expect(app.until(lambda: app.playhead() > 7.6 * SEC, timeout=60), "the sound started after Space")
+        loud = []
+
+        def heard():
+            loud.append(max(app.geom().get("meter_db", [-120, -120])))
+            return len([v for v in loud if v > -40]) >= 3
+
+        app.expect(app.until(heard, timeout=60), f"the meters move on the bars' tone: {loud[-12:]}")
+        app.step("tone-plays", "the loop plays over the bars: the meters are lit")
+        app.key("space")
     return app.done()
 
 

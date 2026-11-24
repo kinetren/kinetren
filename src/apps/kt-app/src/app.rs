@@ -5151,19 +5151,50 @@ impl KtApp {
     /// (generator-menu-one-item D2). The window's gallery is the one way to a kind since kkt-26.11.20 A1.
     pub(crate) fn gen_kind_switch_cmds(&self, media: MediaId, kind: &kt_model::GeneratorKind) -> Vec<Command> {
         let set = Command::SetMediaPath { id: media, path: kt_model::gen_kind_path(kind) };
-        let (remove, add) = self.gen_pair_cmds(media, kt_media::generator::GeneratorSource::info_for(kind).has_audio);
+        let (remove, add) = self.gen_pair_cmds(media, None, kind);
         // the sound halves go first: the media's new kind is no sound kind
         remove.into_iter().chain(std::iter::once(set)).chain(add).collect()
     }
 
-    /// The commands that keep a generator media's sound pairs in step with whether it `sounds`
-    /// (gen-sound-pair, found-defects 1000): (removals, additions). A sounding generator gives each
-    /// picture event of the media its sound event on audio track 1, linked to it, as the menu gives at
-    /// creation; a silent one loses the sound events, which would hold silence. Asked by a kind
-    /// change and by a value edit that switches the sound on or off (SMPTE's tone, Sync flash's beep).
-    pub(crate) fn gen_pair_cmds(&self, media: MediaId, sounds: bool) -> (Vec<Command>, Vec<Command>) {
+    /// A value edit of one generator event, as commands: the values, and its sound event brought or
+    /// taken when the edit switches its sound on or off (SMPTE's tone, Sync flash's beep — found-defects
+    /// 1000). `None` — the sound stays as it was: a plain `SetClipGen`.
+    pub(crate) fn gen_value_cmds(&self, id: ClipId, kind: &kt_model::GeneratorKind) -> Option<Vec<Command>> {
+        let sounds = |k: &kt_model::GeneratorKind| kt_media::generator::GeneratorSource::info_for(k).has_audio;
+        let c = self.model.clip(id)?;
+        if c.r#gen.as_ref().is_some_and(sounds) == sounds(kind) {
+            return None;
+        }
+        // edited through its sound half, which may be the one that goes: the picture takes the values
+        let picture = self
+            .model
+            .project()
+            .clips
+            .iter()
+            .find(|p| p.kind == ClipKind::Video && p.media == c.media && (p.id == id || (p.link_group.is_some() && p.link_group == c.link_group)))?
+            .id;
+        let set = Command::SetClipGen { id: picture, kind: Some(kind.clone()) };
+        let (remove, add) = self.gen_pair_cmds(c.media, Some(picture), kind);
+        Some(remove.into_iter().chain(std::iter::once(set)).chain(add).collect())
+    }
+
+    /// The commands that keep a generator's sound pairs in step with `kind` — of one picture event
+    /// (`only`: values live on the event) or of every one of the media (a kind change, "apply to all"):
+    /// (removals, additions). A sounding generator gives a picture event its sound event on audio
+    /// track 1, linked to it, with the new values, as the menu gives at creation; a silent one loses the
+    /// sound events, which would hold silence.
+    pub(crate) fn gen_pair_cmds(
+        &self,
+        media: MediaId,
+        only: Option<ClipId>,
+        kind: &kt_model::GeneratorKind,
+    ) -> (Vec<Command>, Vec<Command>) {
+        let sounds = kt_media::generator::GeneratorSource::info_for(kind).has_audio;
         let clips = &self.model.project().clips;
-        let pictures: Vec<&ClipEvent> = clips.iter().filter(|c| c.media == media && c.kind == ClipKind::Video).collect();
+        let pictures: Vec<&ClipEvent> = clips
+            .iter()
+            .filter(|c| c.media == media && c.kind == ClipKind::Video && only.is_none_or(|id| c.id == id))
+            .collect();
         let pair_of = |v: &ClipEvent| {
             clips
                 .iter()
@@ -5198,6 +5229,8 @@ impl KtApp {
                 geometry_pos: 0,
                 geometry_auto: Vec::new(),
                 masks: Default::default(),
+                // the values the batch sets on the picture: a copy of its former ones would sound silence
+                r#gen: v.r#gen.as_ref().map(|_| kind.clone()),
                 ..v.clone()
             };
             add.push(Command::AddClip(a));

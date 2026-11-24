@@ -653,6 +653,36 @@ fn t3720_ticking_a_generators_tone_brings_its_sound_event() {
     let (v, a) = (now.iter().find(|c| c.kind == ClipKind::Video).unwrap(), now.iter().find(|c| c.kind == ClipKind::Audio).unwrap());
     assert!(v.link_group.is_some() && v.link_group == a.link_group, "linked to the bars");
     assert_eq!((a.lane, a.start, a.duration, a.media), (0, v.start, v.duration, v.media), "under the bars on A1");
+    assert_eq!(a.r#gen, v.r#gen, "with the ticked values: a copy of the former ones would sound silence");
+    // an event's values are its own: another event of the same bars keeps its silence
+    let twin = {
+        let app = h.state_mut();
+        let id = app.next_clip_id();
+        let kind = v.r#gen.clone().map(|mut g| {
+            kt_model::HasParams::set_flag(&mut g, "tone", false);
+            g
+        });
+        let c = kt_model::ClipEvent { id: ClipId(id), start: v.start + v.duration, link_group: None, r#gen: kind, ..v.clone() };
+        assert!(app.apply(kt_model::Command::AddClip(c)), "the twin of the bars is added");
+        ClipId(id)
+    };
+    click_tone(&mut h);
+    assert_eq!(new_clips(&h, before).len(), 2, "unticked: this event's sound goes, the twin is untouched");
+    click_tone(&mut h);
+    let now = new_clips(&h, before);
+    assert_eq!(now.len(), 3, "ticked again: only this event sounds: {now:?}");
+    // the sound half's own edit: the picture takes the value and the half goes with it
+    let a = now.iter().find(|c| c.kind == ClipKind::Audio).unwrap();
+    let off = a.r#gen.clone().map(|mut g| {
+        kt_model::HasParams::set_flag(&mut g, "tone", false);
+        g
+    });
+    let cmds = h.state().gen_value_cmds(a.id, &off.unwrap()).expect("the sound flips");
+    assert!(h.state_mut().apply_batch(cmds), "unticked through the sound half");
+    assert_eq!(new_clips(&h, before).len(), 2);
+    h.state_mut().undo();
+    assert!(h.state_mut().apply(kt_model::Command::RemoveClip { id: twin }));
+    h.step();
     click_tone(&mut h);
     assert_eq!(new_clips(&h, before).len(), 1, "unticked: the sound event goes");
     h.state_mut().undo();
