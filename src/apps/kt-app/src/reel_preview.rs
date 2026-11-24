@@ -682,6 +682,7 @@ pub(crate) fn reel_envelope(
         p,
         sources,
         None,
+        None,
         &cancel,
         |n| {
             let _ = ctl.should_stop();

@@ -120,7 +120,7 @@ fn t1451_the_pipelined_export_writes_the_serial_streams() {
     })
     .unwrap();
     let mut serial_audio = Vec::new();
-    let as_ = render_raw_audio_range(&p, sources(&p), Some(range()), &never, |_| {}, |s| {
+    let as_ = render_raw_audio_range(&p, sources(&p), Some(range()), None, &never, |_| {}, |s| {
         serial_audio.extend(s.iter().map(|v| v.to_bits()));
         Ok(())
     })

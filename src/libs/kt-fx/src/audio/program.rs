@@ -26,7 +26,7 @@ const RELEASE_S: f64 = 0.050;
 /// The gain's own change is spread over this many frames (20 ms).
 const GLIDE: u32 = AUDIO_SAMPLE_RATE / 50;
 /// Under the project's ceiling, for the gain's own modulation.
-const INNER_DB: f64 = 0.1;
+pub const INNER_DB: f64 = 0.1;
 /// A reduction this small is none: the tail of the release ends on exactly 1.
 const NONE: f64 = 1e-7;
 

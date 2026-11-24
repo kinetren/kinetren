@@ -37,7 +37,7 @@
 ## 3. Engine
 
 - [x] 3.1 the kernel `kt_fx::audio::program`; t4201
-- [ ] 3.2 the stage at the player's output and in `render_raw_audio_range` (every caller of design D3's table); t3919, t4200, t4202, t407
+- [x] 3.2 the stage at the player's output and in `render_raw_audio_range` (every caller of design D3's table); t3919, t4200, t4202, t407
 - [ ] 3.3 the jobs: program (two passes), events with short ones grouped; `AnalysisKind` and t774's lock by name; t3920, t4203
 - [ ] 3.4 the report against the project's target, the spans; t3921, t406
 

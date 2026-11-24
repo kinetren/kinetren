@@ -104,9 +104,22 @@ pub struct ExportStats {
     /// CONTROL, not of the material. Consequence: the number in the preview and the
     /// file's number coincide by construction.
     pub loudness: Option<kt_fx::audio::loudness::Loudness>,
+    /// What the program stage did; `None` — the document has none.
+    pub program: Option<ProgramReport>,
+    /// What the sound says at its times: over the ceiling, a silent channel, an imbalance.
+    pub spans: Vec<kt_fx::audio::findings::SoundSpan>,
     /// Where the export's time went, one line (render-speed D2, `ExportProfile::summary`): the render
     /// window writes it into the telemetry journal. Empty for render_raw_*.
     pub stages: String,
+}
+
+/// What the program stage did to the mix (loudness-norms D9).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ProgramReport {
+    pub gain_db: f64,
+    /// Loudness the limiter took, LU, and its deepest reduction, dB.
+    pub took_lu: f64,
+    pub deepest_db: f64,
 }
 
 impl ExportStats {
@@ -158,14 +171,17 @@ pub fn render_raw_audio(
     sources: Vec<(MediaId, Box<dyn MediaSource>)>,
     emit: impl FnMut(&[f32]) -> std::io::Result<()>,
 ) -> std::io::Result<ExportStats> {
-    render_raw_audio_range(project, sources, None, &AtomicBool::new(false).into(), |_| {}, emit)
+    render_raw_audio_range(project, sources, None, None, &AtomicBool::new(false).into(), |_| {}, emit)
 }
 
-/// The full variant: range, cancel, progress.
+/// The full variant: range, the program stage, cancel, progress. `program` is the caller's word
+/// (loudness-norms D3): the export gives the document's, a reel's envelope, the measuring jobs and the
+/// golden stream none. The loudness is measured after it.
 pub fn render_raw_audio_range(
     project: &Project,
     sources: Vec<(MediaId, Box<dyn MediaSource>)>,
     range: Option<(Tick, Tick)>,
+    program: Option<kt_fx::audio::program::Params>,
     cancel: &Arc<AtomicBool>,
     mut progress: impl FnMut(u64),
     mut emit: impl FnMut(&[f32]) -> std::io::Result<()>,
@@ -190,8 +206,20 @@ pub fn render_raw_audio_range(
         None => (0, project_range(project).to_audio_frames()),
     };
     let mut meter = kt_fx::audio::loudness::LoudnessMeter::new();
+    let mut finder = kt_fx::audio::findings::Finder::new(project.loudness.ceiling_dbtp);
     let mut chunk = vec![0f32; AUDIO_BURST_FRAMES * AUDIO_CHANNELS];
     let mut head = start_frame;
+    // the stage reads the mix its look-ahead early: primed at the head, as the player's
+    let mut stage = program.map(|p| (kt_fx::audio::program::Stage::new(p), kt_fx::audio::loudness::LoudnessMeter::new(), p));
+    let mut lead = 0i64;
+    if let Some((st, before, _)) = &mut stage {
+        lead = kt_fx::audio::program::LOOKAHEAD as i64;
+        let ahead = &mut chunk[..lead as usize * AUDIO_CHANNELS];
+        stats.underruns += renderer.render_frames_with(&mut fetcher, &mut store, head, ahead).underruns;
+        before.feed(&ahead[..((end_frame - head).clamp(0, lead)) as usize * AUDIO_CHANNELS]);
+        st.prime(ahead);
+    }
+    let mut deepest = 0f64;
     while head < end_frame {
         if cancel.load(Ordering::Acquire) {
             return Err(std::io::Error::other("cancelled"));
@@ -199,14 +227,31 @@ pub fn render_raw_audio_range(
         progress(stats.audio_frames);
         let n = ((end_frame - head) as usize).min(AUDIO_BURST_FRAMES);
         let sub = &mut chunk[..n * AUDIO_CHANNELS];
-        let s = renderer.render_frames_with(&mut fetcher, &mut store, head, sub);
+        let s = renderer.render_frames_with(&mut fetcher, &mut store, head + lead, sub);
         stats.underruns += s.underruns;
+        if let Some((st, before, _)) = &mut stage {
+            before.feed(&sub[..((end_frame - head - lead).clamp(0, n as i64)) as usize * AUDIO_CHANNELS]);
+            st.process(sub);
+            deepest = deepest.max(st.take_deepest_db());
+        }
         meter.feed(sub);
+        finder.feed(sub);
         emit(sub)?;
         stats.audio_frames += n as u64;
         head += n as i64;
     }
-    stats.loudness = Some(meter.finish());
+    let after = meter.finish();
+    stats.program = stage.map(|(_, before, p)| ProgramReport {
+        gain_db: p.gain_db,
+        // what the limiter took: the mix raised by the gain against what came out
+        took_lu: match (before.finish().lufs, after.lufs) {
+            (Some(b), Some(a)) => (b + p.gain_db - a).max(0.0),
+            _ => 0.0,
+        },
+        deepest_db: deepest,
+    });
+    stats.loudness = Some(after);
+    stats.spans = finder.finish();
     Ok(stats)
 }
 
@@ -859,6 +904,7 @@ pub fn export_mp4_with_backends(
                 project,
                 audio_sources,
                 range,
+                crate::program::params(project),
                 cancel,
                 |done| {
                     wait_paused();
@@ -966,6 +1012,8 @@ pub fn export_mp4_with_backends(
         // the loudness is computed on the audio pass — with the same meter, the same
         // buffer and without the master gain (item 371)
         loudness: astats.loudness,
+        program: astats.program,
+        spans: astats.spans,
         stages: own_profile.summary(vstats.video_frames, timeline_ns, (quality.width, quality.height)),
     })
 }
@@ -1042,6 +1090,8 @@ pub fn render_pipelined_budget<S: ExportSink>(
         announced_audio: a.announced_audio,
         underruns: a.underruns,
         loudness: a.loudness,
+        program: a.program,
+        spans: a.spans,
         encoder: String::new(),
         stages: String::new(),
     })

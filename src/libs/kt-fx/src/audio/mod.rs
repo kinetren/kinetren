@@ -3,6 +3,7 @@
 //! the paths of callers (`kt_fx::ClipProcessor` etc.) have not changed.
 
 pub mod cost;
+pub mod findings;
 mod graph;
 pub mod loudness;
 mod nodes;

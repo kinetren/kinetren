@@ -791,6 +791,7 @@ pub(crate) fn run<S: ExportSink>(
                 project,
                 audio_sources,
                 range,
+                crate::program::params(project),
                 &audio_halt,
                 |done| {
                     (hooks.wait_paused)();
