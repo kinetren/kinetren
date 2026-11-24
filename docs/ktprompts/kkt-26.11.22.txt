@@ -7,3 +7,4 @@ openfx-host, arm-build. Each line: the question, his own words verbatim.
 4. Q57 OpenFX: "п.1. а нахрена копировать кадр? почему shmem ram не использовать? или sh mem gpu??? мы же на современных системах используем программу."
 5. Q58 ARM: "Linux aarch64 (Recommended)"
 6. Cache audit, cut 5 (Datamosh history on disk, or final frames only and the history recomputed from the cut on a miss): "Только финальные кадры"
+7. Cache audit, cut 2 (decoding above the file's own size): "я вообще не понимаю проблему. у тебя есть кэш рендера - ты его декодируешь как видео и отображаешь - дальше что не так?"

@@ -69,7 +69,11 @@ for it.
 |---|---|---|---|---|---|
 | ★ `export-host-copy` (dma-buf) | M | — (stages 1–3 merged) | EXPORT (`muxer_impl.rs` VAAPI frames), GPU export pass | answered A13 | the change's remaining t3312–t3321 |
 | `fx-graph-dag` | XL | `fx-graph` merged; `shared-events` (MODEL) | MODEL (`FxInput`, Merge kind), `kt-fx` `plan_chain`, GPU (held set, Merge pass), FX-UI | answered A5, A6 | t3200–t3229 |
+| `durable-moment-key` | M | — | CACHE (`render_cache.rs` key, `kt-cache` source identity), STREAM (`video_stream.rs` `ident` only), GPU (`plan_key` only), PLAYER (the prefetch's held set) | none (owner's D2, D7; found-defects 965) | t4108–t4116 |
 | `project-cache-folder` | L | — | CACHE (`index.rs` → `cache_folder.rs`, `render_cache.rs` root, the persistent cache's `results/` store and its key layout), `kt-dirs`, the Settings page | answered B2 (one folder per project folder; cyclic writing with a notice); it hosts the persistent cache (B1) | t3824–t3843 |
+
+`durable-moment-key` goes to the executor of `project-cache-folder` (mosh-sharp) before its section 3, or right after it:
+both write `durable_hash`, and the shared key makes 3.2 smaller (no `Leaves`, no `FileIds`). It must not run beside it.
 
 `project-cache-folder` is now the gate of three owner priorities: the durable history (★), the persistent
 cache of heavy effects (B1) and the cached render. Start it in this wave.
@@ -214,4 +218,4 @@ Each of these changes' `tasks.md` now names its files, and those files were chec
 
 New tests t4100–t4105 are taken from spec-engine's third block (t4100–t4199): device-decode-sources
 t4100–t4102, track-stage-preroll t4103–t4104, durable-history-and-mix t4105 (freed by D6 with t3338–t3345).
-Since: persistent-cache t4106, simulated-elements t4107; the next free is t4108.
+Since: persistent-cache t4106, simulated-elements t4107, durable-moment-key t4108–t4116; the next free is t4117.

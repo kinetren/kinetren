@@ -83,5 +83,5 @@ the whole project"; "no interface action waits for a picture".
 
 #### Scenario: A deep cold seek shows Loading, then the frame
 - **WHEN** an emitter of 20 000 particles running 5 minutes is opened and the playhead is clicked at 4:50, then a project without any set is planned
-- **THEN** the click returns at once, the frame reports "simulation behind" and the preview shows Loading until the state reaches 4:50, then the frame equals an export's; the project without sets has the same plan keys and bytes as before this change
+- **THEN** the click returns at once, the frame reports "simulation behind" and the preview shows Loading until the state reaches 4:50, having stepped no more than the longest lifetime before it, then the frame equals an export's bit for bit in its poses, the ceiling reached on the way included; the project without sets has the same plan keys and bytes as before this change
 - **TEST** t3986 (`src/libs/kt-engine/tests/simulated_elements.rs`)

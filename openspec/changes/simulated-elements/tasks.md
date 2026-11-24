@@ -26,7 +26,7 @@
       (`incremental.rs`, t2004); zero cost without sets; t3969, t3971, t3987
 - [ ] 2.2 source-side producers draw only what does not move (design D12.1): the title's glyph atlas (one sprite per
       cluster, `GeneratorSource`, `kt-media/src/generator.rs:169` `render_at`), the emitter's sprite; the poses of
-      letters and particles are a plan-side set in `layer_src` like 2.1; three masks per cluster, two passes (D17); no salt from the `SimKey`, no drivers in
+      letters and particles are a plan-side set in `layer_src` like 2.1; two masks per cluster, the shadow blurred after placement (D17); the atlas's identity checked against the values'; no salt from the `SimKey`, no drivers in
       `Retune::Gen` (a retune drops the source's whole cache, `worker.rs:363–380`); a title or emitter with no set
       keeps salt 0 and its bytes; t4107
 - [ ] 2.3 catch-up: the player's `sim` thread (class `near`, joined through `kt_time::shutdown`); `layer_src` calls
@@ -40,6 +40,7 @@
 - [ ] 2.5 the instanced-sprite op and pass in kt-gpu (design D12.3): a `Compiled` pipe with its `Slot`, timed, cut by
       the arbiter, warmed by `prewarm::effect_ids`; `plan_key` (`engine.rs:4330`) and `put_plan`
       (`render_cache.rs:715`) hash the op (t2981 green)
+- [ ] 2.6 the emitter's `forgets`, the step grid from the origin, the closed-form spawns and ceiling (D18); t3986
 
 ## 3. Model and format
 

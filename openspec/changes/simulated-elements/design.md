@@ -301,6 +301,10 @@ The rest of the tree, as D10 relies on it:
 - **Crates:** `kt-sim` (kt-time, kt-plugin-api; no FFmpeg, no GPU), the `sim` family in `kt-plugin-api`,
   `plugins/sim-basic` with its id in `kt-plugins-builtin`; kt-engine depends on `kt-sim`.
 
+**After `durable-moment-key`** (2026-11-24; it is built first): `plan_key` and `put_plan` are one function,
+`kt_engine::moment_key`, so the op and the numbers are hashed in one place; t2981 no longer guards a pair but the one key.
+The atlas enters by `LayerSrc.leaf` (the identity the cache holds), not by a content serial, and there is no `note_leaf`.
+
 ## D13. The model (kt-model `elements.rs`)
 
 ```
@@ -389,6 +393,8 @@ from the event's start, the instance path, and:
 - A hash of the curves costs O(keys) per frame; a per-set memo keyed by (curve, segment index) makes it O(log keys).
 - **Sound that is not analysed yet** makes the answer `Behind`, never silence: silence would be kept as a true frame.
   The Loading line says "listening to <track>". An export waits for the series before its first frame.
+- A probe whose sound is not analysed hashes a mark in place of the series: it matches nothing kept (an incomplete
+  frame is kept nowhere), and the key moves when the series arrives.
 - Sound is heard as the reactive generators hear it: the files of the track, before effects (t3715); the mix after
   effects joins when theirs does.
 
@@ -398,20 +404,40 @@ from the event's start, the instance path, and:
 each over the whole text in the title's own order. One coloured sprite per cluster would lay the second letter's shadow
 over the first letter's fill. So:
 
-- **Atlas:** per cluster three masks in one RGBA8 cell: R the fill's coverage, G the stroke's alpha, B the shadow's
-  alpha, each rasterized on the same sub-pixel place as the whole title's; cells are shelf-packed, the atlas's size a
-  function of the layout. No colour, no reveal weight, no plate.
-- **Address:** the generator's address salted with `(ATLAS, base quality)` (`gen_source_addr_in`, `video.rs:2935`), so
-  the order, the prefetch and the read ask for the same thing and the plain title's frames are untouched. Index — the
-  source pts, as today: a title whose size is animated has an atlas per frame.
-- **Pass A, instanced:** each cluster's quad with its pose into two R8 targets with MAX blending (fill, stroke) and one
-  with ADD, saturated (shadow). The element's opacity and the reveal weight scale the masks.
+- **Atlas:** per cluster two masks in one RGBA8 cell: R the fill's coverage, G the stroke's alpha, each rasterized on
+  the same sub-pixel place as the whole title's; equal cells are shared, cells are shelf-packed, the atlas's size a
+  function of the layout. No colour, no reveal weight, no plate, **no shadow**.
+- **Address:** the generator's address salted with `ATLAS` alone (`gen_source_addr_in`, `video.rs:2935`). Not with the
+  quality: `gen_sources(project)` raises the sources and knows no quality, and the decode quality (R.46's step in it)
+  is in the burst key already. `GenState` gains `atlas: bool`, so the worker, the source's identity
+  (`durable-moment-key`) and `can_retune_gen` see it. Index — the source pts, as today: a title whose size is animated
+  has an atlas per frame.
+- **The atlas is the one the poses are for.** The cell table is a function of the values, computed by the plan; the
+  frame comes from a worker that may not have taken the retune yet. A changed text has other clusters, and element i
+  would be drawn from the old text's cell i. So the op takes the atlas only when the cache's identity of the source
+  is the identity of the renderer's values; otherwise the layer is starved, as with any absent frame.
+- **Too large an atlas** (past the device's texture limit): the title is drawn at rest, whole, and its set's row and a
+  notice say so.
+- **Pass A, instanced:** each cluster's quad with its pose into ONE `Rg8Unorm` target with MAX blending (R fill, G
+  stroke). The element's opacity and the reveal weight scale the masks. Not the pool's `Rgba8Uint` (`pool.rs:12`):
+  integer targets do not blend. One target and one blend state: different blend states per target need
+  `INDEPENDENT_BLEND`, which GL devices below ES 3.2 lack.
+- **Pass S, the shadow:** the placed fill, moved by the shadow's offset (whole pixels, as `shadow_alpha`) and blurred by
+  the same three box passes over integers; skipped when the shadow is transparent.
 - **Pass B, resolve:** the plate from its rectangles (the plate does not move with letters), then the four layers `over`
-  in the title's order with its colours. Both are compiled with the project.
+  in the title's order with its colours, in `render_rgba`'s integer arithmetic. All are compiled with the project.
+- **Why the shadow is blurred after the letters are placed** (spec-engine, 2026-11-24; a mask per cluster was designed
+  first):
+  - a letter that turns would turn its shadow's offset with it — a swinging letter's shadow would circle it, while the
+    light does not move;
+  - the blur rounds to whole levels six times: a wide blur leaves less than half a level of one letter's tail, which
+    rounds to 0, and the sum of ten such tails is lost. The sum of rounded shadows is not the rounded shadow of the sum;
+  - overlaps are the maximum, as in the raster, not a sum.
 - **Why this equals the raster at rest (t4107):** the stroke is a distance to the silhouette, so a union's stroke is the
-  maximum of the parts' strokes; the fill is a maximum already; the blur is linear, so the sum of the parts' shadows is
-  the shadow of the sum, off only where two glyphs overlap. Held to the `FrameTol` of the stored title frames, on a
-  static title with all four layers.
+  maximum of the parts' strokes; the fill is a maximum already; the shadow is the same function of the same fill. Held
+  to the `FrameTol` of the stored title frames, on a static title with all four layers and a wide blur, letters
+  overlapping. A soft reveal is the exception: the raster weighs the coverage BEFORE the stroke's threshold (α ≥ 128),
+  the op weighs the finished stroke; a set's title fades its stroke in with the letter.
 - **Particles** use pass A's instancing with a colour sprite straight to the layer, over or additive (`emitter` row
   `blend`); no resolve.
 
@@ -423,6 +449,15 @@ over the first letter's fill. So:
 - **Cost, for the review of the build:** a spring step is about 20 ns an element. A 60-letter title costs 0.3 ms of
   processor per second of simulated time, 20 000 particles about 0.1 s per second (a tenth of one core while playing,
   nothing on a pause).
+  - **An emitter's cold seek does not start at the origin.** 20 000 particles over 4:50 would be 29 s of Loading. A
+    particle's state depends on its own spawn alone, so the state at t needs the steps of one lifetime:
+    `SimDecl::forgets(rows) -> Option<Tick>` (particles: the longest lifetime over the prefix; springs: `None`, they
+    never forget exactly). The catch-up starts at the later of the checkpoint and `t − forgets`. Equal bits need two rules:
+    steps lie on the grid counted from the ORIGIN, not from where the walk began; spawn k (its moment, its seed) is a
+    closed form of the rate's curve.
+  - **The ceiling** is counted from that closed form too: spawn k is skipped when the spawns SCHEDULED in the longest lifetime
+    before it (skipped or not) already reach the ceiling. Counting the living would make each spawn depend on all
+    before it, and the window would not give the same state.
 - **Stage A** (this change): the system, letters, mask vertices, the emitter.
 - **Stage B** (one change per row of D9 once A is in, in this order, each needing only a producer, a drawer that exists
   and a section in a window): reel layers (9), transition pieces (11), the camera and Geometry (12), the reactive bars
