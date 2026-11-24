@@ -378,7 +378,7 @@ pub fn flags_row<P: HasParams + ?Sized>(
         for spec in specs {
             let mut v = f.get_flag(spec.name).unwrap_or(spec.default);
             let r = ui.checkbox(&mut v, flag_label(spec.name));
-            field_probe::note(spec.name, r.rect);
+            field_probe::note(&format!("flag.{}", spec.name), r.rect);
             if r.changed() {
                 f.set_flag(spec.name, v);
                 changed = true;
@@ -848,6 +848,36 @@ pub(crate) mod lesson_mark {
 pub fn window_actions(ui: &mut egui::Ui, actions: impl FnOnce(&mut egui::Ui)) {
     ui.separator();
     actions(ui);
+}
+
+/// An action drawn as an icon (`v26.10` T7): the status bar says its name and hint, the accessible
+/// name is its name.
+pub fn icon_action(
+    ui: &mut egui::Ui,
+    hover: &mut Option<String>,
+    icon: &str,
+    name: &str,
+    hint: Option<&str>,
+    enabled: bool,
+) -> egui::Response {
+    let r = ui.add_enabled(enabled, egui::Button::new(icon));
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, name));
+    let text = match hint {
+        Some(h) => format!("{name}. {h}"),
+        None => name.to_string(),
+    };
+    // a dead icon says what it is too: `hovered` is false on a disabled widget
+    if r.contains_pointer() {
+        *hover = Some(text);
+    }
+    r
+}
+
+/// The number of what a window edits (`v26.10` W3): small and weak, at the row's free end.
+pub fn entity_number(ui: &mut egui::Ui, id: u64) {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.label(egui::RichText::new(format!("#{id}")).small().weak());
+    });
 }
 
 /// Row of a NUMBER WITHOUT A SPEC (R.66).

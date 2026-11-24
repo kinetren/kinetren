@@ -306,18 +306,12 @@ impl KtApp {
                 (c.id.0, if c.name.is_empty() { format!("C{}", c.id.0) } else { c.name.clone() })
             })
             .collect();
-        let title = if ed.members.len() > 1 {
-            crate::tf!(k::fx::TITLE_GROUP, ed.clip.0)
-        } else {
-            crate::tf!(
-                k::fx::TITLE,
-                if anchor.kind == ClipKind::Audio {
-                    tr(k::fx::KIND_AUDIO)
-                } else {
-                    tr(k::fx::KIND_VIDEO)
-                },
-                ed.clip.0
-            )
+        // the event by name; its number is in the body (`v26.10` W3)
+        let name = self.event_name(ed.clip);
+        let title = match ed.members.len() {
+            0 | 1 => crate::tf!(k::fx::TITLE, name),
+            2 => crate::tf!(k::fx::TITLE_PAIR, name),
+            _ => crate::tf!(k::fx::TITLE_GROUP, name),
         };
         let playhead = self.player.transport.playhead();
         // the buffers live in the application; we hand them to the window for the duration of the frame,
@@ -590,21 +584,20 @@ impl KtApp {
                     let mut gen_edit = crate::gen_ui::GenEdit::default();
                     let mut ch = crate::widgets::ChainChanged::default();
                     let mut params_changed = crate::widgets::ParamsChanged::default();
-                    let head = crate::tf!(
-                        k::fx::CHAIN_OF,
-                        if clip.kind == ClipKind::Audio {
-                            tr(k::fx::KIND_AUDIO)
-                        } else {
-                            tr(k::fx::KIND_VIDEO)
-                        },
-                        id.0
-                    );
+                    // the event's number, unobtrusive, after the kind (`v26.10` W3)
+                    let mut head = egui::text::LayoutJob::default();
+                    let font = egui::TextStyle::Button.resolve(ui.style());
+                    let kind = if clip.kind == ClipKind::Audio { tr(k::fx::KIND_AUDIO) } else { tr(k::fx::KIND_VIDEO) };
+                    head.append(kind, 0.0, egui::TextFormat::simple(font, ui.visuals().text_color()));
+                    let small = egui::TextStyle::Small.resolve(ui.style());
+                    head.append(&format!("#{}", id.0), 8.0, egui::TextFormat::simple(small, ui.visuals().weak_text_color()));
                     // collapsing per chain: a pair shows both, and the extra one can be
                     // collapsed (“one can give the option of hide/toggle”)
                     egui::CollapsingHeader::new(head)
                         .id_salt(("fxgrp", id.0))
                         .default_open(n == 0 || members.len() <= 2)
-                        .show(ui, |ui| {
+                        // no indent and no strip beside the body (`v26.10` T8)
+                        .show_unindented(ui, |ui| {
                             // the selected slot and the search row are taken into
                             // local variables: otherwise two fields of the same
                             // `ed` would be borrowed at the same time
@@ -1573,7 +1566,7 @@ pub(crate) fn draw_auto_for(
     });
     ui.horizontal(|ui| {
         // copy-paste of envelopes (model — kt_model::ops, R.33)
-        let cp = ui.add_enabled(!curves.is_empty(), egui::Button::new(tr(k::fx::COPY_ENV)));
+        let cp = crate::widgets::icon_action(ui, hover_out, crate::icons::COPY, tr(k::fx::COPY_ENV), None, !curves.is_empty());
         crate::widgets::field_probe::note("env.copy", cp.rect);
         if cp.clicked() {
             let block = kt_model::ops::EnvelopeBlock {
@@ -1590,9 +1583,10 @@ pub(crate) fn draw_auto_for(
         // background task: on X11 the window owns the
         // buffer, and a synchronous request to ITSELF would hang
         // in the event loop, which is drawing at that moment.
-        let pb = ui.button(tr(k::fx::PASTE_ENV));
+        let hint = Some(tr(k::fx::PASTE_ENV_HINT));
+        let pb = crate::widgets::icon_action(ui, hover_out, crate::icons::CLIPBOARD, tr(k::fx::PASTE_ENV), hint, true);
         crate::widgets::field_probe::note("env.paste", pb.rect);
-        if crate::app::hint_into(hover_out, pb, tr(k::fx::PASTE_ENV_HINT)).clicked() {
+        if pb.clicked() {
             *paste_req = true;
         }
         // The “+ keyframe at playhead” button has been REMOVED here (R.40 item 18, verbatim:

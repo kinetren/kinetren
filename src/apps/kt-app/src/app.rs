@@ -313,6 +313,8 @@ pub struct KtApp {
     pub pending_unmax_drag: bool,
     /// The window has stood at a normal size in this run: the window manager knows one to restore.
     pub(crate) window_was_normal: bool,
+    /// Frames since the start, up to [`crate::window_frame::STARTED`].
+    pub(crate) start_frames: u8,
     /// Where to scroll the timeline window on the next frame (item 11 round 9:
     /// jump to the stop point must show the cursor).
     pub pending_reveal: Option<i64>,
@@ -1033,6 +1035,7 @@ impl KtApp {
             last_user_scroll: None,
             pending_unmax_drag: false,
             window_was_normal: false,
+            start_frames: 0,
             pending_reveal: None,
             marker_edit: None,
             marker_edit_focus: false,
@@ -1373,6 +1376,7 @@ impl KtApp {
             last_user_scroll: None,
             pending_unmax_drag: false,
             window_was_normal: false,
+            start_frames: 0,
             pending_reveal: None,
             marker_edit: None,
             marker_edit_focus: false,
@@ -1924,6 +1928,13 @@ impl KtApp {
             self.play_dir_back = rate < 0.0;
         }
 
+        if self.start_frames < crate::window_frame::STARTED {
+            self.start_frames += 1;
+            if self.start_frames == crate::window_frame::STARTED {
+                crate::window_frame::adopt_start(&ctx);
+            }
+            ctx.request_repaint();
+        }
         self.window_was_normal |= crate::window_frame::note_normal(&ctx);
         // Item 10 round 8: the window was restored from maximized last frame —
         // now dragging may begin
@@ -9151,6 +9162,34 @@ pub fn media_display_name(path: &str) -> String {
         .file_name()
         .map(|f| f.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string())
+}
+
+impl KtApp {
+    /// What an event's window calls it (`v26.10` W3): a title's first words, a generator's kind, a
+    /// reel's name, a file's name — cut to fit a window's title.
+    pub(crate) fn event_name(&self, id: ClipId) -> String {
+        let p = self.model.project();
+        let Some(c) = self.model.clip(id) else { return String::new() };
+        let text = match &c.r#gen {
+            // a counter draws its time, not the typed text
+            Some(kt_model::GeneratorKind::Text { text, source: kt_model::TextSource::Static, .. }) => {
+                text.split_whitespace().collect::<Vec<_>>().join(" ")
+            }
+            _ => String::new(),
+        };
+        let name = if !text.is_empty() {
+            return crate::toolbar::cut_name(&text, 24);
+        } else if let Some(k) = &c.r#gen {
+            crate::gen_ui::kind_name(k).to_string()
+        } else {
+            match p.source(c.media) {
+                Some(kt_model::Source::Seq(s)) => crate::i18n::reel_display_name(&s.name).into_owned(),
+                Some(kt_model::Source::File(m)) => media_display_name(&m.path),
+                None => String::new(),
+            }
+        };
+        crate::toolbar::cut_name(&name, 40)
+    }
 }
 
 #[derive(Default)]

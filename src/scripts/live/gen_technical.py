@@ -74,15 +74,15 @@ def main(out):
         app.new_generator("smpte", what="SMPTE bars")
         app.expect(app.until(lambda: len(app.live_clips()) == before + 1), f"the bars are one silent event: {app.live_clips()}")
         app.step("bars", "SMPTE bars at 7 s, its window open: a picture with no sound event")
-        app.click_probe("tone", "the Tone tick")
+        app.click_probe("flag.tone", "the Tone tick")
         app.expect(app.until(lambda: len(app.live_clips()) == before + 2), f"the tick brought the sound event: {app.live_clips()}")
         tpp = app.geom()["ticks_per_px"]
         at = [c for c in app.live_clips() if abs(c[0] - 7 * SEC) <= 2 * tpp]
         app.expect(len(at) == 2 and at[0][:2] == at[1][:2], f"the picture and its sound span the same time: {at}")
         app.step("tone-on", "Tone ticked: a linked sound event under the bars, of the same span")
-        app.click_probe("tone", "the Tone tick")
+        app.click_probe("flag.tone", "the Tone tick")
         app.expect(app.until(lambda: len(app.live_clips()) == before + 1), f"the tick off took the sound event: {app.live_clips()}")
-        app.click_probe("tone", "the Tone tick")
+        app.click_probe("flag.tone", "the Tone tick")
         app.expect(app.until(lambda: len(app.live_clips()) == before + 2), f"the tick brought it again: {app.live_clips()}")
         app.key("Escape")
         ry = app.ruler_y()

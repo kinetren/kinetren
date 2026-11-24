@@ -114,11 +114,15 @@ fn window_button(ui: &mut egui::Ui, kind: u8, maximized: bool) -> egui::Response
 /// Reel name for the crumb: a long one is truncated, not breaking the row
 /// (checklist rule 7; one truncation helper for all places).
 fn crumb_label(name: &str) -> String {
-    const MAX: usize = 18;
-    if name.chars().count() <= MAX {
+    cut_name(name, 18)
+}
+
+/// A name of at most `max` characters, the rest an ellipsis.
+pub(crate) fn cut_name(name: &str, max: usize) -> String {
+    if name.chars().count() <= max {
         return name.to_string();
     }
-    let head: String = name.chars().take(MAX - 1).collect();
+    let head: String = name.chars().take(max - 1).collect();
     format!("{head}…")
 }
 
@@ -219,6 +223,7 @@ impl KtApp {
             egui::FontId::proportional(11.5),
             egui::Color32::from_gray(125),
         );
+        crate::widgets::field_probe::note("title.project", title_at);
         let mut title_end = title_at.right();
         if base.len() < self.last_title.len() {
             let word_at = fg.text(
@@ -774,6 +779,7 @@ impl KtApp {
                 x = end;
             }
             tb_fade(ui, view, self.tb_scroll, slide);
+            crate::widgets::field_probe::note("tb.slid", view);
             ui.advance_cursor_after_rect(view);
         }
         if keep < TB_GROUPS {

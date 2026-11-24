@@ -74,6 +74,26 @@ pub fn restored_size(remembered: Option<eframe::egui::Vec2>, monitor: eframe::eg
     remembered.filter(|s| is_normal(*s, Some(monitor))).unwrap_or(monitor * 0.8)
 }
 
+/// Frames after which the window is on screen and its state is the window manager's.
+pub const STARTED: u8 = 3;
+
+/// A window that came up over the whole monitor and is NOT maximized: eframe saved a maximized window's
+/// state and size, and winit asks for the state before the window is mapped, which the window manager
+/// drops (X11) — so it looked maximized, moved at full size and "restored" to nothing (`v26.10` T5). It
+/// is given its normal size and then maximized in truth: the window manager knows both.
+pub fn adopt_start(ctx: &eframe::egui::Context) {
+    use eframe::egui::ViewportCommand as V;
+    let (size, v) = ctx.input(|i| (i.content_rect().size(), i.viewport().clone()));
+    let Some(monitor) = v.monitor_size else { return };
+    if v.maximized != Some(false) || v.fullscreen.unwrap_or(false) || is_normal(size, Some(monitor)) {
+        return;
+    }
+    let normal = restored_size(normal_size(ctx), monitor);
+    ctx.send_viewport_cmd(V::InnerSize(normal));
+    ctx.send_viewport_cmd(V::OuterPosition(((monitor - normal) * 0.5).to_pos2()));
+    ctx.send_viewport_cmd(V::Maximized(true));
+}
+
 /// Note the window's size when it is a normal one; `true` — it is. Writes only a changed size.
 pub fn note_normal(ctx: &eframe::egui::Context) -> bool {
     let (size, monitor, full) = ctx.input(|i| {

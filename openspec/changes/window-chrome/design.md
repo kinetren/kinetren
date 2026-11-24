@@ -1,6 +1,7 @@
 # Design: window-chrome
 
-> DESIGN ONLY, revision 2 (2026-11-22): D4 dropped by the owner's B9. Revision 1 on `e56a543c`.
+> Revision 3 (2026-11-24): BUILT on orch `5986f08e`; what differs from the plan is said in each section. D4 dropped by
+> the owner's B9.
 
 ## Context
 
@@ -22,30 +23,39 @@
 
 ## D1. The layer order: nothing of the main window over a tool window
 
-- One layer `"under-windows"` in `Order::Middle`, created before any window each frame and never brought to the top
-  (`Context::move_to_bottom` of its `LayerId` once a frame), so it lies above the panels and below every window.
-- The glow: per glowing thing (the preview, the meters column) ONE mesh — the halo and the body's glow in the same
-  vertices — drawn in this layer. The meters' bars stay in their panel; their glow is no longer split between the
-  panel and an overlay (the owner's "на одном объекте").
-- The status hint and the toolbar's title text are painted in this layer too (they belong to the main window).
-- A guard (t3935) scans kt-app for `Order::Foreground` and `Order::Tooltip` and compares with a list of allowed
-  uses with reasons: tooltips and the hint popup, drag ghosts of the timeline and the bin, the lesson outline,
-  combo/menu popups, the preview's on-picture handles in the detached viewport. A new use without a row fails.
+- One layer, `under_windows()`: an egui `Area` of `Order::Background`, shown empty at the start of each frame. The panels
+  are the root area of the same order, registered first, so the layer is painted and hit over every panel and under every
+  window. Not `Order::Middle` (the plan): egui 0.36 paints a layer it does not know as an area LAST in its order — over
+  every window — and has no `move_to_bottom`; an area there would also stand in every list of windows.
+- Painted in it: the glow of the preview and of the meters, the project's title with its clickable crumbs, the resting
+  status line.
+- A LIVE status line (hover, a refusal, a message) stays `Foreground`: it answers the pointer or an action, which may be
+  inside the very window that covers the strip; under it, the one place for hints (rule 10) would be silent there.
+- The glow is NOT one mesh per thing (the plan): the meters' inner glow lies under their bars and the halo over the
+  neighbouring panels; one mesh cannot be on both sides of the bars. His sentence asks why the halo shows and the body
+  does not; now neither does.
+- The guard is the closed list of `no_teaching_layer_over_the_ui` (t988): each row with its reason, and a row no source
+  uses fails too. No separate t3935.
 
 ## D2. A maximized start (T5)
 
-- At start, `window_frame` reads the WM's state (X11 `_NET_WM_STATE_MAXIMIZED_*`, Windows `IsZoomed`; Wayland: the
-  configure state winit passes) and sets `KtApp.maximized_at_start`.
-- `window_drag_from`: maximized = `viewport().maximized` OR (`maximized_at_start` and the window's outer rect equals
-  the monitor's work area within 2 px). Restoring a window with no recorded normal size sends `InnerSize(80 % of
-  the work area)` and `OuterPosition(centred under the pointer)` before `Maximized(false)`, so the drag starts at
-  the normal size; the normal size is then remembered (eframe's window state).
+The mechanism (reproduced live under openbox): eframe saves at exit the state AND the size a maximized window has, the
+screen; at the next start winit sends the maximized state before the window is mapped, and the window manager drops it
+(X11). The window comes up the size of the screen and NOT maximized: a drag moves it at full size (his "в том же
+размере"); maximized for real and dragged, it goes back to its "normal" size — the screen — and only the frame shrinks.
+- `window_frame::note_normal` keeps the last size that was not maximized in egui's saved memory (written when it changes);
+- `window_frame::adopt_start`, once, on the third frame: a window over the whole monitor that is not maximized gets its
+  normal size (or 80 % of the monitor), centred, and then the maximized state, so the window manager knows both;
+- `restore_window` sends the normal size when the window has not been normal in this run, and a drag places the window
+  under the pointer;
+- the bottom toolbar's strip had a drag of its own that sent only `StartDrag`: a maximized window moved at full size.
+  It takes `window_drag_from` now. The restore button and the double click take the same `restore_window`.
 
 ## D3. The toolbar's wheel (U10)
 
 Over the toolbar strip, a wheel delta (y, or x with Shift) moves a horizontal offset of the row by the delta,
-clamped to [0, need − avail]; the groups are laid out from the offset, the clipped edges fade over 12 px; the "more"
-menu holds what is still outside. The offset resets when the window grows past `need`. No scroll bar (rule 13).
+clamped to [0, need − avail]; the transport and the timecode (the groups that never leave the row) stand, the groups
+after them slide under, the clipped edges fade over 12 px; the "more" menu holds what is not wholly in view. The offset resets when the window grows past `need`. No scroll bar (rule 13).
 
 ## D4. (dropped)
 
@@ -61,10 +71,13 @@ preview's title row is the shell's (change `detached-windows`).
 
 ## D6. Titles (W3)
 
-`event_title(clip)`: a file's base name; a generator's kind name, a title's first 24 characters of text; a reel's
-name; then " — " and the window's kind (Effects, Transition, Generator). A pair: "<video name> + sound". The event
-number ("#2149") is drawn in the chain head row, right-aligned, weak text, as part of the row (no new row, rule 13);
-its accessible name stays. Long names are elided by `widgets::elided_name` (rule 7).
+`KtApp::event_name(clip)`: a title's first 24 characters of text (a counter's kind name: it does not draw its text); a
+generator's kind name; a reel's name; a file's base name (40 characters). Effects: "<name> — Effects", a linked pair
+"<name> + sound — Effects", a larger group "<name> and its linked tracks — Effects". A transition: "<a> / <b> —
+Transition", at an edge "<name> — Edge transition" (it was "Transition 12", an id, against the plan's table). A morpher:
+"Morpher M1, 00:00:03:00" — it has no name of its own: the row and the start are what the timeline shows. The number
+("#2149") is weak and small: in the chain's fold head after "Video"/"Audio", and in the action row of the transition and
+morpher windows.
 
 ## D7. Class walk — "the main window's drawing over a tool window" and "a title that names an id"
 
@@ -78,9 +91,11 @@ its accessible name stays. Long names are elided by `widgets::elided_name` (rule
 | lesson outline | Foreground | intended | listed |
 | hint popup / tooltips | Tooltip | intended | listed |
 | event window titles | `TITLE` with `#N` | — | D6 |
-| transition window title | kind name | names the kind, fine | D6 adds the pair's names |
+| transition window title | `TITLE` with an id | — | D6: the events it joins |
 | track window title | the track's label | fine | — |
-| morpher window title | the layer number | an id | D6: the layer's name |
+| morpher window title | `TITLE` with an id | — | D6: the row and the start |
+| track window, camera window | the track's label, the camera's name | fine | — |
+| drag of a maximized window | header strip, top strip, window buttons, bottom toolbar | the toolbar's own drag did not restore | D2 |
 
 ## D8. Idle
 

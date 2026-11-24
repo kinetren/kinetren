@@ -7245,7 +7245,8 @@ fn t242_morph_editor_shows_target_mode_and_timing() {
         "a frozen list has no place for the layer explanation"
     );
     assert!(
-        h.query_by_label_contains("#1").is_some(),
+        // (the window's own weak "#n" is not the list — window-chrome D6)
+        crate::reach_tests::painted_texts(&h).iter().any(|t| t.src.contains("#1") && t.src != "#1"),
         "the frozen list must be visible by name"
     );
 }
@@ -15168,7 +15169,7 @@ pub(crate) fn painted_in_fx_window(h: &mut Harness<'_, KtApp>, clip: kt_model::C
         let w = win(h)?;
         let found = crate::reach_tests::painted_texts(h).into_iter().find(|t| t.src == label).map(|t| t.rect);
         if let Some(r) = found
-            && w.shrink(24.0).contains_rect(r)
+            && w.shrink2(egui::vec2(6.0, 24.0)).contains_rect(r)
         {
             return Some(r);
         }
@@ -22204,6 +22205,22 @@ fn t3937_a_window_started_maximized_drags_at_a_normal_size() {
         let next: Vec<V> = h.output().viewport_output.values().flat_map(|v| v.commands.clone()).collect();
         assert!(next.iter().any(|c| matches!(c, V::StartDrag)), "then it moves: {next:?}");
     }
+    // a window over the whole screen that is not maximized (what eframe and winit make of a saved
+    // maximized one on X11): given a normal size and maximized in truth, once
+    let mut h = harness();
+    h.state_mut().start_frames = crate::window_frame::STARTED - 1;
+    {
+        let v = h.input_mut().viewports.entry(egui::ViewportId::ROOT).or_default();
+        v.maximized = Some(false);
+        v.monitor_size = Some(egui::vec2(W, H));
+    }
+    h.step();
+    let cmds: Vec<V> = h.output().viewport_output.values().flat_map(|v| v.commands.clone()).collect();
+    assert_eq!(sizes(&cmds), [egui::vec2(W, H) * 0.8], "a normal size: {cmds:?}");
+    assert!(cmds.iter().any(|c| matches!(c, V::Maximized(true))), "and maximized in truth");
+    h.step();
+    let cmds: Vec<V> = h.output().viewport_output.values().flat_map(|v| v.commands.clone()).collect();
+    assert!(sizes(&cmds).is_empty(), "once");
     // the remembered normal size
     let mut h = start();
     h.ctx.data_mut(|d| d.insert_persisted(egui::Id::new("kt-window-normal-size"), [1200.0f32, 700.0]));
