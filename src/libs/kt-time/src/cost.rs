@@ -59,10 +59,14 @@ pub enum Cost {
     /// A parameter set by its NAME on a per-frame path (frame-work-by-edit, row 169): carriers apply
     /// their curves by compiled index, so a frame counts none.
     ParamByName,
+    /// An event's value copied because another project version held its cell (shared-events D1).
+    EventClone,
+    /// An event's fingerprint computed: the hash of its Debug text, once per version (shared-events D3).
+    EventHash,
 }
 
 impl Cost {
-    pub const ALL: [Cost; 14] = [
+    pub const ALL: [Cost; 16] = [
         Cost::WarpSegment,
         Cost::ClipSearch,
         Cost::ReelHash,
@@ -77,6 +81,8 @@ impl Cost {
         Cost::FrameClip,
         Cost::ChainClone,
         Cost::ParamByName,
+        Cost::EventClone,
+        Cost::EventHash,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -95,6 +101,8 @@ impl Cost {
             Cost::FrameClip => "frame_clips",
             Cost::ChainClone => "chain_clones",
             Cost::ParamByName => "params_by_name",
+            Cost::EventClone => "event_clones",
+            Cost::EventHash => "event_hashes",
         }
     }
 }

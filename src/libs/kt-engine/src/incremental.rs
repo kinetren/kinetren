@@ -173,35 +173,5 @@ pub(crate) fn resolve(project: &Project, seq: Option<MediaId>, overrides: &[Over
     r
 }
 
-/// A streaming hasher behind `fmt::Write`: the Debug text of a value hashed with no `String` built.
-/// The digest equals `xxh3_64` of the text.
-pub(crate) struct DebugHash(xxhash_rust::xxh3::Xxh3);
-
-impl DebugHash {
-    pub(crate) fn new() -> DebugHash {
-        DebugHash(xxhash_rust::xxh3::Xxh3::new())
-    }
-
-    pub(crate) fn digest(&self) -> u64 {
-        self.0.digest()
-    }
-}
-
-impl std::fmt::Write for DebugHash {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        self.0.update(s.as_bytes());
-        Ok(())
-    }
-}
-
-/// `xxh3_64(format!("{v:?}"))` without the `String`.
-pub(crate) fn hash_debug(v: &impl std::fmt::Debug) -> u64 {
-    hash_fmt(format_args!("{v:?}"))
-}
-
-/// `xxh3_64(format!(…))` without the `String`.
-pub(crate) fn hash_fmt(args: std::fmt::Arguments<'_>) -> u64 {
-    let mut h = DebugHash::new();
-    let _ = std::fmt::write(&mut h, args);
-    h.digest()
-}
+/// The Debug-text hash of the keys: the model's own (shared-events D1), an event cell's fingerprint is it.
+pub(crate) use kt_model::shared::{hash_debug, hash_fmt};

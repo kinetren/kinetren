@@ -32,3 +32,8 @@ events), and one `apply_batch` made four to five whole-project copies plus a ful
 - **WHEN** every command family is applied once to one event of a 13 357-event project (and the lane-order and track-renumbering commands to three rows)
 - **THEN** each copies at most the events it writes; a command still writing through the container's `iter_mut` would copy every event and is named by the test
 - **TEST** t3375 (`src/libs/kt-model/tests/shared_events.rs`)
+
+#### Scenario: The shared vector is a vector
+- **WHEN** a vector of values and the container made of it are printed (plain and pretty), serialized, read back, compared, cloned, written, filtered and drained
+- **THEN** the text, the bytes and the values are equal; a clone copies no value, a write copies the one value it writes and only while another version holds it; the fingerprint equals the hash of the Debug text, is computed once per version, and a write clears it
+- **TEST** t3376, t3377 (`src/libs/kt-model/src/shared.rs`)
