@@ -368,3 +368,16 @@ drivers (`hw_device_opened`: the encoder's device, the segment decoder's, the re
 server's client (cpal → ALSA → PipeWire: kt-app `audio_out` at the first open); eframe's windowing
 libraries (loaded before the display device, which registers after them). Not native or without
 destructors: SQLite (bundled, static), the fonts, our own Rust (statics are never dropped).
+
+## own-data-dir (2026-11-24, found-defects 829)
+
+- The rule stands where the directory is resolved (`kt_dirs::tool_dir`), not at each launch: `cli.rs` set
+  `XDG_DATA_HOME` per test and forgot it in most, the scripts set none, and a developer's hand sets none ever. A
+  `[env]` table in `.cargo/config.toml` covers only what cargo starts, not the scripts and the hand runs, and would move
+  the data of `cargo run -p kt-app`.
+- The PROGRAM is not moved by where it was built: the owner runs `target/debug/kinetren` (finish.sh prints it). Its runs
+  by rigs are told by the rig's own variables, and refused without a directory.
+- Class walk — who of ours writes there: kt-cli (the two places, `set_cache_dir` and `set_data_root`); kt-app's tests
+  (their own temp folder since render-finish-crash, t1310/t1311); the live rig and the readme shots (`XDG_DATA_HOME` in
+  `kt_live`/`worker`, now enforced by the program); kt-gpu's and kt-media's tests (folders of their own). A session's
+  `XDG_DATA_HOME` does not redirect a tool: it may be the person's real directory.

@@ -24,3 +24,6 @@ Capability: `durability` (requirement "Per-user data lives in `kinetren`").
 - `disk_space` and `mark_unsynced` (project-cache-folder) are the system calls the cache folder needs; the
   places `project_caches_root`/`cache_folders_registry` are functions of the data folder a caller names,
   never of `data_dir()` itself, so a test passes its own.
+- **What a tool of ours writes goes into `tool_dir()`, never `data_dir()`** (own-data-dir, found-defects 829): out of a
+  cargo target directory it is `<target>/run-data`. `data_dir()` in kt-cli is for READING the person's trace, locks and
+  FFmpeg choice (t3722 counts the uses). A new rig variable joins `RIG_VARS`.

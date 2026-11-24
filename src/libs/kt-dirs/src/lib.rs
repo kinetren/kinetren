@@ -177,6 +177,50 @@ pub fn sandbox() -> Sandbox {
     *SANDBOX.get_or_init(|| sandbox_of(&SystemEnv, std::path::Path::new("/.flatpak-info").exists()))
 }
 
+/// The cargo target directory an executable was built into, or `None` — an installed one: the folder
+/// cargo marks with `CACHEDIR.TAG`, or the parent of a `<profile>` folder with `deps` beside the
+/// executable (a nextest archive carries no mark). Pure over `exists`.
+pub fn cargo_target_of(exe: &std::path::Path, exists: &dyn Fn(&std::path::Path) -> bool) -> Option<PathBuf> {
+    let dir = exe.parent()?;
+    let profile = if dir.file_name().is_some_and(|n| n == "deps" || n == "examples") { dir.parent()? } else { dir };
+    let marked = profile.ancestors().skip(1).take(3).find(|d| exists(&d.join("CACHEDIR.TAG")));
+    match marked {
+        Some(d) => Some(d.to_path_buf()),
+        None if exists(&profile.join("deps")) => Some(profile.parent()?.to_path_buf()),
+        None => None,
+    }
+}
+
+/// Where a TOOL of ours (kt-cli) keeps what it writes (own-data-dir, found-defects 829): an explicit
+/// `KINETREN_DATA_DIR`, else — run out of a cargo target directory, so a test, a bench, a script or a
+/// hand run of a developer — `<target>/run-data`, else the program's directory, which an installed
+/// kt-cli shares. Reading what the program left (its trace, its locks, its FFmpeg choice) is
+/// [`data_dir`]'s.
+pub fn tool_dir_of(env: &dyn Env, target: Option<PathBuf>) -> PathBuf {
+    match (env.var_os("KINETREN_DATA_DIR").map(PathBuf::from).filter(|p| p.is_absolute()), target) {
+        (None, Some(t)) => t.join("run-data"),
+        _ => resolve(env).data,
+    }
+}
+
+/// [`tool_dir_of`] of this process.
+pub fn tool_dir() -> PathBuf {
+    let target = std::env::current_exe().ok().and_then(|e| cargo_target_of(&e, &|p| p.exists()));
+    tool_dir_of(&SystemEnv, target)
+}
+
+/// The live rig's variables: a program started with one of them is our run, not a person's.
+pub const RIG_VARS: &[&str] = &["KT_LIVE_CTL", "KT_GEOM_DUMP"];
+
+/// A program started by a rig ([`RIG_VARS`]) SHALL have been given a data directory of its own
+/// (own-data-dir): the variable that asks for it, or `None` when all is well. The program refuses to
+/// start on a `Some`: it would write into the person's recovery, journal and locks.
+pub fn rig_without_data_dir(env: &dyn Env) -> Option<&'static str> {
+    let set = |n: &str| env.var_os(n).is_some_and(|v| !v.is_empty());
+    let rig = RIG_VARS.iter().copied().find(|v| set(v))?;
+    (!set("KINETREN_DATA_DIR") && !(env.os() == Os::Linux && set("XDG_DATA_HOME"))).then_some(rig)
+}
+
 /// The local directory of this machine (downloads).
 pub fn local_dir() -> PathBuf {
     system().local.clone()

@@ -391,6 +391,27 @@ any `kinotrain` folder found there.
 - **THEN** the results are `$XDG_DATA_HOME/kinetren`, `~/.local/share/kinetren`, the temp directory (with a warning), `%APPDATA%\kinetren\data` with downloads under `%LOCALAPPDATA%\kinetren`, and the temp directory (with a warning); the `kinotrain/` folder in the working directory is untouched in every case
 - **TEST** t851 (`src/libs/kt-dirs/tests/dirs.rs`)
 
+### Requirement: A run of ours has a data directory of its own
+A tool of ours (kt-cli) run out of a cargo build directory — by a test, a bench, a script, a live scenario or a hand —
+SHALL keep what it writes (the compiled pipelines, the measured pass times, the caches of projects whose folder takes
+none) in `<target>/run-data`, whatever `XDG_DATA_HOME` and `HOME` say; an explicit `KINETREN_DATA_DIR` SHALL win, and an
+installed kt-cli SHALL share the program's directory. It SHALL only READ the person's directory (the trace, the locks,
+the FFmpeg choice). A program started by a live rig (`KT_LIVE_CTL`, `KT_GEOM_DUMP`) without a data directory of its own
+SHALL refuse to start, naming the variable.
+
+Why: found-defects 829 — tests and hand runs wrote the owner's measured pass times (a debug build on a loaded machine)
+and twelve cache folders into his data directory while his program was not running.
+
+#### Scenario: kt-cli out of the build directory
+- **WHEN** kt-cli of the build directory makes, renders and scans a project with a home of its own and no variables set
+- **THEN** nothing appears in that home's `.local/share`; the build directory holds `run-data`; no source of kt-cli names the person's directory but the two that read it
+- **TEST** t3722 (`src/apps/kt-cli/tests/cli.rs`)
+
+#### Scenario: The rule
+- **WHEN** executables of a build directory, of a nextest archive and installed ones are asked, with and without `KINETREN_DATA_DIR`; and a rig starts a program with and without a directory of its own
+- **THEN** the first two give `<target>/run-data`, the installed the program's directory, the variable wins; the rig without one is named
+- **TEST** t3721 (`src/libs/kt-dirs/tests/dirs.rs`)
+
 ### Requirement: Atomic replace on Windows survives a briefly held target
 On Windows the rename step of `kt_otio::write_atomic` SHALL replace the project with
 `MoveFileExW(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)` and SHALL retry on a
