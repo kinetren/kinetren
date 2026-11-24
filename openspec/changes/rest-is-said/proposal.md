@@ -38,12 +38,14 @@ message was gone with the run.
   in one run, instead of one at a time over months.
 - **A red keeps its message**: the test run writes its failures to a file that the next run does not overwrite.
 - **Row 960**: the prefetch's near part on a pause waits for a frame instead of passing for ever.
+- **Row 839**: the disk prerender gives a moment up when its source ANSWERED without the frame, not after three seconds: a slow disk loses nothing.
 
 ## Capabilities
 
 ### Modified Capabilities
 - `distribution`: how a test observes rest, how a wait ends, what a red leaves behind.
 - `transport`: a paused preview whose sources do not answer runs no passes.
+- `video-plan`: the prerender waits for a slow source and gives up on one that answered.
 
 ## Impact
 

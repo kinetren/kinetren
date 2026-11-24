@@ -1,12 +1,8 @@
 # Tasks: durable-history-and-mix
 
-> IMPLEMENTATION-READY (2026-11-22; revised 2026-11-24 for the owner's D6, kkt-26.11.22 line 9: no history on
-> disk, the mix tier only). Starts after `project-cache-folder` sections 1 and 3 (the folder, the header,
-> `ask_room`, the key without the build). No longer waits for `stream-picture-stays` (the STREAM half is gone).
-> Tests: t3336, t3337, t3346–t3352 (t3338–t3345 and t4105 freed). Code references checked against orch
-> `873934f7`, the mix half at `af14db35` (design D10). Read first: design D1, D2, D5, D10;
-> `src/libs/kt-engine/CLAUDE.md`; `openspec show audio-render --type spec`. Build-queue areas: CACHE (`mix/`),
-> AUDIO (`mix.rs`), PLAYER. Commit per section; target-prune after each.
+> IMPLEMENTATION-READY (2026-11-22; revised 2026-11-24 for the owner's D6, re-read 2026-11-25 at orch `fc60a5d9`: D5, D10). `project-cache-folder` and
+> `persistent-cache` are in. After `track-stage-preroll` (`mix.rs`). Tests: t3336, t3337, t3346–t3352, t4145. Read first: design D1, D2, D5, D10; `src/libs/kt-engine/CLAUDE.md`;
+> `openspec show audio-render --type spec`. Build-queue areas: CACHE (`mix/`), AUDIO (`mix.rs`), PLAYER. Commit per section; target-prune after each.
 
 ## 0. Notes first
 
@@ -24,15 +20,10 @@
 
 ## 2. The mix tier
 
-- [ ] 2.1 `Unit.data` (`mix.rs:56`) becomes `Arc<[f32]>`; `MixCoverage` (`:499`) carries a snapshot of the
-      unwritten units; the player's thread writes runs (raw f32, a manifest per run) to `mix/v<FORMAT>/` at
-      rest (the prerender's quiet rule, `render_cache.rs` `quiet_left` `:925`), through `project-cache-folder`'s
-      header and `ask_room`, salted by the store's salt and the audio file identities of the widened range
-      (`audio.rs:1012`)
-- [ ] 2.2 the loader on `prefetch_loop` (`player.rs:3400`, beside `mix.budget.ask` `:3522`) sends restored
-      runs over a second `rtrb` ring; `audio_render_loop` (`:2442`) drains it at the top of a pass into
-      `MixStore::write` (`mix.rs:303`) as first recordings; the render thread never opens a file;
-      t3346–t3350
+- [ ] 2.0 `MediaSource::sound_identity`, `MediaParts` keeps it at a raise and through `swap_picture`; `audio-path.txt`, `AUDIO_PATH_VERSION` (a guard like t3808's); t4145
+- [ ] 2.1 `Unit.data` becomes `Arc<[f32]>`; `MixCoverage` carries the snapshot of whole unwritten units; the `mix-disk` lane; the step of `run_prerender` (D5) writes runs (raw f32, a
+      manifest per run) to `mix/v<FORMAT>/` through the folder's header and `ask_room`
+- [ ] 2.2 the prefetch thread asks the lane; the ring; the drain in `audio_render_loop` into `MixStore::write` as first recordings; the render thread never opens a file; t3346–t3350, t2684 green
 - [ ] 2.3 the bars' scan at rest adds restorable bursts; the export never reads the tier; t3351, t3352
 - [ ] 2.4 `cargo test -p kt-engine -p kt-cli`; clippy; the idle check on the heavy showcase (after the writes,
       nothing at rest); kt-engine `CLAUDE.md` ("the render thread never reads a file; a new kept result names its

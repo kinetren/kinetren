@@ -1,6 +1,7 @@
 # Design: track-stage-preroll
 
-> Revised 2026-11-22 against the tree (`873934f7`) and the owner's Q1 a. D1's "dependency order" premise was
+> Re-read 2026-11-25 against orch `fc60a5d9` (persistent-cache, loudness-norms, gpu-waits-named merged): D1a, D2, D4, D5 say what they
+> changed; the line numbers below are of `873934f7` and have moved: names decide. Revised 2026-11-22 against the tree (`873934f7`) and the owner's Q1 a. D1's "dependency order" premise was
 > wrong and is replaced (D1, step 3); the pre-roll is driven by a flag on the FX store (D1a); the start's
 > prefetch takes the pre-roll window (D2).
 
@@ -53,6 +54,14 @@ false in a derived `Default`, so a fresh export store is cold.
 - The pause meter (`player.rs:841`) sets it too. The meter shows the level of what plays, and a pre-roll
   per meter tick would cost work at rest.
 
+**The program stage (loudness-norms)** stands after the mix and after the kept mix, so it neither pre-rolls nor rings; but it READS the mix its
+look-ahead early. After a seek the player's first render is its prime, `[render_head, render_head + LOOKAHEAD)` by `mix.render`, and the chunks follow at `render_head + lead`; the
+export's is the same (`render_raw_audio_range`). Both begin at the head, so the flag's one pre-roll falls into the first of them and the next chunk continues it: nothing to add, and t3361 runs once with a
+program stage. The stage's `LOOKAHEAD` joins the window the start's hold waits for already (`lead`).
+
+**The render's measures** (`program.rs`' match jobs, the loudness of a range) render through a fresh store from their range's start: they pre-roll too, and a range's loudness becomes what the whole render's
+range has. t3921 and t3922's numbers are of whole projects and do not move.
+
 ## D2. Where it runs and what it costs
 
 On the audio render thread, at the seek, like event pre-rolls (invariant 6: never in the callback; the
@@ -78,6 +87,8 @@ rings before) is unchanged. With Q1 b the export still takes the full tail.
 
 ## D4. The kept mix
 
+(The main spec says the opposite in one clause of "A covered range keeps its final mix" and in t2373's scenario: the delta MODIFIES that requirement.)
+
 With the owner's Q1 a there is no cut pre-roll, so `cold_after_seek` (`audio.rs:1047–1055`) is removed and
 `MixPlay::fx_reset` (`mix.rs:751–754`) sets `keep_from = head`. After a seek the kept mix keeps the start from
 the first play. t2373 (`tests/mix_settle.rs`), which asserted the cold start, is rewritten to t3365's rule.
@@ -93,6 +104,8 @@ the first play. t2373 (`tests/mix_settle.rs`), which asserted the cold start, is
 | Pitch's twin, warp | inside the event's `hard_seek` | unchanged |
 | Kept mix leaving a range (kept-mix-settle) | settle through replayed frames | unchanged |
 | Loop wrap | a seam, no pre-roll | unchanged (a stage rings across the wrap) |
+| The program stage's limiter (loudness-norms) | primed by the mix itself at every seek | unchanged (D1a) |
+| A measure of a range (`Analyze`, the match jobs) | a fresh store | D1a |
 | Video stream stages (history walks) | a history walk | not audio; unchanged |
 | Datamosh / VHS / ISP audio halves (paired effects) | their event chains | unchanged |
 

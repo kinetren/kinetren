@@ -1,6 +1,7 @@
 # Tasks: track-stage-preroll
 
-> IMPLEMENTATION-READY (2026-11-22). The owner answered Q1 a (kkt-26.11.20 A15: always the full tail). Tests:
+> IMPLEMENTATION-READY (2026-11-22; re-read 2026-11-25 at orch `fc60a5d9`: line numbers have moved, names decide). Nothing holds it but
+> `shared-events`' signatures in `audio.rs` (a text merge). The owner answered Q1 a (kkt-26.11.20 A15: always the full tail). Tests:
 > t3361–t3366, t4103–t4104. Code references checked against orch `873934f7`. Read first: `design.md` D1, D1a,
 > D2, D4; `src/libs/kt-engine/CLAUDE.md`; `openspec show audio-render --type spec`. Build-queue area: AUDIO
 > (`audio.rs`, `fxstore.rs`, `mix.rs`) plus the start hold in `player.rs`. Commit per section; target-prune.
@@ -29,7 +30,7 @@
 
 ## 2. Tests
 
-- [ ] 2.1 t3361, t3362, t3364, t4103 (`tests/track_mix.rs`): byte-equal tests use a delay without feedback
+- [ ] 2.1 t3361 (also with a program stage, D1a), t3362, t3364, t4103 (`tests/track_mix.rs`): byte-equal tests use a delay without feedback
       (t2376's way), a reverb case within tolerance
 - [ ] 2.2 t3363 (`tests/golden_export.rs`): a range export equals its part of the whole export; GOLDEN_AUDIO
       (`:309`) unchanged
