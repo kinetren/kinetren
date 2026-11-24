@@ -638,7 +638,6 @@ fn t3843_the_program_at_rest_after_cyclic_writing_costs_nothing() {
         codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
         root: root.clone(),
         made: kt_engine::render_cache::Made::of(60),
-        base: None,
         cap: None,
     }));
     // a stretch longer than the folder holds is measured slow: the prerender writes it in a cycle

@@ -22339,12 +22339,7 @@ fn t3842_preferences_list_the_cache_folders() {
     use crate::i18n::{k, tr};
     use egui_kittest::kittest::Queryable;
     use kt_media::cache_folder::{Folder, registry};
-    // tall: the section is the window's last, and a click below the fold hits nothing
-    let mut h = harness_sized(1440.0, 1600.0);
-    crate::i18n::set_lang(crate::i18n::Lang::En);
-    assert!(h.state().index.wait_idle());
-    h.step();
-    h.step();
+    let mut h = harness_lang(crate::i18n::Lang::En);
     let dir = std::env::temp_dir().join(format!("kt-t3842-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let make = |n: &str, project: bool| {
@@ -22376,26 +22371,13 @@ fn t3842_preferences_list_the_cache_folders() {
             registry::remove(&r.folder);
         }
     }
-    let wait_rolling = |h: &mut Harness<'static, KtApp>, what: &str, until: &dyn Fn(&Harness<'static, KtApp>) -> bool, roll: bool| {
+    let wait = |h: &mut Harness<'static, KtApp>, what: &str, until: &dyn Fn(&Harness<'static, KtApp>) -> bool| {
         let deadline = kt_time::test_deadline();
         while !until(h) {
             assert!(std::time::Instant::now() < deadline, "{what}");
-            if roll {
-                let win = h.ctx.memory(|m| m.area_rect(egui::Id::new("kt_prefs"))).unwrap();
-                h.hover_at(win.center());
-                h.event(egui::Event::MouseWheel {
-                    unit: egui::MouseWheelUnit::Point,
-                    delta: egui::vec2(0.0, -60.0),
-                    modifiers: egui::Modifiers::NONE,
-                    phase: egui::TouchPhase::Move,
-                });
-            }
             std::thread::sleep(std::time::Duration::from_millis(10));
             h.step();
         }
-    };
-    let wait = |h: &mut Harness<'static, KtApp>, what: &str, until: &dyn Fn(&Harness<'static, KtApp>) -> bool| {
-        wait_rolling(h, what, until, false)
     };
     crate::reach_tests::open_preferences(&mut h);
     let texts = |h: &Harness<'static, KtApp>| crate::reach_tests::painted_texts(h).into_iter().map(|t| t.drawn).collect::<Vec<_>>();
@@ -22411,24 +22393,11 @@ fn t3842_preferences_list_the_cache_folders() {
 
     let rows = h.state().start.caches.rows_for_tests();
     let at = rows.iter().position(|r| r.folder == orphan).unwrap();
-    // the list comes after the window opened and may stand under its fold: the wheel brings the row, as
-    // a person's does (a click below the fold hits nothing)
-    let probe = format!("prefs.cache.{at}.delete");
-    wait_rolling(&mut h, "the row's button never came in view", &|h| {
-        let win = h.ctx.memory(|m| m.area_rect(egui::Id::new("kt_prefs"))).unwrap();
-        crate::widgets::field_probe::rect_of(&probe).is_some_and(|r| win.shrink(30.0).contains_rect(r))
-    }, true);
-    // the scroll glides: a press on a moving row hits its neighbour
-    let place = || crate::widgets::field_probe::rect_of(&probe).unwrap();
-    loop {
-        let was = place();
-        h.step();
-        h.step();
-        if place() == was {
-            break;
-        }
-    }
-    let r = place();
+    let r = crate::widgets::field_probe::rect_of(&format!("prefs.cache.{at}.delete")).unwrap();
+    // the window opened tall enough for the list: every row is on screen, not below its fold
+    let win = h.ctx.memory(|m| m.area_rect(egui::Id::new("kt_prefs"))).unwrap();
+    assert!(win.contains_rect(r), "the list stands below the window's fold: {r:?} in {win:?}");
+    assert!(texts(&h).iter().any(|t| t.contains("gone")), "the orphan's row is not drawn: {:?}", texts(&h));
     crate::reach_tests::click_at(&mut h, r.center());
     wait(&mut h, "the orphan's row stays", &|h| has(h, "gone") == 0);
     assert!(!orphan.exists(), "the folder stays on the disk");

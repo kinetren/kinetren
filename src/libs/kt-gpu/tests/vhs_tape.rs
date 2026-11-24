@@ -50,6 +50,7 @@ impl Src {
             source: SourceId(self.id),
             cache_idx: 0,
             content: xxhash_rust::xxh3::xxh3_64(&self.frame.rgba),
+            leaf: Default::default(),
             src_scale: 1,
             input: kt_engine::video_plan::LayerInput::Frame(Some(self.frame.clone())),
             fx: kt_engine::LayerChain::Borrowed(&self.fx[..]),

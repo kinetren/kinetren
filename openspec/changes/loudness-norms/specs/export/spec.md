@@ -13,13 +13,13 @@ same material; the owner — "на уровне проекта нормализ�
 обратишь такие".
 
 #### Scenario: Loudness hears the event level
-- **WHEN** the same event is exported at 0 dB and at −10 dB with the program stage at 0 dB and its limiter off
+- **WHEN** the same event is exported at 0 dB and at −10 dB with no program stage
 - **THEN** the difference is exactly 10 LU (±0.15), and the true peak matches the amplitude of the source
 - **TEST** t406 (`src/libs/kt-engine/tests/export_loudness.rs`)
 
 #### Scenario: The master gain is not in the measurement
-- **WHEN** the player's monitoring volume is changed and the export is repeated; then the program stage's gain is raised 3 dB
-- **THEN** there is no monitoring-gain field in the project and the number is unchanged; with the stage raised the number is 3 LU higher
+- **WHEN** the player's monitoring volume is changed and the export is repeated; then a program stage of +3 dB, under its ceiling, is added
+- **THEN** there is no monitoring-gain field in the project and the number is unchanged; with the stage the number is 3 LU higher
 - **TEST** t407 (`src/libs/kt-engine/tests/export_loudness.rs`)
 
 #### Scenario: The meter that export measures with

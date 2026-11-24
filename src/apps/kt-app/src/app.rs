@@ -3334,7 +3334,6 @@ impl KtApp {
             codec: std::sync::Arc::new(kt_media::segment::ffmpeg::FfmpegSegments::from_env()),
             root,
             made: kt_engine::render_cache::Made::of(kt_media::ffmpeg::backend_info().map_or(0, |b| b.avcodec_version.0)),
-            base: self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf())),
             cap: kt_engine::render_cache::cap_from_env(),
         });
         self.player.set_render_cache(cfg);
@@ -10704,7 +10703,7 @@ thread_local! {
     static MEDIA_GRACE: std::cell::Cell<Option<std::time::Duration>> = const { std::cell::Cell::new(None) };
 }
 
-fn media_grace() -> std::time::Duration {
+pub(crate) fn media_grace() -> std::time::Duration {
     MEDIA_GRACE.with(|g| g.get()).unwrap_or(ANSWER_GRACE)
 }
 

@@ -150,9 +150,13 @@ impl MediaWorker {
         });
         let sh = shared.clone();
         let source_id = crate::source_id(media);
+        // what it decodes, known before its first insert (durable-moment-key D1): one place for the
+        // player's open, an added source and a replaced one
+        let ident = source.identity().unwrap_or_else(kt_cache::SourceIdent::once);
+        cache.adopt(source_id, ident);
         let join = std::thread::Builder::new()
             .name(format!("media-worker-{}", media.0))
-            .spawn(move || worker_loop(&sh, source_id, source.as_mut(), &cache, &stats))
+            .spawn(move || worker_loop(&sh, source_id, ident, source.as_mut(), &cache, &stats))
             .expect("spawn media worker");
         MediaWorker { shared, join: Some(join), media }
     }
@@ -316,6 +320,7 @@ fn trace_decoded(source: SourceId, kind: kt_cache::BurstKind, idx: i64) {
 fn worker_loop(
     shared: &Shared,
     source_id: SourceId,
+    mut ident: kt_cache::SourceIdent,
     source: &mut dyn MediaSource,
     cache: &BurstCache,
     stats: &DecodeStats,
@@ -373,7 +378,8 @@ fn worker_loop(
                     if applied {
                         // frames of the old parameters are discarded by THE SAME thread
                         // that inserts them: there is no race by construction
-                        cache.invalidate_source(source_id);
+                        ident = source.identity().unwrap_or_else(kt_cache::SourceIdent::once);
+                        cache.adopt(source_id, ident);
                         for s in stale {
                             cache.invalidate_source(s);
                         }
@@ -457,7 +463,7 @@ fn worker_loop(
         match job {
             Job::Audio { idx } => {
                 cursor_audio = idx * kt_time::AUDIO_BURST_TICKS;
-                read_audio(source, source_id, cache, stats, &mut failed_audio, idx);
+                read_audio(source, (source_id, ident), cache, stats, &mut failed_audio, idx);
             }
             Job::VideoSpan { keys, generation_of_span, prio_of_span } => {
                 // a generator's frame computes on the GPU: the frame on screen as now, the
@@ -510,7 +516,7 @@ fn worker_loop(
                 for chunk in span_chunks(&missing, SPAN_CHUNK) {
                     res = read_chunk(source, chunk, &mut |k| {
                         emitted.insert(k);
-                    }, source_id, cache);
+                    }, (source_id, ident), cache);
                     done_keys += chunk.len();
                     if res.is_err() {
                         break;
@@ -542,7 +548,7 @@ fn worker_loop(
                             };
                             let Some(idx) = next else { break };
                             cursor_audio = idx * kt_time::AUDIO_BURST_TICKS;
-                            read_audio(source, source_id, cache, stats, &mut failed_audio, idx);
+                            read_audio(source, (source_id, ident), cache, stats, &mut failed_audio, idx);
                         }
                     }
                     if audio_waits {
@@ -583,7 +589,7 @@ fn worker_loop(
 /// Decode one audio burst into the cache, unless it is there or known to be past the end.
 fn read_audio(
     source: &mut dyn MediaSource,
-    source_id: SourceId,
+    (source_id, ident): (SourceId, kt_cache::SourceIdent),
     cache: &BurstCache,
     stats: &DecodeStats,
     failed: &mut std::collections::HashSet<i64>,
@@ -596,7 +602,7 @@ fn read_audio(
     match source.read_audio_burst(idx) {
         Ok(burst) => {
             trace_decoded(source_id, kt_cache::BurstKind::Audio, idx);
-            cache.insert_audio(source_id, Arc::new(burst))
+            cache.insert_audio_from(source_id, ident, Arc::new(burst));
         }
         // a burst past the material's end (or before its start) IS silence: kept as silence, so every
         // asker sees it covered (render-ahead fix, found-defects 727). Left out of the cache, the
@@ -605,7 +611,7 @@ fn read_audio(
         // start held for its whole grace
         Err(kt_media::MediaError::OutOfRange) => {
             failed.insert(idx);
-            cache.insert_audio(source_id, Arc::new(kt_media::AudioBurst::silence(idx)));
+            cache.insert_audio_from(source_id, ident, Arc::new(kt_media::AudioBurst::silence(idx)));
         }
         Err(_) => {}
     }
@@ -652,7 +658,7 @@ fn read_chunk(
     source: &mut dyn MediaSource,
     chunk: &[SpanKey],
     done: &mut dyn FnMut(ReadKey),
-    source_id: SourceId,
+    (source_id, ident): (SourceId, kt_cache::SourceIdent),
     cache: &BurstCache,
 ) -> Result<(), kt_media::MediaError> {
     let step_of = |pts: i64, q: Option<(u32, u32)>| {
@@ -666,7 +672,7 @@ fn read_chunk(
             done((k.0, Some(wh)));
             kt_time::work::bump(kt_time::work::Work::Decoded);
             trace_decoded(source_id, kt_cache::BurstKind::Video { quality: Some(wh) }, k.0);
-            cache.insert_video_span(source_id, Some(q), k.0, step_of(k.0, Some(wh)), Arc::new(frame));
+            cache.insert_video_from(source_id, ident, Some(q), k.0, step_of(k.0, Some(wh)), Arc::new(frame));
         });
     }
     let pts: Vec<Tick> = chunk.iter().map(|k| Tick(k.pts)).collect();
@@ -674,7 +680,7 @@ fn read_chunk(
         done((k.0, None));
         kt_time::work::bump(kt_time::work::Work::Decoded);
         trace_decoded(source_id, kt_cache::BurstKind::Video { quality: None }, k.0);
-        cache.insert_video_span(source_id, None, k.0, step_of(k.0, None), Arc::new(frame));
+        cache.insert_video_from(source_id, ident, None, k.0, step_of(k.0, None), Arc::new(frame));
     })
 }
 

@@ -1,7 +1,7 @@
 # Proposal: auto-ducking-by-role
 
 > DESIGN ONLY (spec session), revision 2 (2026-11-22) from the owner's whole item (`kkt-26.11.20b` B5). Registry
-> `v26.10-index.md` N3, round R.75. Note F-AUD-007. Tests reserved: t3911–t3918, t3966–t3969.
+> `v26.10-index.md` N3, round R.75. Note F-AUD-007. Tests reserved: t3911–t3918.
 
 ## Why
 

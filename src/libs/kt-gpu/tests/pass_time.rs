@@ -25,6 +25,7 @@ fn layer<'a>(f: &Arc<VideoFrame>, fx: &'a [FxInstance], id: u64) -> LayerSrc<'a>
         source: SourceId(id),
         cache_idx: 0,
         content: id,
+        leaf: Default::default(),
         src_scale: 1,
         input: kt_engine::video_plan::LayerInput::Frame(Some(f.clone())),
         fx: kt_engine::LayerChain::Borrowed(fx),

@@ -853,3 +853,29 @@ tier's segments (yes, this change); the preview's sources and the export's decod
 is chosen per key across several decoders of a file, the colour rule and the RGBA tail assume a software
 frame, and a device's surfaces are a bounded pool — a change of its own, row 775's follow-up); stills,
 thumbnails, reel strips (no: a picture each, the transfer would cost more than the decode).
+
+## A moment has one key, and a held moment costs no source (durable-moment-key, 2026-11-24; kkt-26.11.22 D2, D7)
+
+The reasoning is the archived change's design (`openspec/changes/archive/2026-11-24-durable-moment-key`). What stays:
+a frame is named by the identity of what its source decodes, taken from the cache in the step that reads the frame;
+the display's memo, the producer, the recheck and the disk ask one `moment_key`; the moments held leave the decoded
+frames' want, in memory as on disk.
+
+**Measured** (release, llvmpipe, 32 threads, footage in `/dev/shm`, both builds started together, machine load 4–15;
+`kt-cli preview heavy.kt 20 24 --size 640x360 --loop 240`, read from the traces):
+
+| | before | after |
+|---|---|---|
+| V-fps over the run (the first 17 laps compose) | 20.2 | 20.2 |
+| incomplete composites, the run / a warm lap | 1184 / 1–4 | 1098 / 0 |
+| frames tenant once the loop is kept | 1158 MB | 517 MB (cap 576 MB, its base) |
+| frames cache evictions in one second, at most | 570 | 119 |
+| decode requests after lap 17 | 0 | 0 |
+| "the frame's key changed since the last lap" | 0 | 0 |
+| resident, steady / peak | 3802 / 3802 MB | 3400 / 3639 MB |
+
+The peak falls by less than the frames: it is reached while the loop is still composed, when nothing is held.
+`before` is the state after the cache audit's cuts, with the memory's moments still counted (found-defects 965); the
+key moved every lap only with them left out. 1920×1080 linear 20–80 s: nothing is held there and nothing changed —
+7852 and 7855 MB of frames, 0 V-fps on this machine in both. The time of an edit to the first complete picture was not
+measured as a pair (no tool does it on both builds); t4113 holds the order and the decode counts.

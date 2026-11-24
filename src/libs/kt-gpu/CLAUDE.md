@@ -489,4 +489,4 @@ is no picture, and an export refuses.
   Background (t3202).
 - **Mask points split around a graph step**: the masks that complete the slot before the position
   close first (a Hold keeps the masked frame), the next slot's snapshot opens after a Load.
-- `plan_hash` (and the engine's `durable_hash`) hash the wiring when present; a line adds nothing.
+- The moment's key (kt-engine `moment_key.rs`; `plan_key` adds the run forms' revision) hashes the wiring when present; a line adds nothing.

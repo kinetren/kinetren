@@ -25,6 +25,7 @@ fn compose(engine: &GpuFxEngine, frame: &Arc<VideoFrame>, cases: &[Vec<FxInstanc
                 source: SourceId(5),
                 cache_idx: 0,
                 content: 5,
+                leaf: Default::default(),
                 src_scale: 1,
                 input: kt_engine::video_plan::LayerInput::Frame(Some(frame.clone())),
                 fx: kt_engine::LayerChain::Borrowed(fx),

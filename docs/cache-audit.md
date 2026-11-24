@@ -106,7 +106,7 @@ makes the cache redundant.
 
 | Cache | Where today | Holds | Key | Bound | Measured | Final-frame store |
 |---|---|---|---|---|---|---|
-| Disk prerender (`render_cache.rs`) | `<data>/render-cache/v2-<build>/<device>/` | **final** composites, hardware-encoded segments | `durable_hash` + build salt | 2 GiB for all projects | 12 KB after each run: it writes only at rest, and a debug run never rests. render-cache-disk measured 30 MB for 54 heavy moments (≈ 0.55 MB a moment) | it IS the final-frame store; `project-cache-folder` moves it beside the project |
+| Disk prerender (`render_cache.rs`) | `kinetren-cache/results/` | **final** composites, hardware-encoded segments | `moment_key` + what makes the pixels (`Made`) | 2 GiB for all projects | 12 KB after each run: it writes only at rest, and a debug run never rests. render-cache-disk measured 30 MB for 54 heavy moments (≈ 0.55 MB a moment) | it IS the final-frame store; `project-cache-folder` moves it beside the project |
 | Media index (sidecar) | `<project>.ktindex.db` (SQLite) | source facts: peaks, packet index, thumbnails, posters, loudness, sync | media path | none | 1.1 MB after the runs | no: waveforms and thumbnails are drawn from it (invariant 8) |
 | Reel previews (disk tier) | the same sidecar | **final** of a reel at thumbnail size | (reel, revision, media fingerprint) | 48 frames a reel | — | no: thumbnail size |
 | Compiled pipelines, pass times | `<data>/shader-cache/` | the driver's pipeline blobs, measured pass times | adapter, driver | 64 MB, 8192 lines | — | no: per machine, not results |
@@ -172,8 +172,9 @@ the other on the same `heavy.kt` (`showcase --heavy`, footage in `/dev/shm`), ll
 - **Cut 1** (the decode window skips moments held on disk, the want counted without them): no change in
   these runs. A debug build at 1080 completes no moment, and the disk prerender writes only at rest, so no
   moment was on disk. It acts where the prerender holds moments: the owner's machine after a rest.
-  The kept composites in MEMORY are not cut here: their key is the decoded frames' content serials, and leaving
-  their frames out of the want lost them (found-defects 965: 21 V-fps fell to 2); designed as `durable-moment-key`. The 7.9 GB window on a
+  The kept composites in MEMORY were not cut here: their key held the decoded frames' content serials, 0 for a
+  frame not decoded, so a kept composite was found only while its sources were decoded too (found-defects 965:
+  21 V-fps fell to 2). `durable-moment-key` gave the moment one key and cut them. The 7.9 GB window on a
   1080 linear play is the frames of moments nothing holds yet; this cut does not touch it.
 - **Cut 3** (a CPU device keeps two frames of uploads): 265 → 28 MB on the loop, 140 → 102 MB on the
   linear run.

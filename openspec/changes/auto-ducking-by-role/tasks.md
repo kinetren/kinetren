@@ -1,7 +1,6 @@
 # Tasks: auto-ducking-by-role
 
-> DESIGN ONLY until the owner answers Q1 and the orchestrator's go. Revision 2 (B5). Tests: t3911–t3918
-> (t3966–t3969 spare).
+> DESIGN ONLY until the owner answers Q1 and the orchestrator's go. Revision 2 (B5). Tests: t3911–t3918.
 
 ## 0. Notes
 

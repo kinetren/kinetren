@@ -74,6 +74,7 @@ fn plan(w: u32, h: u32, bytes: usize, id: u64) -> FramePlan<'static> {
         source: kt_cache::SourceId(id),
         cache_idx: 0,
         content: id,
+        leaf: Default::default(),
         src_scale: 1,
         input: kt_engine::video_plan::LayerInput::Frame(Some(fr)),
         fx: kt_engine::LayerChain::Owned(Vec::new()),
