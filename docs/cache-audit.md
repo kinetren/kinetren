@@ -155,3 +155,27 @@ In order of bytes saved.
   owner's trace, would fill them. Their bounds are 512 MB plus the loop's grant, and 2 GiB.
 - Memory on a card: the present memo and the upload cache sit in video memory there, not in RAM. On llvmpipe
   they are RAM.
+
+## Cuts made (branch `cache-cuts`, 2026-11-23)
+
+Measured with the debug `kt-cli preview` of orch `d613b228` (before) and of the branch (after), one after
+the other on the same `heavy.kt` (`showcase --heavy`, footage in `/dev/shm`), llvmpipe; the ledger's
+`mem_used` peaks and `mem_sample` by `kt-cli trace … memory`.
+
+| Run | Frames | Upload | Transient | Caches | Process peak | V-fps |
+|---|---|---|---|---|---|---|
+| 1920×1080, 20–80 s linear, before | 7919 MB | 140 MB | 96 MB | 8192 MB | 10710 MB | 0.0 |
+| same, after | 7917 MB | 102 MB | 44 MB | 8092 MB | 10615 MB | 0.0 |
+| 640×360, loop 20–24 s for 60 s, before | 1158 MB | 265 MB | 32 MB | 1546 MB | 4194 MB | 21.1 |
+| same, after | 1158 MB | 28 MB | 32 MB | 1309 MB | 3873 MB | 20.4 |
+
+- **Cut 1** (the decode window skips moments held on disk, the want counted without them): no change in
+  these runs. A debug build at 1080 completes no moment, and the disk prerender writes only at rest, so no
+  moment was on disk. It acts where the prerender holds moments: the owner's machine after a rest.
+  The kept composites in MEMORY are not cut: their key is the decoded frames' content serials, and leaving
+  their frames out of the want lost them (found-defects 965: 21 V-fps fell to 2). The 7.9 GB window on a
+  1080 linear play is the frames of moments nothing holds yet; this cut does not touch it.
+- **Cut 3** (a CPU device keeps two frames of uploads): 265 → 28 MB on the loop, 140 → 102 MB on the
+  linear run.
+- **Cut 4** (the window's engine on a card fills no read-back memo): not measurable here (llvmpipe is a CPU
+  device, where the memo stays); its bound was 64 MB.

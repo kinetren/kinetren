@@ -47,7 +47,7 @@ pub use player::{
     reverse_frames, varispeed_fill, Wake,
 };
 pub use prefetch::{
-    FramesSizing, PREFETCH_VIDEO_LOOKAHEAD_TICKS, frames_cache_want, loop_frame_bytes, prefetch_audio_pass,
+    FramesSizing, PREFETCH_VIDEO_LOOKAHEAD_TICKS, frames_cache_want, loop_frame_bytes, loop_frame_bytes_except, prefetch_audio_pass,
     simulate_video_playback, size_frames_cache, video_prefetch_pass, video_prefetch_pass_except,
     video_prefetch_pass_sized, video_prefetch_wants, video_prefetch_wants_except,
 };

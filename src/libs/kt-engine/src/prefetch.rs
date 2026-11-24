@@ -168,12 +168,22 @@ fn wants_sized(
 /// The bytes of every frame the loop region `[s, e)` (ticks) asks at the preview quality `q`, each
 /// key once at its decode size; the count stops past `stop` (a loop the machine cannot hold is not
 /// walked to its end).
-pub fn loop_frame_bytes(video: &VideoRenderer, q: Quality, (s, e): (i64, i64), stop: usize) -> usize {
+pub fn loop_frame_bytes(video: &VideoRenderer, q: Quality, region: (i64, i64), stop: usize) -> usize {
+    loop_frame_bytes_except(video, q, region, stop, &|_| false)
+}
+
+/// [`loop_frame_bytes`] without the moments `held` names: their final frame is kept, in memory or on
+/// disk, and they need no source frame (cache-audit cut 1).
+pub fn loop_frame_bytes_except(video: &VideoRenderer, q: Quality, (s, e): (i64, i64), stop: usize, held: &dyn Fn(Tick) -> bool) -> usize {
     let step = video.grid.frame_step().max(1);
     let mut seen = std::collections::HashSet::new();
     let mut bytes = 0usize;
     let mut t = video.grid.align_floor(Tick(s));
     while t.0 < e && bytes <= stop {
+        if held(t) {
+            t = Tick(t.0 + step);
+            continue;
+        }
         for k in video.layers_at(t, q) {
             if seen.insert(k) {
                 bytes += frame_bytes(k.2);
@@ -212,12 +222,19 @@ pub struct FramesSizing {
     loop_bytes: Option<usize>,
     /// The bound last asked.
     asked: usize,
+    /// How many moments were held final when the loop was last counted.
+    held: usize,
 }
 
 /// Ask the ledger for what the player's look-ahead and loop need (frames-cache-growth): called by
 /// the prefetch thread after each pass with the bytes of its whole window. A new quality, loop
 /// region or build counts the loop's frames again and forgets the window's peak; the ledger is
 /// asked only when the rounded want moves, and the sizing is a `frames_cap` record. The cap now.
+/// `held` names the moments whose final frame is kept, in memory or on disk, and how many there are:
+/// they count in neither the window (the pass skips them) nor the loop, and when their number moves
+/// the loop is counted again and the window's peak forgotten — the want is sized AFTER the skip
+/// (cache-audit cut 1; the cap still grows with what the window needs, kkt-26.11.10 J4).
+#[allow(clippy::too_many_arguments)]
 pub fn size_frames_cache(
     video: &VideoRenderer,
     cache: &std::sync::Arc<BurstCache>,
@@ -225,16 +242,18 @@ pub fn size_frames_cache(
     region_ticks: Option<(i64, i64)>,
     build: u64,
     window: usize,
+    (held, held_n): (&dyn Fn(Tick) -> bool, usize),
     sizing: &mut FramesSizing,
 ) -> usize {
     let key = (q, region_ticks, build);
-    if sizing.key != Some(key) {
+    if sizing.key != Some(key) || sizing.held != held_n {
         sizing.key = Some(key);
+        sizing.held = held_n;
         sizing.window = 0;
         // a loop past what the machine has now cannot be held: its count stops there
         // (the room: the cache's own growth is memory the loop may keep, class-walk-revision)
         let stop = kt_time::mem::room().map_or(usize::MAX, |a| usize::try_from(a).unwrap_or(usize::MAX));
-        sizing.loop_bytes = region_ticks.map(|r| loop_frame_bytes(video, q, r, stop));
+        sizing.loop_bytes = region_ticks.map(|r| loop_frame_bytes_except(video, q, r, stop, held));
     }
     sizing.window = sizing.window.max(window);
     let want = frames_cache_want(sizing.window, sizing.loop_bytes);

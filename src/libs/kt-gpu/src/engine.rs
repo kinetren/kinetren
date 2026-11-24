@@ -1658,8 +1658,14 @@ impl GpuFxEngine {
                 staged: Default::default(),
                 per_pass: false,
                 pool: TexturePool::new(TRANSIENT_BUDGET),
-                // an export's device keeps what its frames in flight read (memory-ledger D7)
-                upload: UploadCache::new(UPLOAD_BUDGET, export.then_some(KEEP_UPLOAD_FRAMES)),
+                // an export's device keeps what its frames in flight read (memory-ledger D7); a device of
+                // type CPU keeps the uploads of the frame being resolved and the one before (cache-audit
+                // cut 3): its textures are the process's memory, a second copy of the decoded frames, and
+                // the upload a card saves is a memcpy there
+                upload: UploadCache::new(
+                    UPLOAD_BUDGET,
+                    if export { Some(KEEP_UPLOAD_FRAMES) } else if !memo_guard { Some(1) } else { None },
+                ),
                 readback: ReadbackCache::new(READBACK_BUDGET),
                 present_memo: PresentMemo::new(PRESENT_MEMO_BUDGET),
                 keeps_bytes: false,
@@ -3010,7 +3016,7 @@ impl Inner {
         match key.filter(|_| same_forms) {
             // kept whole on the device for the next lap, as `present` keeps it
             Some(k) if self.keeps_bytes && complete => self.last_stages.stored = self.memo_keep(k, result),
-            Some(k) if !self.keeps_bytes => {
+            Some(k) if fills_readback(self.keeps_bytes, self.surface, !self.memo_guard) => {
                 self.pool.release(result);
                 self.readback.insert(k, out.clone(), complete);
             }
@@ -4552,3 +4558,27 @@ const COPY3: &str = "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n\
     if id.x < u.x { x[id.x] = a[id.x]; }\n\
     if id.x < u.y { y[id.x] = b[id.x]; }\n\
     if id.x < u.z { z[id.x] = c[id.x]; }\n}\n";
+
+/// Whether a read-back frame goes into the read-back memo (cache-audit cut 4): not on an engine that
+/// keeps its bytes-path composites on the device (`keeps_bytes`, the present memo holds them), and not
+/// on the window's engine on a card, whose present memo holds the same moments and whose read-backs
+/// are rare (an eyedropper, a meter); a CPU device's window engine, and every other engine — reel
+/// strips, posters, cells, the slow route — keep it.
+pub(crate) fn fills_readback(keeps_bytes: bool, window: bool, cpu: bool) -> bool {
+    !keeps_bytes && !(window && !cpu)
+}
+
+#[cfg(test)]
+mod readback_tests {
+    /// t3607 (cache-audit cut 4): the window's engine on a card does not fill the read-back memo; on a
+    /// CPU device it does, every other engine does, and an engine keeping its bytes on the device never.
+    #[test]
+    fn t3607_the_window_on_a_card_fills_no_readback_memo() {
+        use super::fills_readback;
+        assert!(!fills_readback(false, true, false), "the window's engine on a card");
+        assert!(fills_readback(false, true, true), "the window's engine on a CPU device");
+        assert!(fills_readback(false, false, false), "an offline engine on a card");
+        assert!(fills_readback(false, false, true), "an offline engine on a CPU device");
+        assert!(!fills_readback(true, false, true), "the bytes path keeping its composites");
+    }
+}
