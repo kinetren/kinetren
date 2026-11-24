@@ -64,8 +64,9 @@ Slowed&Reverb, an instance's speed), not the playhead — the B7 lesson.
   nothing intermediate is stored).
 - **In the plan, as numbers.** Simulation runs while the frame plan is built (CPU, before the GPU), and the plan
   carries each element's placed pose. The plan key hashes those NUMBERS, not the history, so the memo, the disk
-  frames and the coverage bars stay true (invariant 4). The element's own drawer draws it: the title rasterizer, the
-  mask raster, the Geometry node, and an instanced-sprite pass for particles (invariant 7: one composition path).
+  frames and the coverage bars stay true (invariant 4). Masks, reel layers and planes are drawn by
+  their own code (the mask raster, the Geometry node); letters and particles by one instanced-sprite pass from an
+  atlas their source draws once (invariant 7: one composition path).
 - **Zero cost where unused.** An owner with no stateful operator runs no simulation code and keeps its plan key as
   today; one simulated title does not slow the rest of the project (R.59 item 4).
 - **The first applications** (Q1): letters on springs driven by the edit's speed (the example), mask vertices that
@@ -95,11 +96,12 @@ Slowed&Reverb, an instance's speed), not the playhead — the B7 lesson.
   - `ElementSource` addresses (title clusters/words/lines, mask vertices, tracker points, composition layers, 3D
     planes, transition pieces, emitters);
   - `SimRule` rows on an owner, with drivers as link sources.
-- kt-text: the cluster boxes as rest poses (exists: `LayoutInfo::clusters`), and the placed poses applied at
-  rasterization.
-- kt-engine: building the plan evaluates the sets in dependency order; the per-instance time path; the incomplete-frame
-  report; the plan key hashes the poses.
-- kt-gpu: an instanced-sprite pass for particles (a sprite atlas, poses from a buffer).
+- kt-text: the cluster boxes as rest poses (exists: `LayoutInfo::clusters`); a glyph atlas of a title (one sprite per
+  cluster) drawn by the title's source.
+- kt-engine (design D10, D12): every set is simulated while the plan is built, the outer clock and instance path
+  carried down the nested build; a `sim` thread advances the memos; `Behind` makes the frame incomplete (Loading); the probe plan keys without stepping;
+  an export pre-rolls.
+- kt-gpu: one instanced-sprite pass for letters and particles (an atlas, poses from a buffer).
 - kt-app: the "Simulation" section in an owner's window (title form, mask panel, composition window, emitter); a faint
   overlay of the set's rest poses and links while editing.
 - Format: by content. OTIO: the planned row (renamed from `text-letter-physics`).

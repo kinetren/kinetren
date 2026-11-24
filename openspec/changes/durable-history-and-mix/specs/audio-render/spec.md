@@ -4,7 +4,7 @@
 The kept final mix SHALL have a durable tier, the `mix/` tenant of the project's cache folder (capability
 `media-index`): kept bursts SHALL be written at rest as runs of raw f32 per
 context (linear play, a loop region's laps), keyed by `(context, burst, mix(scene_hash, salt))` with the salt
-naming the program build with the FFmpeg version and the identities of the audio files heard in the burst's
+naming the store's salt (the decoder's major and the versions of the audio kernels that ran, not the whole build) and the identities of the audio files heard in the burst's
 widened range. After a restart the player's thread SHALL read the runs matching the current scenes ahead of
 the playhead and the loop region and hand them to the render thread through a bounded lock-free channel;
 the render thread SHALL take them into its store as first recordings at the start of a chunk and SHALL
@@ -19,7 +19,7 @@ live again after a restart; durable-history-and-mix D5.
 - **TEST** t3346 (`src/libs/kt-engine/tests/mix_durable.rs`)
 
 #### Scenario: A stale run is not restored
-- **WHEN** stored runs are asked after an event's effect value changes, after a source file is replaced with the same name, and after the build salt changes
+- **WHEN** stored runs are asked after an event's effect value changes, after a source file is replaced with the same name, and after the store's salt changes (the decoder's major)
 - **THEN** the changed bursts are misses and are rendered live, the others are restored
 - **TEST** t3347 (`src/libs/kt-engine/tests/mix_durable.rs`)
 

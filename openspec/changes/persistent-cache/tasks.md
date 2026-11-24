@@ -28,10 +28,11 @@
 - [ ] 2.1 the store writes and reads two kinds only (`Entry::{Frame, Copy}`); nothing in the plan or the producer
       writes a picture at a point inside a plan (no read-back of a layer's or a stage's texture for the store);
       t3451
-- [ ] 2.2 the frames' quality rule: the prerender writes at the quality the preview plays; a raised quality
-      composes the heavy moments again at rest; a frame is read only at its own quality (the quality and decode
-      step are in the durable key, `project-cache-folder`'s text); an edit misses exactly the moments whose plan
-      changed; t3452
+- [ ] 2.2 the frames' quality rule (design D8): the key and the prerender's state already carry the quality
+      (`render_cache.rs:717`, `:1141`); fix heaviness by size: `PreviewCosts::snapshot` (`preview_cost.rs:66`)
+      returns `(ns, w, h)` or a per-size view, and `candidates` (`render_cache.rs:1164`) judges a moment by its time
+      at the current size, else the nearest size scaled by pixels; an edit misses exactly the moments whose plan
+      changed; t3452, t4106
 - [ ] 2.3 `cargo test -p kt-engine` (`tests/persistent_cache.rs`); clippy; the idle check on the heavy showcase with
       the store full; commit "persistent-cache 2: final frames only, at the preview's quality"
 

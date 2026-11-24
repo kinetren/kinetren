@@ -78,7 +78,7 @@ cache of heavy effects (B1) and the cached render. Start it in this wave.
 
 | Change | Size | Needs first | Areas | Owner question | Tests |
 |---|---|---|---|---|---|
-| ★ `durable-history-and-mix` | L | `project-cache-folder` stage 1 (the folder, the entry header); `stream-picture-stays` (STREAM) | STREAM (`StreamMemo` backing, `EntryCodec`), CACHE (the persistent cache's `results/…/history/`, the `mix/` tenant), AUDIO (`mix.rs` restore handoff), PLAYER (writes at rest) | answered A14 (build now, LZ4) | t3336–t3355 |
+| ★ `durable-history-and-mix` (the mix tier only since D6) | M | `project-cache-folder` sections 1 and 3 | CACHE (the `mix/` tenant), AUDIO (`mix.rs` restore handoff), PLAYER (writes at rest, the ring into the render thread) | answered A14 (build now) for the mix; D6 (kkt-26.11.22: "Только финальные кадры") withdrew the history on disk | t3336, t3337, t3346–t3352 |
 | `hdr-sources-to-sdr`, 8-bit stages 1–4 | M | `device-decode-sources` (DECODE) | DECODE (`colour.rs`, the HDR branch); the export default is built already (row 1054, t3603) | answered (Q50; A25 keeps the 8-bit path as the default) | t3800–t3811 |
 | `track-stage-preroll` | S | — | AUDIO (`render_stages`, the seek path) | answered A15 (always the full tail) | t3361–t3366 |
 
@@ -86,9 +86,9 @@ cache of heavy effects (B1) and the cached render. Start it in this wave.
 
 | Change | Size | Needs first | Areas | Owner question | Tests |
 |---|---|---|---|---|---|
-| `track-stream-stage` | L | `durable-history-and-mix` (the durable salt in `video_stream.rs`); `stream-picture-stays` | STREAM (`TrackStream`), `kt-engine/src/video.rs` track layer, EXPORT (`stream_preroll`), AUDIO (the sound half's track layout) | answered A23 | t3379–t3398 |
+| `track-stream-stage` | L | `stream-picture-stays` (the durable history salt it waited for is gone with D6) | STREAM (`TrackStream`), `kt-engine/src/video.rs` track layer, EXPORT (`stream_preroll`), AUDIO (the sound half's track layout) | answered A23 | t3379–t3398 |
 | `fx-preset-change` | M | `fx-graph-dag` (FX-UI selection in `node_editor.rs`) | FX-UI, `kt-model/src/ops.rs` (`insert_chain_block_at`) | answered A4 | t3595–t3596, t3932–t3934 |
-| `persistent-cache` (was `disk-copies`; "Постоянный кэш") | L | `project-cache-folder` (the store's places, salt and cycle); `durable-history-and-mix` (shares CACHE); `device-decode-sources` (DECODE, for source copies) | CACHE (the final frames' value order, the source copies; `layers/` withdrawn by the owner's D1, kkt-26.11.22), PLAYER (the job at rest), DECODE (`CopySource`), EXPORT (`MuxConfig` times) | answered B1 (the name; heavy files AND the results of heavy effects); designed by spec-features (branch claude/spec-features-224d3d, 1e31056c) | t3440–t3459 |
+| `persistent-cache` (was `disk-copies`; "Постоянный кэш") | L | `project-cache-folder` (the store's places, salt and cycle); `durable-history-and-mix` (shares the folder's value order); `device-decode-sources` (DECODE, for source copies) | CACHE (the final frames' value order, the source copies; `layers/` withdrawn by the owner's D1, kkt-26.11.22), PLAYER (the job at rest), DECODE (`CopySource`), EXPORT (`MuxConfig` times) | answered B1 (the name; heavy files AND the results of heavy effects); designed by spec-features (branch claude/spec-features-224d3d, 1e31056c) | t3440–t3459 |
 
 ### Wave 5
 
@@ -183,11 +183,10 @@ These designs came from the `v26.10` registry rows (spec-features, 2026-11-20). 
   motion-driven-params (t3952) and wasm-plugin-host t3957–t3963 (t3957–t3959); wasm-plugin-host overlaps
   memory-breakdown t3962–t3967 (t3962–t3963).
 - **The persistent cache (B1) and project-cache-folder share one store, agreed with spec-features
-  (2026-11-22):** `results/v<FORMAT>/<device class>/{frames, history}` (`layers/` withdrawn by the owner's D1, kkt-26.11.22: the final preview frame only), `mix/`, source copies under
+  (2026-11-22):** `results/v<FORMAT>/<device class>/frames/` (`layers/` withdrawn by the owner's D1 and `history/` by his D6, kkt-26.11.22: the final preview frames only), `mix/`, source copies under
   `media/<content id>/`. `durable_hash` keys, plus the decoder major, the kernels' versions and
   `COMPOSITE_PATH_VERSION`, not the build: an update keeps what it did not change, and a stale entry is
-  dropped on a miss. One order by value per byte across results, mix and copies (the history is not
-  evicted first), under the folder's cyclic rule.
+  dropped on a miss. One order by value per byte across frames, mix and copies, under the folder's cyclic rule.
 
 ## Implementation-ready check (2026-11-22, spec-engine, against orch `873934f7`)
 
@@ -202,10 +201,9 @@ Each of these changes' `tasks.md` now names its files, and those files were chec
   - `app.rs`, which is hot (`index_db_path` and five inline copies, the render cache root, `Notice.action`);
   - Preferences, kt-cli's `main.rs` and `render_cache.rs`.
   - It goes alone among the changes touching `app.rs`.
-- `durable-history-and-mix`:
-  - STREAM (`stream.rs`, `video_stream.rs`, `fx-video-codec`);
-  - CACHE, AUDIO (`mix.rs`) and PLAYER (`player.rs`: the ring into the render thread).
-  - It starts after `project-cache-folder` sections 1 and 3, and after `stream-picture-stays`.
+- `durable-history-and-mix` (revised 2026-11-24 for D6: the mix tier only):
+  - CACHE (`mix/`), AUDIO (`mix.rs`) and PLAYER (`player.rs`: the ring into the render thread); no STREAM file.
+  - It starts after `project-cache-folder` sections 1 and 3; it no longer waits for `stream-picture-stays`.
 - `track-stage-preroll`: AUDIO (`audio.rs`, `fxstore.rs`, `mix.rs`), plus the start hold in `player.rs`. It
   shares `mix.rs` with `durable-history-and-mix`, so it does not run beside it.
 - `persistent-cache`:
@@ -215,4 +213,5 @@ Each of these changes' `tasks.md` now names its files, and those files were chec
   - It starts after `project-cache-folder` section 3. Its Q1 (Q55) is answered by D1: no layer results, so no layer codec.
 
 New tests t4100–t4105 are taken from spec-engine's third block (t4100–t4199): device-decode-sources
-t4100–t4102, track-stage-preroll t4103–t4104, durable-history-and-mix t4105.
+t4100–t4102, track-stage-preroll t4103–t4104, durable-history-and-mix t4105 (freed by D6 with t3338–t3345).
+Since: persistent-cache t4106, simulated-elements t4107; the next free is t4108.

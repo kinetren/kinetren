@@ -125,8 +125,8 @@ event layer's do (`video.rs`), so no memo or kept composite returns another mosh
 
 **The disk tier and the durable history.** `probe_durable` notes, as leaves of a moment whose layer is
 a track stream stage, every file the segment's history reads from `first` to the moment: the files of
-the events active over that range, found by the stage's `LayerIndex`. durable-history-and-mix's stage
-salt takes the same set. render-cache-disk's rule "every file for a stream stage" thus holds per
+the events active over that range, found by the stage's `LayerIndex`. (The history itself is not stored on
+disk: the owner's D6, kkt-26.11.22.) render-cache-disk's rule "every file for a stream stage" thus holds per
 segment, not per project.
 
 ## D5. Front, second input and tempo at track level
@@ -172,7 +172,6 @@ segment, not per project.
 | `stream_advance_ahead` / `_run`, far walk | event stages of the shown layers | + track stages (D4, D5) |
 | `probe_plan` / `key_only` / `show_kept` | event stages | + the track twin (D4) |
 | `render_cache::probe_durable` leaves | an event stage's files | + the segment's files (D4) |
-| durable-history-and-mix stage salt | the stage's files | the same set (D4) |
 | render-ahead `Waits`, Loading count | positions short | unchanged, positions |
 | export `stream_preroll`, pipeline `Planned`, `project_may_stream` | events, morphers | + tracks (D5) |
 | reels: a track stage inside a reel's sub-renderer | the same `track_stage_layer` | the same host, the reel's time |

@@ -125,21 +125,25 @@ A force term reads one of:
 
 ## D5. In the plan — numbers, keyed
 
-- `frame_plan` builds a layer's plan as today. For an owner with element sets it asks `kt-sim` for the placed poses at
-  this moment (memo by simulation key + t) and writes them into the layer's plan as numbers:
-  - glyph offsets for the title's rasterization;
-  - vertex positions for the mask raster;
-  - transforms for reel layers or 3D planes;
-  - an instance buffer for particles.
-- The plan key hashes those numbers. A memo hit or a disk frame (persistent cache) therefore stays exact without any
-  history in the key (invariant 4), and invariant 7 holds: the drawer is the producer's own.
-- The `durable_hash` of a frame with a simulated set includes the poses. The frames on disk are final pictures (the
-  owner's D1), and nothing else of the simulation is kept.
+Where the poses are computed depends on who draws the elements today; the function (`kt-sim`) is one either way.
+
+- **Plan-side sets** (mask vertices, reel layers, 3D planes, transition pieces). These elements are numbers the plan
+  already evaluates at the frame's material tick: `LayerSrc.masks`, a sub-plan's transforms, the trans panels.
+  `layer_src` asks `kt-sim` for the poses and writes the simulated numbers in place of the evaluated ones. They enter
+  `fx_hash` and kt-gpu's `plan_key` as the evaluated numbers do today, and so `durable_hash`.
+- **Atlas-drawn sets** (a title's glyphs, an emitter's particles). The picture of each element is made ONCE by the
+  generator source on the media worker as an atlas (a title: one sprite per cluster, keyed by the text's values as
+  today; an emitter: its sprite), and the PLAN places the elements: one pose per element, drawn by the instanced-sprite
+  pass (D6). Two instances of one reel read one atlas and give two plans (D12, spec-engine). A title without a set
+  keeps today's path, key and bytes.
+- No history and no start moment ever enters a key (invariant 4). The frames on disk are final pictures (the owner's
+  D1), and nothing else of the simulation is kept.
 
 ## D6. Drawing
 
-- **Title.** The rasterizer takes a per-cluster pose (offset, rotation, scale, opacity), as it takes animator offsets
-  today.
+- **Title.** With a set, the source rasterizes the glyph atlas and the instanced-sprite pass places each cluster by its
+  pose (offset, rotation, scale, opacity); at rest poses the result equals the source's own raster (t4107). Without a
+  set, the title is drawn as today.
 - **Mask.** The raster takes evaluated vertices; a simulated vertex simply replaces the evaluated one.
 - **Reel layers, 3D planes.** Their transforms are the Geometry node's numbers, composed after their own.
 - **Particles.** A new instanced-sprite pass in kt-gpu draws N quads from a pose buffer with a sprite (a generator's
@@ -203,12 +207,95 @@ Paired sound (the owner's simulated-device rule) is checked: these are not devic
 recorded instead: a set's collision events as a driver of an audio event (an impact sound when a letter lands). The
 collisions would be a pure function too, so the sound would land on the frame.
 
-## D10. Idle
+## D10. The engine contract (implementation-ready, checked against orch `d613b228`)
+
+1. **`kt-sim` is pure** (kt-time, kt-plugin-api). `Sim::state_at(rule, drivers, t) -> Poses` reads a `SimMemo` of
+   checkpoints. The memo is shared by key: one per process, in the memory ledger as an account of its own, bounded, LRU.
+   It never blocks: `state_at` either reaches t from the nearest checkpoint within a step budget, or answers
+   `Behind { secs }`.
+2. **The key is a prefix** (D12.2). `SimKey(t) = xxh3(set source content, operators' rows and curves, instance path,
+   the drivers' closed-form curves restricted to [origin, t])`. The drivers' profiles come from `motion-driven-params`
+   D3; the outer clock and the instance path go down the nested build beside `NestSrc.inner_t`. The plan and the probe
+   hash `(SimKey(t), t)`, so an edit after a moment keeps its key (t3987). The per-event memo key (`incremental.rs`,
+   t2004) takes only the static part (content, operators, instance path). No generator address is salted (D12.1).
+3. **Catch-up off every hot thread.**
+   - A `sim` thread of the player advances the memos at class `near`, like `stream_advance_ahead`: the frame on
+     screen first, then ahead while playing.
+   - Only the plan build calls `state_at`, with a small budget; the media worker never steps (it draws atlases). On
+     `Behind`, the plan notes `note_sim_short(secs)` beside `note_stream_short` (`video.rs:2399`).
+   - The frame is incomplete and the preview shows Loading. `render_ahead::Waits` waits on the sim thread's walk as on
+     a stream walk (`kt_plugin_api::stream::walked` gets a sibling `sim::walked`).
+   - An export calls `Sim::preroll` before its first frame and never sees `Behind` (no budget offline).
+   - The UI thread never steps.
+4. **Keys.** `plan_key` (kt-gpu `engine.rs:4330`) and `durable_hash`'s `put_plan` (`render_cache.rs:715`) hash the
+   poses: the simulated numbers where they hash the evaluated ones today (`MaskOp` in `LayerSrc.masks`, the transforms)
+   and the new per-element poses of atlas-drawn sets (t2981 guards the pair). The rule "a new field `plan_hash` hashes is
+   hashed by `durable_hash` too" holds by construction.
+5. **The probe plan** (`probe_plan`, `show_kept`) must not step. A plan-side set in a probe asks
+   `Sim::key_only(SimKey, t)` and hashes the key with t, like `StreamKernel::key`. The kept composite is therefore
+   found without the simulation, and a probe plan's key equals the full plan's.
+6. **Zero cost.** An owner without a set takes none of these branches; t3986 checks the plan keys and the bytes of the
+   golden projects unchanged.
+7. **The sprite op is one new executor path** (D12.3). The plan op is an instance buffer of poses plus an atlas input.
+   kt-gpu runs it as one instanced pass for letters and particles: a `Compiled` pipe with its `Slot`, timed, cut by
+   the arbiter, warmed by `prewarm::effect_ids`. `plan_key` and `put_plan` hash `(SimKey(t), t)` and the atlas's
+   leaf (t2981).
+
+## D11. Idle
 
 - Nothing runs at rest.
 - A paused frame computes its numbers once; the plan memo reuses them.
 - Hover and an open window cost nothing extra. The rest-pose overlay is drawn from numbers already in the plan.
 - The load check runs on the heavy showcase with a simulated title and an emitter added.
+
+## D12. What the tree has (engine side, spec-engine, checked at orch `d613b228`): corrections to D10
+
+D10's points 1, 4 (plan-side), 5 and 6 hold. Three corrections follow from the tree; the first answers D10's open
+question (does a media worker that answers `Behind` with starvation fit "request == read"?). **No: every set is
+simulated plan-side, and a source never steps.**
+
+1. **Source-side sets break t3987 and the kept composites.** A source's address cannot depend on the moment, so a
+   salt from the `SimKey` must carry the drivers' WHOLE profiles. Then a driver edit after a moment re-salts every
+   moment of the title; and a driver change through `Retune::Gen` runs `cache.invalidate_source` on the worker
+   (`kt-engine/src/worker.rs:363–380`), which drops every frame of the source and forgets their serials. Every kept
+   composite of the title misses, against t3987 ("a change after the moment keeps the key"). A worker that answers
+   `Behind` also breaks the order's contract: the prefetch orders the frame, the worker gives nothing, the key stays
+   wanted (an eternal re-order or a "failed" mark, `failed_video`), and the Loading line cannot say why.
+   - **Decision.** The source draws only what does not move: a title's glyph atlas (one sprite per cluster,
+     `LayoutInfo::clusters`, `kt-text/src/lib.rs:160`; rasterized by `GeneratorSource`, `kt-media/src/generator.rs`,
+     keyed by the text's values as today), an emitter's sprite. The poses are computed in `layer_src` like every
+     plan-side set, and an instanced-sprite op in the plan places the sprites. A title or emitter with no set keeps
+     today's path, address and bytes (salt 0, D7). At the rest pose the sprite title equals the source's raster of the
+     same title (t4107).
+   - So D10 point 2's salting, point 3's worker branch and point 7's draw on the media worker go; the `sim` thread,
+     `note_sim_short`, `sim::walked` and `Sim::preroll` stay, one mechanism for every set.
+2. **The key is the prefix, not the whole profile.** `SimKey(t) = xxh3(the set's source content, the operators' rows
+   and curves, the instance path, the drivers' closed-form curves restricted to [origin, t])`: a curve's keys up to t
+   and the key after it (the segment t falls in). The plan and the probe both hash `(SimKey(t), t)` and the pose
+   digest follows from it; `Sim::key_only` computes `SimKey(t)` without stepping (D10 point 5 holds with this key).
+   The per-event memo key (`incremental.rs`, t2004) takes the STATIC part only (content, operators, instance path):
+   drivers vary per moment, not per event.
+3. **The sprite op is a new executor path, and it must be one.** Letters and particles become one plan op (an
+   instance buffer of poses + an atlas input) that kt-gpu runs as one instanced pass: a `Compiled` pipe with its
+   `Slot`, timed, cut by the arbiter, warmed by `prewarm::effect_ids`. `plan_key` (`kt-gpu/src/engine.rs:4330`) and
+   `put_plan` (`render_cache.rs:715`) hash the op's `(SimKey(t), t)` and the atlas's content serial / leaf; t2981 holds
+   the pair.
+
+The rest of the tree, as D10 relies on it:
+- **Masks** are evaluated at plan time (`PlanLayer.masks: Vec<MaskOp>`, `video_plan.rs:118`; kt-gpu never
+  rasterizes a mask), so simulated vertices replace evaluated ones before the plan is keyed.
+- **Reel layers:** `LayerInput::Nest(NestSrc { seq, content_hash, inner_t, … })` (`video_plan.rs:172–182`). The
+  outer clock is the root plan's `t` carried down the nested build beside `inner_t`; the instance path is the chain
+  of `NestSrc` the recursion went through.
+- **The durable leaf** hashes the source's address (`note_leaf(source.0, …)`, `video.rs:2562`), so an atlas keyed
+  by the title's values is already in the disk key; the poses enter through the op.
+- **The incomplete report:** beside `STREAM_SHORT`/`note_stream_short` (`video.rs:2399–2410`), read into the catch-up
+  line; the sim thread's advance follows `stream_advance_ahead` (`player.rs:3609`); the export's pre-roll sits beside
+  `stream_preroll` (`export.rs:510`).
+- **Checkpoints in the memory ledger:** a tenant kind appended after the last (`kt-time/src/mem.rs`, `KINDS` `:46`;
+  `device-decode-sources` appends `Surfaces` first, `Sim` takes the next number at merge).
+- **Crates:** `kt-sim` (kt-time, kt-plugin-api; no FFmpeg, no GPU), the `sim` family in `kt-plugin-api`,
+  `plugins/sim-basic` with its id in `kt-plugins-builtin`; kt-engine depends on `kt-sim`.
 
 ## Rejected
 

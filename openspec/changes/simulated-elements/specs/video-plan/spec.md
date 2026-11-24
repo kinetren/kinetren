@@ -13,3 +13,8 @@ numbers, not pixels.
 - **WHEN** a frame with a simulated title is composed, kept in the memo and as a disk frame, then the brake curve that drives it is changed after that moment, then before it
 - **THEN** the change after the moment keeps the key and the kept frame is read; the change before it changes the poses, the key and the picture; a fresh compose equals the kept frame where the key is kept
 - **TEST** t3987 (`src/libs/kt-engine/tests/simulated_elements.rs`)
+
+#### Scenario: A simulated title's letters are placed by the plan, from the source's atlas
+- **WHEN** one reel holding a title with a spring set is placed twice at two outer speeds, and the same title without a set is composed beside it
+- **THEN** the two instances read one glyph atlas from the source and give two plans with two keys and two pictures; at rest poses the sprite title equals the source's raster of the title without a set; the title without a set keeps its plan key and bytes
+- **TEST** t4107 (`src/libs/kt-engine/tests/simulated_elements.rs`)

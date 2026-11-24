@@ -110,7 +110,7 @@ makes the cache redundant.
 | Media index (sidecar) | `<project>.ktindex.db` (SQLite) | source facts: peaks, packet index, thumbnails, posters, loudness, sync | media path | none | 1.1 MB after the runs | no: waveforms and thumbnails are drawn from it (invariant 8) |
 | Reel previews (disk tier) | the same sidecar | **final** of a reel at thumbnail size | (reel, revision, media fingerprint) | 48 frames a reel | — | no: thumbnail size |
 | Compiled pipelines, pass times | `<data>/shader-cache/` | the driver's pipeline blobs, measured pass times | adapter, driver | 64 MB, 8192 lines | — | no: per machine, not results |
-| Planned: Datamosh history on disk (`durable-history-and-mix`) | `kinetren-cache/results/…/history/` | **stage**: LZ4 of exact stream entries | durable key | the folder's cycle | not built | partly: a moment held final needs no history. The history serves only a seek or an edit into a moment not yet held |
+| Withdrawn: Datamosh history on disk | — | stage | — | — | — | removed by the owner's D6 (final frames only) |
 | Planned: mix runs (`durable-history-and-mix`) | `kinetren-cache/mix/` | **final** sound | durable key | the folder's cycle | not built | no (sound) |
 | Withdrawn: layer results (`persistent-cache` `layers/`) | — | stage | — | — | — | removed by D1 |
 
@@ -140,9 +140,9 @@ In order of bytes saved.
 5. **Datamosh history kept on disk (`durable-history-and-mix`, planned).** With the final frames on disk, a
    played stretch needs no history. The history is needed again only when the person seeks or edits into a
    moment not held.
-   - Not cut: the owner ordered it built (A14, "build now").
-   - It is a question for him: keep the disk history, or keep only the final frames and recompute the history
-     from the cut on a miss. Recomputing costs the walk from the cut.
+   - **Cut by the owner (D6, kkt-26.11.22 line 9): "Только финальные кадры".** No history on disk; on a miss it
+     is recomputed from the cut. `durable-history-and-mix` keeps only the mix tier (revised 2026-11-24), and the
+     `history/` kind left `project-cache-folder`'s layout.
 6. **Keep:**
    - the present memo, the kept final mix, the disk prerender: the final caches D1 asks for;
    - the stream and front memos in memory: the computing state of a stage that cannot run without its past;
@@ -179,3 +179,57 @@ the other on the same `heavy.kt` (`showcase --heavy`, footage in `/dev/shm`), ll
   linear run.
 - **Cut 4** (the window's engine on a card fills no read-back memo): not measurable here (llvmpipe is a CPU
   device, where the memo stays); its bound was 64 MB.
+## Cut 2 as a design question: decoding above the preview's size
+The orchestrator took cuts 1, 3 and 4 (mosh-sharp) and asked the owner about cut 5 (answered: D6, final frames only). Cut 2 changes rules the owner
+set himself (R.46, R.62), so it is a question for him, not a cut.
+**What decides the decode size today.** One function per clip, `clip_decode_quality` (`kt-engine/src/video.rs:983`):
+the conform size of the clip's rule (`clip_base_quality`, R.62) times the decode step (`clip_decode_scale`, R.46).
+- **The step (R.46, the owner's "давай")** is a whole number 1–4. It is `min(the chain's maximum zoom over the
+  WHOLE clip, the file's native headroom ROUNDED UP, the buffer ceiling)`. These were his decisions: one step a
+  clip, headroom rounded up, preview and export alike.
+- **The conform size (R.62)** is the size of the rule's frame on the canvas. For "fill" it is the whole filled
+  frame, off-screen part included, even when that is larger than the file: the decoder's `sws` then enlarges the
+  picture while decoding.
+**What it does on the heavy showcase** (`kt-cli probe heavy.kt 20 80`, at the project's 1920×1080, all 1,336 clips):
+| Clips | Source (native) | Step | Decoded at | Why above the preview |
+| 1,290 | the seven files | 1 | at or under 1920×1080 | — |
+| 6 + 6 + 6 | 03, 02, 01 (2.39:1; natives 1920×804, 2048×858, 3840×1608) | 1 | 2578×1080 | "fill" on the blurred backdrop lane; for 03 and 02 larger than the file |
+| 6 | 07 (square, 1080×1080) | 1 | 1920×1920 | "fill", 1.8× the file's pixels |
+| 6 | 06 (vertical, 1080×1920) | 1 | 1920×3412 | "fill", 3.2× the file's pixels; 26 MB a frame against 8.3 MB at 1080p |
+| 5 | 04 (3840×2026) | **2** | 4092×2160 | R.46: a zoom on a file with headroom; the only step above 1 here |
+So on this project the large decodes come from R.62's "fill" (30 backdrop clips), not from R.46's step (5 clips).
+The backdrop then runs `blur(28)`, which throws the extra detail away.
+**What "the preview's size plus the visible zoom" would change.** The cap reads: never decode a pixel the picture
+cannot show — not above the file's native size, and not above (preview size × the zoom the moment shows).
+- **"Fill" above native:** the file is decoded at its native size and the GPU's resample enlarges it, as it
+  already does for a "fit" under the frame. Bytes: 1920×3412 → 1080×1920 (3.2× less), 2578×1080 → 1920×804
+  (1.8× less). The picture: an enlargement by the GPU's bilinear instead of `sws` at decode, within `BILINEAR`.
+  Preview and export change together (one rule); goldens hold (their sources are under Quality).
+- **R.46's step:** already bounded by the file; the cap changes only the rounding up (native 1920 at Quality
+  1280 is decoded 2560, `sws` enlarging 1.5× of real detail to 2×) and the "whole clip" maximum (a clip zooming
+  only at its end). Both are his explicit decisions of R.46.
+- **A low-pass after the zoom** (the backdrop's blur) keeping fewer pixels than the zoom asks: a separate,
+  larger rule (each effect would declare the detail it keeps). Named, not proposed.
+**Tests that hold these rules** (none is weakened without his decision):
+- t309 (`kt-gpu/tests/parity.rs`): the GPU at a GIVEN step (`src_scale = 2`): conjugation, barriers at 2×,
+  absorbed point-wise ops, mirror, edges after a zoom, Pan3d. It drives the step directly, so a cap on the step's
+  CHOICE does not touch it.
+- t632 (`kt-gpu/tests/gpu_render.rs`) with t631b: a reel's step above its instance's chain input is fitted by a
+  resample within `BILINEAR`. Unchanged unless the cap lowers a reel's step; a reel has no native, so only the
+  zoom part of the cap applies.
+- The step's choice: t310 (the formula; its 1280×720 native at Quality 1280×720 already decodes at native, the
+  cap's rule), t311 (the maximum over the whole clip: changes under option c), t312 and t247d (the order equals
+  the read, size included: the cap must stay inside `clip_decode_quality`, the one place), t714 ("fill" decodes
+  larger than "fit": still true when "fill" stops at native — a vertical file's native 1080×1920 is larger than
+  its "fit" 608×1080).
+**The question for the owner** (current state, options, recommendation):
+> R.46 and R.62 decode a clip larger than the preview in two cases: "fill" takes the whole filled frame, enlarged
+> by the decoder past the file's own size (here 30 backdrop clips, up to 3.2× the file's pixels), and a zoom takes
+> up to 4× with the file's headroom rounded up (here 5 clips).
+> - **(a) Recommended:** never decode above the file's native size; the GPU enlarges the rest, as it does for
+>   "fit". The picture differs within the bilinear tolerance; preview and export together. The R.46 step stays as
+>   he decided it.
+> - **(b)** (a) plus R.46's rounding down: native 1920 at 1280 is decoded 1920, not 2560.
+> - **(c)** (b) plus the step per stretch instead of per clip (R.46 rejected this: two cache keys a clip, bars
+>   that flap at the threshold).
+> - **(d)** Keep both rules; rely on cut 1 (held moments decode nothing).

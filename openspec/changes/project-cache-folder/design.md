@@ -21,8 +21,7 @@
   - the `render-cache` thread writes it and the `render-cache-read` thread reads it;
   - a file leaf in its key is the project-stored path string, with the size and modification time.
 - **Planned tenants:**
-  - `durable-history-and-mix`: Datamosh history entries, LZ4 per the owner's Q24 b, and the kept mix
-    runs;
+  - `durable-history-and-mix`: the kept mix runs (the Datamosh history is not stored, the owner's D6, kkt-26.11.22 line 9: "Только финальные кадры");
   - `cached-final-render`: the list of earlier renders;
   - `disk-copies`, being revised by spec-features into the **persistent cache** ("Постоянный кэш",
     kkt-26.11.20b B1): the results of heavy effects and copies of heavy sources, on disk.
@@ -49,7 +48,6 @@ kinetren-cache/
   media/<content id>/copy-<q>.mkv a heavy source's copy at quality step q (persistent cache, D1b)
   results/v<FORMAT>/<device class>/   THE PERSISTENT CACHE OF RESULTS ("Постоянный кэш", D1b):
     frames/                       FINAL composites of moments, segments + manifests (the disk prerender)
-    history/                      stream entries (Datamosh), LZ4      (durable-history-and-mix)
   mix/v<FORMAT>/                  kept mix runs, raw f32          (durable-history-and-mix)
   renders.tsv                     earlier renders, verified       (cached-final-render)
   usage.tsv                       per tenant: bytes, last used    (for the cycle)
@@ -75,7 +73,7 @@ kinetren-cache/
   - the reel-preview lane writes reels;
   - the render-cache thread writes `results/…/frames/`;
   - the persistent cache's copy job writes the source copies (a background job, change `persistent-cache`);
-  - the history and mix writers of `durable-history-and-mix` write theirs.
+  - the mix writer of `durable-history-and-mix` writes `mix/`.
   - The UI thread touches nothing. Two processes may write the same entry; the content is the same
     (keyed by content), and the last rename wins.
 
@@ -88,7 +86,6 @@ kept results live in ONE store, the persistent cache, designed by spec-features 
 change hosts it. Its kinds lie side by side in the cache folder:
 - `results/v<FORMAT>/<device class>/frames/`: the FINAL composites of moments (the disk prerender of
   `render-cache-disk`), the only picture the store keeps;
-- `results/…/history/`: stream entries (`durable-history-and-mix`);
 - `media/<content id>/copy-<quality>.mkv`: heavy sources' copies.
 
 **The keys.**
@@ -123,11 +120,10 @@ and a build salt would empty the store on every update, against B1.
 **The manifest forms:**
 - frames: video segments of the machine's hardware encoder with a text manifest per
   segment (codec, encoder, size, rate, salt, one key per frame);
-- history: LZ4 of exact entries (it must be lossless: `durable-history-and-mix` D9);
 - copies: MKV with a manifest of the original's identity and timestamps.
 
-**Eviction by value per byte** (agreed with spec-features). The history is not evicted first: Datamosh
-history is exactly the heavy work B1 is about.
+**Eviction by value per byte** (agreed with spec-features). The Datamosh history is not a tenant (the owner's D6, kkt-26.11.22 line 9: "Только финальные кадры"):
+a moment whose final frame is held needs none, any other recomputes it from the cut.
 - Within `results/` and `mix/` there is one order: value per byte, the measured cost saved per read × the
   reads in this project ÷ the bytes, lowest first, with least recently used as the tie-break.
 - The source copies go by the same value rule.
@@ -140,7 +136,7 @@ history is exactly the heavy work B1 is about.
 - `persistent-cache`: which sources are heavy enough to copy, the value measure, the frames' quality rule (a
   frame is written at the preview's quality and read only at its own, its D2), the copy job and the switch "as
   in the preview";
-- `durable-history-and-mix`: the history entries and the mix runs.
+- `durable-history-and-mix`: the mix runs.
 
 ## D1c. What the tree has today (checked at orch `873934f7`)
 
@@ -256,8 +252,8 @@ history is exactly the heavy work B1 is about.
 |---|---|
 | moved or renamed the whole project folder | the cache moves with it; relative map lines hit; nothing is recomputed |
 | moved only the `.kt` into another folder | that folder's cache starts empty and fills by content; the old folder shows in Preferences as "no project here" |
-| Save As into another folder | the media and reel tenants are copied there in the background (small, costly to recompute); render, history and mix are not |
-| copied the folder to another machine | the media and reel tenants hit; render, history and mix are other device or build, so they miss and are removed at open |
+| Save As into another folder | the media and reel tenants are copied there in the background (small, costly to recompute); render and mix are not |
+| copied the folder to another machine | the media and reel tenants hit; render and mix are another device class or salt, so they miss and are removed at open |
 | deleted `kinetren-cache/` | everything is recomputed when needed; nothing is lost |
 
 ## D7. Class walk: every file the program writes, and where it belongs after this change
@@ -268,7 +264,8 @@ history is exactly the heavy work B1 is about.
 | reel previews | `<stem>.ktindex.db` | `kinetren-cache/reels/` | same |
 | prerender segments | `<data>/render-cache/` | `kinetren-cache/results/…/frames/` | "вот с тем же превью кэшем" |
 | heavy effects' results (persistent cache, B1) | none | the final frames in `kinetren-cache/results/…/frames/`; no per-stage kind | B1 "ЧТОБЫ ЭФФЕКТЫ ТЯЖЕЛЫЕ НЕ СЧИТАТЬ", narrowed by D1 to the final preview |
-| Datamosh history, heard mix (planned) | `<data>` | `kinetren-cache/results/…/history/`, `mix/` | the same rule for a new kept result |
+| heard mix (planned) | `<data>` | `kinetren-cache/mix/` | the same rule for a new kept result |
+| Datamosh history | the process's memory | unchanged: not stored (the owner's D6, kkt-26.11.22 line 9: Только финальные кадры) | a moment held final needs none |
 | earlier renders list (planned) | `<data>` | `kinetren-cache/renders.tsv` | per project |
 | heavy sources' copies (persistent cache, B1; formerly `proxies`) | `<proxy folder>` | `kinetren-cache/media/<content id>/copy-*.mkv` | one place, keyed by the original's content |
 | compiled pipelines, pass times | `<data>/shader-cache/` | unchanged | per machine and device, shared by every project |

@@ -9,7 +9,7 @@
 - The disk prerender (`render-cache-disk`, spec video-plan "Slow moments are prerendered at rest…"): whole composites
   under a durable key, segments of hardware-encoded H.264, written at rest by the player.
 - The project's cache folder (`project-cache-folder`, spec-engine): `<project folder>/kinetren-cache/` with `media/`,
-  `reels/`, `results/v<FORMAT>/<device class>/{frames,history}`, `mix/`; the folder's cycle with a notice (B2).
+  `reels/`, `results/v<FORMAT>/<device class>/frames/`, `mix/v<FORMAT>/`, `media/<id>/copy-*.mkv`; the folder's cycle with a notice (B2).
 - The owner, D1 (`kkt-26.11.22` lines 4–5): "делай кеш имменно финального превью а не на каком-то конкретном этапе
   цепочки fx".
 
@@ -66,7 +66,7 @@ by the number of stages and serves no picture by itself. Walked across every sto
 | `results/…/layers/` (revision 3, designed, never built) | yes — the picture after a heavy node | removed |
 | `results/…/frames/` (the disk prerender, built) | no — the final composite | kept, the store's main kind |
 | `media/<id>/copy-*.mkv` (designed) | no — a decoded source at the preview's size | kept |
-| `results/…/history/` (`durable-history-and-mix`) | a stream effect's reference state per node (Datamosh), not a picture of a stage | named to spec-engine for the D2 audit |
+| `results/…/history/` (was `durable-history-and-mix`) | a stream effect's reference state per node (Datamosh) | removed by the owner's D6 (`kkt-26.11.22` line 9, "Только финальные кадры"): no history on disk
 | `mix/` (`durable-history-and-mix`) | no — the final mix | not this change |
 | reel strips `reels/` | the reel's own final frames, small | not this change |
 | memory: burst cache, kept composites, present memo, stream memo, kept mix | burst cache = decoded sources; stream memo = per node | spec-engine's D2 audit |
@@ -75,6 +75,27 @@ by the number of stages and serves no picture by itself. Walked across every sto
 
 Writing follows the prerender's rule (at rest, after 1.5 s without input, background class); reading is one lookup
 per moment; nothing runs at rest once the heavy moments are written. A quality change starts no work while playing.
+
+## D8. What the tree has (engine side, spec-engine, checked at orch `d613b228`)
+
+- **The frames' key already carries the quality.** `render_cache::put_plan` hashes `out_w`/`out_h`
+  (`kt-engine/src/render_cache.rs:717–718`) and every layer's decode step; the prerender's state is
+  `(built.seq, versions, q, region)` (`:1141`), so a quality change clears its `done` list and composes again at rest.
+  D2's "read only at its own quality" holds by the key; nothing new is needed for it.
+- **The gap: heaviness is judged by a time measured at another size.** The prerender picks moments from
+  `PreviewCosts::snapshot` (`preview_cost.rs:66`, read at `render_cache.rs:1163`), which drops the size each sample was
+  measured at (`Sample { ns, w, h }`, kept by `note`, `:50`). A moment measured at 640×360 is judged heavy or light
+  at 1920×1080 by its 360 time, so a raised quality writes too few moments (and a lowered one too many). The rule: a
+  sample counts only at its own size; a moment never measured at the current size is judged by its time at the nearest
+  size scaled by pixels, and measured again when composed. t4106.
+- **The value measure's inputs:** `Player::note_cost` (`player.rs:1457`) records a composed frame's cost;
+  `PreviewCosts::note` keeps it per moment; the pass timer's `predict` (`kt-gpu/src/pass_time.rs:175`) prices a pass
+  never measured in this process (from `pass-times-v1.tsv`). The cost saved per read is the moment's measured device
+  time at its size; the reads are counted by `RenderCache`'s `restores` (`:969`) per entry in `usage.tsv`.
+- **Where a frame enters the preview:** a restored moment goes into the display's memo (`RESTORE`,
+  render-cache-disk D3) before the producer's "decoded?" check. The prefetch window (`prefetch.rs:126`) skips only
+  moments the present memo holds (`kept_moments`, `player.rs:3569`), so a moment on disk but not yet restored is still
+  decoded ahead: the cache audit's cut 1 (`docs/cache-audit.md`), given to mosh-sharp; this change must not undo it.
 
 ## Rejected
 

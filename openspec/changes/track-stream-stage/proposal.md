@@ -39,8 +39,8 @@ effects. An event-level mosh imitates this through "the event before". A track-l
   one frame per position.
 - **Keys from addresses.** A position's identity is the hash of the sub-plan's layers at that moment,
   with no content serial (the durable form). An edit of one event changes the identities only where
-  that event is active. The disk tier and the durable history (durable-history-and-mix) note every file
-  the segment's history reads.
+  that event is active. The disk tier notes every file the segment's history reads (the history itself is not
+  stored, the owner's D6).
 - **The second input** (`SecondFrom::TrackAbove/Below`) is the composite of the adjacent video track.
 - **The sound half** pairs on the track: the sound track's stage encodes its mix and breaks it on the
   picture's schedule over the same track layout. The model's `track_pairs` exclusion is lifted.
