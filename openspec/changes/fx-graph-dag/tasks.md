@@ -49,13 +49,13 @@
       (`ReadBranches`); the stream history keys by content, so a read's own front has its own; the
       read law t3226, the order t3227. Open: t3228 (Datamosh in an arm), the stream memo's want and
       `stream_advance_run` for a read's stage
-- [ ] 2.3c kt-app: the coverage strip draws a row per read; the performance panel and `kt-cli probe`
-      name the reads
+- [x] 2.3c kt-app: the coverage line of an event has a row per read, the performance section and
+      `kt-cli probe` name the reads; t3299, t3225
 - [x] 2.4 keys: `fx_chain_hash`, `plan_hash`, `durable_hash`, post-FX key hash `fx_in` when present;
       t3208
-- [ ] 2.5 Viewer by ancestors; picker cells insert on the selected node's arm; t3207
+- [x] 2.5 Viewer by ancestors; picker cells stand on the selected node's arm (or the new arm); t3207, t3299
 - [ ] 2.6 pass-cost rows, prewarm ids, the ledger counts held frames
-- [ ] 2.7 `kt-cli probe` prints the arms per event
+- [x] 2.7 `kt-cli probe` prints the arms per event; t3225
 
 ## 3. v2c — the sound (after v2b, Q1 a)
 
@@ -76,16 +76,17 @@
 
 ## 4. v2d — the editor
 
-- [ ] 4.1 `node_editor`: arms as rows under the trunk, wires in the gaps, Merge sockets
-- [ ] 4.2 gestures: a wire into empty canvas starts an arm; Merge first in the picker; connect and
+- [x] 4.1 `node_editor`: arms as rows under the trunk, wires in the gaps, Merge sockets
+- [x] 4.2 gestures: a wire into empty canvas starts an arm; Merge first in the picker; connect and
       disconnect; a time kind in an arm marked as a second read; refusals with reasons; t3218,
       t3219, t3220; remove `SetFxIn`/`SetTrackFxIn` from t252's `NOT_FROM_UI`
       (v2a put them there); every chain edit of the editor keeps the wiring (`remove_slot`,
       `insert_slot`) so a format-8 file's slot can be deleted (found-defects 903)
-- [ ] 4.3 i18n ×5 (Merge, its modes and sockets, the refusals); `subset-fonts.py` if needed
-- [ ] 4.4 idle with a branched graph on the heavy showcase; t3221
-- [ ] 4.5 live `node_graph_branch` (a screenshot per step); live `idle`, `node_graph`, `fxwin`
-- [ ] 4.6 What's new line; `docs/guide` page on the node editor gains branches; U3's registry row
+- [x] 4.3 i18n ×5 (Merge, its modes and sockets, the refusals); `subset-fonts.py` if needed
+- [~] 4.4 idle with a branched graph: t3221 (heavy chain in the harness); live `idle` on the heavy
+      showcase still to run
+- [~] 4.5 live `node_graph_branch` written (a screenshot per step), still to run; live `idle`, `node_graph`, `fxwin`
+- [x] 4.6 What's new line; `docs/guide` page on the node editor gains branches; U3's registry row
 
 ## 5. Close
 
