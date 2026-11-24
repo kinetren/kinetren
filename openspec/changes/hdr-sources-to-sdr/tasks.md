@@ -37,20 +37,12 @@
 
 ## 5. The 16-bit path (kkt-26.11.20 A25; the owner's Q1 a, Q2 a, Q3 b, Q4 a in kkt-26.11.20b B4)
 
-- [ ] 5.1 `Precision` on `ProjectSettings` and `Sequence`; the next free project file format by content; OTIO
-      `metadata["kt"]` and a row in "What OTIO export loses"; t3877–t3880
-- [ ] 5.2 the decode to linear BT.2020 f16 (D10), `VideoFrame.format`, the cache key's precision;
-      t3881–t3883
-- [ ] 5.3 kt-gpu: the pool by format, `tex_bytes` by format, the core float shaders, `FrameTol` float
-      classes; t3884–t3887
-- [ ] 5.4 `Manifest.precision`; the island and the chain's mark; float kernels of Geometry, CamMotion,
-      LayerMix, the crossfade, the title and the colour family; t3888–t3891
-- [ ] 5.5 the display: the surface chosen from wgpu's formats and colour spaces at start and on a monitor
-      change (scRGB/EDR/HDR10 where offered), the linear write with the monitor-peak roll-off, the tone map on
-      SDR, the facts naming which; t3892
-- [ ] 5.6 export SDR / HDR10 / HLG, tags, mastering display and MaxCLL; t3893–t3895
-- [ ] 5.7 the reels' boundary rule; the prerender's Main10 segments or the reason; t3896, t3897
-- [ ] 5.8 Project settings and composition settings: the precision; i18n; `reach_tests`, `layout_tests`;
-      t3898; planned live scenario `hdr_project` with a screenshot per step
-- [ ] 5.9 the idle check on the heavy showcase switched to 16-bit (pause, mouse over a static place, an
-      effects window open); t3899; What's new line; F-CLR-008 and F-CLR-009 verdicts; commit per stage
+> IMPLEMENTATION-READY (revision 4, 2026-11-25, orch `fc60a5d9`): D8–D15. After section 4, `shared-events`, `device-decode-sources`, `export-into-surface`, `track-stream-stage`, `scopes`, `chroma-key-upgrade` (all write what this doubles). **v+**. Six sessions, a merge after each; t3877–t3899, t4155, t4156.
+
+- [ ] 5.1 `Quality::new` and `VideoFrame::rgba8` (two mechanical commits, no byte moves); `Precision`, the format, OTIO; `Quality.deep`, `FramePlan.deep`, the leaves' form; t3877–t3880, t3883
+- [ ] 5.2 `hdr.rs` `Out::Deep` (D10), `VideoFrame.form`, `blend_frames`' twin; t3881, t3882
+- [ ] 5.3 kt-gpu: forms in the pool and every count, the deep twins, `FrameTol::DEEP`, transitions through the encoded form, boundaries, generators; GOLDEN_VIDEO and every 8-bit test untouched; t3884–t3887, t3896
+- [ ] 5.4 `Decl.extended`, `PlanOp::Island`, `to_sdr`/`from_sdr`, streams, the chain's mark; t3888–t3891
+- [ ] 5.5a the tone-mapped display, Project settings and composition settings, i18n ×5, reach and layout tests, live `hdr_project`; the idle check on the heavy showcase switched to 16-bit; t3892 (SDR half), t3898, t3899
+- [ ] 5.5b egui-wgpu vendored with its three changes and guard; the HDR surface, the callback, the facts; t3892, t4155; the C row's text (which Wayland compositor, Windows) to the orchestrator
+- [ ] 5.6 export SDR / HDR10 / HLG, the light levels, the prerender's Main10 segments; t3893–t3895, t3897, t4156; What's new; F-CLR-008 and F-CLR-009 verdicts; registry A25, B4; commit per session

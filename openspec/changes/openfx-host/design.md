@@ -135,7 +135,7 @@ dma-buf is not used: CUDA does not take one.
 **Order.** Revision 2's two timeline semaphores are not built first: our submission is seen finished on the processor (`done(ticket)`, the export's own way), the child is told, the child finishes its API's queue (`glFinish`, a CUDA stream's synchronize) before it answers. One wait each way, no copy: what the owner asked is the copy. The semaphores are the next step if the trace shows the waits
 (`VK_KHR_external_semaphore_fd` is asked at the device's opening, so adding them moves no device).
 
-**RAM.** A memfd mapped by both; `VK_EXT_external_memory_host` present and the alignment met: the mapping is imported as a buffer and `copy_texture_to_buffer` writes the shared pages. wgpu has no buffer from a foreign VkBuffer but `buffer_from_raw`: it is used. Absent: a mapped staging buffer and ONE memcpy, counted in the trace (`ram-copy`).
+**RAM.** A memfd mapped by both; `VK_EXT_external_memory_host` present and the alignment met: the mapping is imported as a buffer and `copy_texture_to_buffer` writes the shared pages. The buffer is wrapped by wgpu-hal's `vulkan::Buffer::from_raw_externally_owned` and `Device::create_buffer_from_hal`. Absent: a mapped staging buffer and ONE memcpy, counted in the trace (`ram-copy`).
 
 **DX12, GL, software adapters**: the RAM path (`ram-copy`). lavapipe has `VK_EXT_external_memory_host` (t3979 runs on it) and `external_memory_fd` by memfd; OpenGL by llvmpipe in the child (`t3978`'s test plugin) where both export and import are there, else the test says so and the owner's machine is asked (a C row).
 

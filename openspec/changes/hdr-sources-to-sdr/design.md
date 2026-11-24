@@ -1,8 +1,8 @@
 # Design: hdr-sources-to-sdr
 
 > **D1–D7, the 8-bit path (the default, "быстрый i8"), are IMPLEMENTATION-READY** (spec-engine, revision 3, 2026-11-24, orch `229c694b`,
-> found-defects 724). D8–D15, the 16-bit path ("тракт f16", kkt-26.11.20 A25), are a design of its own stage (5): it waits for every GPU,
-> STREAM and COLOR-FX row and is re-read then.
+> found-defects 724). D8–D15, the 16-bit path ("тракт f16", kkt-26.11.20 A25), are IMPLEMENTATION-READY as six sessions
+> (revision 4, 2026-11-25, orch `fc60a5d9`); the stage goes after the GPU, STREAM and COLOR-FX rows that run, so that nobody writes a shader twice.
 
 ## Context (what exists)
 
@@ -130,140 +130,92 @@ tables' layout is looked at before anything is merged.
 
 ## D8. The precision setting
 
-- `ProjectSettings.precision: Precision { Rgba8, Rgba16F }` with default `Rgba8`. `Sequence.precision:
-  Option<Precision>`, where `None` means the project's.
-- A plan is built for one precision: the frame's own (the root's, or the reel's for its sub-plan). The
-  precision is part of the plan key and of the burst cache key (invariant 4: the bars ask for the
-  precision the plan reads).
-- Changing it is an edit: undo returns it; the player rebuilds as for any settings edit; caches of the
-  other precision stay until evicted.
-- **The file:** the field is written only when it is `Rgba16F`. Such a file is the next free project-file format (taken at merge) by
-  content (`version_for`; an old reader refuses it, naming the version, as the format rules require). An
-  8-bit project is byte-identical to before.
-- **The OTIO door** writes it into `metadata["kt"]` and adds a row in "What OTIO export loses" (other
-  editors read an 8-bit timeline).
+- `ProjectSettings.precision: Precision { Eight, Deep }`, default `Eight`; `Sequence.precision: Option<Precision>`, `None` — the project's. Not a property of an event or a track. `PROJECT_FILE_VERSION_DEEP`, by content; an 8-bit project is byte-identical. OTIO: `metadata["kt"]` and a row in "What OTIO export loses".
+- **A plan has one precision**: the root's or the reel's. `FramePlan.deep: bool`; a reel's sub-plan its own; a track stage's, a front's, a member's (real-3d-groups) its parent's.
+- **The order**: `Quality` gains `deep: bool` (311 literals: `Quality::new(w, h)` and a mechanical commit of its own first, no behaviour). It travels with every request, burst key, coverage question and `layers_at` row, so "the order is the read" holds with no second rule; the bars ask with the plan's.
+- **Keys**: `put_plan` hashes `deep` only when set; leaves carry the size AND the form (`Leaf::frame(ident, w, h, deep)`), so an 8-bit project's keys do not move. `Made.pixels`' deep twin is `HDR_MAP_VERSION` + 1 in the deep leaves.
+- Changing it is an edit (undo); the other precision's frames stay until evicted.
 
-## D9. The working space of the 16-bit path (the owner's Q1 a)
+## D9. The working space (the owner's Q1 a)
 
-- Scene-linear light in BT.2020 primaries, `Rgba16Float`, premultiplied alpha, with 1.0 = 203 cd/m² (BT.2408
-  HDR reference white).
-- An SDR source is converted to linear through BT.1886 and its own primaries: SDR white becomes 1.0.
-- A PQ source maps its absolute luminance by `L / 203`. A 1000 cd/m² highlight becomes 4.93; f16 holds up
-  to 65504 and keeps 10 bits of mantissa, more than a 10-bit source's steps at every level.
-- An HLG source is converted with the BT.2100 OOTF at the nominal 1000 cd/m², then scaled likewise.
+Scene-linear light, BT.2020 primaries, `Rgba16Float`, **straight alpha** as the 8-bit path's (the passes that premultiply do it where they do today; an earlier text said premultiplied: every twin would then differ from its 8-bit text), 1.0 = 203 cd/m². SDR white of any SDR source, generator or title is 1.0; a 1000 cd/m² highlight 4.93. f16 holds 65504 and a relative step
+of 2⁻¹¹, finer than a 10-bit source's everywhere.
+
+**The peak of the project is 1000 cd/m²** (4.93), a constant of this change: the tone map of the display, of the islands, of an SDR export and of a boundary is D3 step 3's BT.2390 curve from 1000 to 203, one function, in integers on the processor and in the same table on the device. Revision 3's "from the frame's peak" would make one moment's picture depend on its brightest pixel, and its neighbours'
+brightness pump. HDR10's mastering display says 1000. A row for a project peak: after the owner has seen it.
 
 ## D10. The decode
 
-The D3 pipeline runs on every picture of a 16-bit plan up to its gamut step, with no tone map (gamut to BT.2020 instead of
-BT.709). Then:
-- the result is scaled to the working white (D9);
-- it is written as f16 by an exact integer conversion: a table from Q16 linear to the f16 bit pattern,
-  with round-to-nearest-even done in integers.
-
-The decode stays integer and table-driven, so a 16-bit frame enters the cache with the same bits on
-every processor (invariant 11). `VideoFrame` gains `format: PixFormat { Rgba8, Rgba16F }`; the bytes are
-`w·h·8` for f16. The frames budget of the memory ledger is in bytes and holds half as many frames.
+`hdr.rs` (D3) with `Out::Deep`: every picture of a deep request, SDR ones too, goes to `yuv444p16`/`rgba64` at the decode size, then matrix, to linear Q24, gamut to BT.2020 (Q14, from BT.709: `[10279, 5395, 710; 1132, 15066, 186; 269, 1442, 14673]`, from P3-D65 derived and held by t4142), no tone map, then the f16 bits by an exact integer conversion (leading zeros, round to
+nearest even). Bytes are the same on every processor (invariant 11). `VideoFrame.form: Form { Rgba8, Rgba16F }` (79 literals: `VideoFrame::rgba8(..)`, a mechanical commit); `rgba` stays the byte box, `w·h·8` long. `blend_frames` (frame blending) gets its f16 twin, in f32, rounding once.
 
 ## D11. The GPU executor
 
-- **The pool format** is chosen by the plan's precision: `Rgba8Uint` (today) or `Rgba16Float`.
-  `tex_bytes = w·h·bytes_per_pixel(format)`, so the pool, the upload cache, the present memo and the
-  readback cache count by format.
-- **The core shaders** get float twins, chosen when the pipeline is compiled: composite, layer_mix,
-  premul/unpremul, resample, mirror, mask, grid_tile, geom_fused, the crossfade and yuv (export).
-  `common.wgsl` gains `load_px`/`store_px` over `texture_2d<f32>`. The 8-bit shaders are unchanged
-  (invariant 11: their bytes do not move).
-- **`FrameTol`** gains float classes in units of 2⁻¹⁰ relative error, applied to f16 frames on two
-  devices (the software adapter and a card).
+- **Two texture forms**: `Rgba8Uint` (today) and `Rgba16Float` (`T0..T2: texture_2d<f32>`, unfilterable binding: `textureLoad` only, as the 8-bit passes do; renderable everywhere wgpu runs). `pool.rs` `FORMAT` becomes a property of the acquire; every byte count goes through `bytes_of(format)`.
+- **Two sets of core pipelines**, `Pipe` × form, compiled when a plan of that form is asked (an 8-bit project compiles none): `composite`, `layer_mix`, `premul`, `unpremul`, `resample`, `mirror`, `mask`, `matte`, `grid_tile`, `geom_fused`, `display`, `yuv`, `held_planes`. The texts are twins beside the 8-bit ones (`composite_deep.wgsl`…): the 8-bit texts are integer and byte-frozen, and one text
+  with a form switch would move their bytes. Integer arithmetic becomes the same formula in f32 without rounding; blend modes as `blend_ch`, with inputs clamped to 0..1 only where the formula has no meaning outside (screen, overlay, difference: the part above 1 passes over).
+- `FrameTol::DEEP`: |Δ| ≤ 2⁻⁹ relative (or 2⁻¹² absolute below 2⁻³), ×2 of what the software adapter and a card differ by, set by the executor; two runs on one device are bit-equal.
+- A transition's WGSL reads `samp` in 0..255 floats: the deep composite hands it encoded extended values (D12) and decodes what it returns, so all 36 kinds work at once; the crossfade is done in linear light (its 8-bit twin is integer; the look differs there as light does, said in the guide).
+- `fs_y`/`fs_uv` (export-into-surface) take the deep twin of the conversion like `fs`.
 
-## D12. Effects: a declared precision and the 8-bit island (the owner's Q2 a)
+## D12. Effects (the owner's Q2 a)
 
-- `Manifest.precision: &[Precision]` lists the precisions an effect's kernel has. Built-in effects start
-  with `[Rgba8]`.
-- This change gives float kernels to: Geometry, CamMotion, LayerMix, the crossfade, the title, and the
-  colour family (`color_grade`, curves, levels, LUT). The blurs follow in the first round after it.
-- **An effect without a float kernel in a 16-bit chain runs as an island:**
-  1. the input passes through the display's SDR tone map to `Rgba8Uint` (the same D13 curve);
-  2. the 8-bit kernel runs;
-  3. the output is expanded back through the curve's inverse below SDR white. Above white, the input's
-     own highlight ratio is reapplied where the effect left the pixel's chroma unchanged; elsewhere it
-     is clipped at 1.0.
+**The encoded extended form.** `enc(x) = sign(x)·|x|^(1/2.4)·255` in BT.2020, with no ceiling: for SDR content the numbers an 8-bit kernel reads today, beyond 255 for highlights.
+- **Extended taps.** A point-wise tap (`tap_<id>`) returns an unclamped `vec4<f32>` already; only the host clamps after it. A tap declared `Decl.extended` runs in a deep chain on `enc(x)` with no round and no clamp, and is decoded once at the end of its run: no second text. Declared in this change after being read one by one: `color_grade`, `vignette`, the LayerMix's side, gain-like taps. Not: Posterize, Duotone,
+  Greenscreen (tables and thresholds over 0..255).
+- **Geometry, CamMotion, Pan3d, warps** resample: their fused pass has its deep twin (D11) and they need no declaration.
+- **The core's mip blur** (`Node::Resample` graphs of plugins with no shader of their own) runs deep.
+- **Everything else is an island**: barrier kernels with WGSL, thresholds, streams.
+  1. in: tone map to 203, gamut to BT.709, encode, `Rgba8Uint` (the SDR rendition, one pass `to_sdr`);
+  2. the 8-bit passes, unchanged;
+  3. out (`from_sdr`): decode, gamut to BT.2020; where no channel moved by more than one code from the island's own input at that pixel, the input's linear value comes back whole (highlights kept where the effect did nothing); elsewhere the decoded value times the tone map's inverse at its level (so an effect that leaves a bright area bright keeps its brightness up to the peak).
+  Neighbouring islands share one `to_sdr`/`from_sdr` (`kt_fx::plan` gains `PlanOp::Island { open | close }` around runs of non-deep ops; the plan of an 8-bit chain is untouched).
+- A chain row of an island shows "8-bit" and its hint. `Manifest` has no `precision` list: the planner knows the class, `Decl.extended` is the only fact a plugin gives; a wasm or OFX plugin is an island (OFX may say float: openfx-host D13).
+- **Stream stages** read the SDR rendition of their input (the front runs deep, the last pass is `to_sdr`), their picture enters by `from_sdr`'s decode.
 
-  The chain row shows "8-bit" with a tooltip: "HDR highlights are limited through this effect".
-- Islands next to each other share one conversion. The plan fuses them as it fuses point-wise runs.
-- **Stream stages** (Datamosh, VHS Tape's tape, the Camera ISP's sensor path) model 8-bit or 10-bit
-  devices. They are islands by nature and are marked the same. A 10-bit codec simulation is a later
-  change.
+## D13. The display (the owner's Q3 b)
 
-## D13. The display: HDR on an HDR monitor at once, SDR elsewhere (the owner's Q3 b)
+1. **Always**: the deep twin of `display.wgsl` tone-maps into `Rgba8Unorm` (session 5a).
+2. **An HDR surface** (session 5b). wgpu 30 offers what is needed: `SurfaceCapabilities` lists per format its `color_spaces`, `SurfaceConfiguration.color_space` takes `ExtendedSrgbLinear` (scRGB, EDR: `Rgba16Float`) or `Bt2100Pq`. egui-wgpu 0.36.1 does not: it picks `Rgba8Unorm` first and the colour space `Auto`, and its renderer has no linear, scaled output. So egui-wgpu is vendored
+   (`src/vendor/egui-wgpu`, `[patch.crates-io]`) with three small changes, each behind a config field: the surface's (format, colour space) chosen by a callback; an output mode `Linear { sdr_white }` that decodes the interface's gamma colours and scales them; the reconfiguration on demand. The patch is kept by a script that re-applies it on an upgrade and a guard (dist-check) that the vendored
+   version is eframe's. Rejected: our own painter (the whole of eframe's window loop); a second surface over the preview (no such thing on Wayland and X11 without a subsurface eframe does not give).
+3. The preview's picture on an HDR surface is drawn by a paint callback with the deep texture, linear, × 203/80 for scRGB/EDR, PQ-encoded for `Bt2100Pq`; above the monitor's peak it rolls off by BT.2390 (the peak: the system's number where wgpu or the window gives one, else 1000). The interface is at the system's SDR white (203 when unknown).
+4. When: at the start and when the window moves to another monitor or the surface is remade (gpu-errors-survive's path); one surface form for the whole window. A project with no deep composition keeps `Rgba8Unorm` even on an HDR monitor: the interface must not change for a person who asked nothing.
+5. Where it is SDR and why is a line of the machine facts and Diagnostics: "HDR (scRGB, peak 600)", "SDR: the window system offers no HDR surface (X11)". What Wayland compositors offer is the owner's check (a C row): nothing of it can be seen on the stand.
+6. Every reader of shown bytes (`read_display`, screenshots, the poster, `kt-cli preview`) reads the SDR rendition.
 
-- **The surface is chosen at start, and again when the window moves to another monitor.** The display asks
-  wgpu for the surface's formats and colour spaces. An HDR surface is taken where one is offered:
-  - **Windows:** `Rgba16Float` with the extended linear sRGB colour space (scRGB) on DX12 or Vulkan, when
-    Windows HDR is on for that monitor;
-  - **macOS:** `Rgba16Float` with the extended linear colour space (EDR);
-  - **Linux:** a Vulkan surface with an HDR10 (ST 2084) or extended linear colour space where the
-    compositor exposes it (Wayland's colour-management protocol). X11 and compositors without it stay SDR.
+## D14. Export (the owner's Q4 a)
 
-  eframe takes the chosen format through its existing-device setup, the same path as
-  `stream-picture-stays` D2.
-- **On an HDR surface** the display pass writes the linear composite without a tone map:
-  - for scRGB and EDR, scaled by 203/80, since in those spaces 1.0 is 80 cd/m²;
-  - for HDR10, through the PQ inverse EOTF;
-  - highlights above the monitor's reported peak roll off by BT.2390 to that peak (the monitor's
-    HDR metadata, when the system reports it; else 1000 cd/m²).
+- **SDR**: tone map, BT.709, then the 8- or 10-bit conversion as today.
+- **HDR10**: PQ of `x·203` cd/m², clipped at 10000; **HLG**: the inverse OOTF (γ 1.2 at 1000) and OETF. Both BT.2020 non-constant luminance, limited range, 10-bit `yuv420p10`/P010/`yuv422p10`, chroma left. `YuvLayout` gains `transfer: Sdr | Pq | Hlg` and `YuvMatrix::Bt2020`; the pass reads f16 and encodes by the curves' f32 formulas from `kt_plugin_api::math`'s coefficients, rounding once; the processor's
+  reference is the same f32 text, held to ±1 code of 1023 (one device's two runs are equal).
+- **Metadata**: mastering display (BT.2020, D65, 0.005–1000) and content light. MaxCLL/MaxFALL are measured while composing (a reduction of the linear picture, 2×2 steps on the device, read with the planes): they are known at the END. MKV and MP4 write them as stream side data in the header: so the header's numbers are 0 ("not stated") at first and rewritten at `finish` where the container can (MP4's `clli` box and MKV's
+  element are of fixed size: our muxer rewrites them in the closed file by the offsets it found when writing the header, a plain seek, no second pass; `+faststart` moves the header: the rewrite is done after it). A container where it cannot be found keeps 0 and the report says so. The x265/NVENC SEI gets the mastering display at the opening, MaxCLL 0.
+- **Offered** with: libx265, libsvtav1, libaom-av1, libvpx-vp9 (profile 2), prores_ks, hevc_nvenc, av1_nvenc (the rows with `pix10`), MKV and MP4/MOV; not libx264 High10 (players refuse PQ there). VAAPI and QSV rows have no `pix10` today: with one they join.
+- `cached-final-render`: the fingerprint gains the transfer; `loudness-norms`, audio: nothing.
 
-  The interface itself (egui) is drawn at SDR white on that surface, so it does not glare.
-- **On an SDR surface** (every other case, and GL) the display pass tone-maps by BT.2390 from the frame's
-  peak to the monitor's SDR white (the same curve as D3 step 3, in float) and writes `Rgba8Unorm` as
-  today.
-- **What the person sees:** the display's facts (Diagnostics, the trace's machine facts) name the surface
-  and why: "HDR (scRGB, peak 600 cd/m²)" or "SDR (tone-mapped): the compositor gives no HDR surface".
-- The scopes (change `scopes`) read the f16 composite, so they show nits above 100.
+## D15. Boundaries and the class walk
 
-## D14. Export from a 16-bit project (the owner's Q4 a)
+- **A reel of another precision**: its sub-plan is composed in its own form, then `to_sdr` (deep reel in an 8-bit parent) or `from_sdr`'s decode (8-bit reel in a deep parent: SDR white 1.0), one pass before the instance's chain. The reel's own kept frames are of its own form.
+- **The prerender** of a deep project: `SegmentCodec` gains `deep: bool`; HEVC Main10 PQ P010 by the 10-bit hardware rows (NVENC today); none opens → nothing is written, and the store says "no 10-bit hardware encoder". The restored picture is decoded through D10's path (PQ, peak 10000, no map): within the codec's loss. `persistent-cache` copies of sources: an HDR source's copy for a DEEP plan is the original (a copy is SDR by D5):
+  the copy is not asked, said on the card ("copies are 8-bit: this composition plays the original").
+- **Generators and titles**: drawn in 8 bits and decoded at upload (`from_sdr` without the island rule); the title's edges are SDR by nature. A deep title kernel is not here (an earlier text promised it: it has nothing above white to keep).
 
-- **SDR:** the display's tone map, then today's RGB→YUV at 8 or 10 bits.
-- **HDR10:** linear → BT.2020 PQ (inverse EOTF table), then the 10-bit Q15 matrix to `yuv420p10` / P010 /
-  `yuv422p10`. Tags: BT.2020 matrix, primaries and SMPTE 2084 transfer. Mastering display (BT.2020, 1000
-  cd/m² default) and MaxCLL/MaxFALL measured over the export, written by a second pass of the muxer's
-  header (MKV) or by the encoder's SEI options (x265 `master-display`, `max-cll`).
-- **HLG:** the BT.2100 inverse OOTF and OETF, tagged ARIB STD-B67.
-- **Encoders** that take 10 bits: libx265, libx264 (High10), libsvtav1, libaom-av1, libvpx-vp9,
-  hevc_nvenc, av1_nvenc, prores_ks. The render window offers HDR only with one of them. An 8-bit-only
-  encoder offers SDR.
-- The `yuv.rs` and `yuv.wgsl` conversions gain an f16 input, integer from the f16 bits by table (the
-  export's bytes stay exact on one device).
-
-## D15. Boundaries, the prerender and the class walk
-
-**A composition inside another of a different precision:**
-- an f16 reel in an 8-bit parent is tone-mapped (D13) at its boundary;
-- an 8-bit reel in an f16 parent is expanded to linear (D10's SDR rule).
-
-A reel preview strip is always 8-bit, tone-mapped.
-
-**The prerender** (render cache) of a 16-bit plan writes HEVC Main10 PQ segments by the hardware cascade.
-Where no 10-bit hardware encoder opens, it writes nothing, and the Diagnostics window says why.
-
-| Place | 8-bit path | 16-bit path |
-|---|---|---|
-| decode | D1–D4: matrix, and HDR/WIDE mapped to SDR 8-bit | D10: linear BT.2020 f16 |
-| frames cache | RGBA8 | RGBA16F (8 B/px), the precision in the key |
-| core shaders | u32 0..255 | float twins (D11) |
-| effects | as today | float kernels where declared, else an 8-bit island (D12) |
-| Datamosh, tape, ISP | as today | an 8-bit island, marked |
-| generators, titles | RGBA8 | the title in float; the other generators drawn in 8 bits and expanded |
-| reels | as today | the boundary rule (D15) |
-| display | `/255` to Rgba8Unorm | BT.2390 tone map; HDR surface later (D13) |
-| scopes | the 8-bit composite | the f16 composite in nits |
-| export | RGB→YUV 8/10 from 8 bits; BT.709 from HD (D4) | SDR / HDR10 / HLG 10-bit (D14) |
-| prerender segments | H.264 8-bit | HEVC Main10 PQ, or none |
-| thumbnails, reel strips, posters | 8-bit | 8-bit, tone-mapped |
-| memory ledger | 4 B/px | 8 B/px in every tenant (`tex_bytes` by format) |
-| durable keys, render index | as today | the precision in the key |
-| project file | unchanged | the next free format when 16-bit |
-| OTIO | unchanged | `metadata["kt"]`, a row in "What OTIO export loses" |
+| Place | Deep path |
+|---|---|
+| burst cache, coverage, pins, the ledger | by bytes, 8 a pixel; `Tenant` budgets as they are: half the frames |
+| `ReadbackCache`, present memo, kept composites, upload cache, transients | `bytes_of(format)` |
+| thumbnails, filmstrips, strips, posters, effect cells, the bin | `Eight` always (their orders ask `deep: false`) |
+| masks, mattes, shape coverage | coverage textures stay 8-bit `Rgba8Uint`; the deep passes read them as uint (T2) |
+| scopes | read the deep composite: nits axis (the `scopes` change's own row) |
+| chroma key, magic wand | their plugins are islands; a picked colour is the SDR rendition's |
+| simulated sprites, real-3d-groups' pass | sprites: `from_sdr` colours in the resolve; the mesh pass: `Rgba16Float` MSAA target (renderable at 4 samples on every native adapter; blendable: asked at the device's opening, absent → the group is an island) |
+| track-stream-stage, Datamosh, Tape, ISP | islands |
+| export: pipelined, serial, surfaces, cached, draft | D14; the draft reads the tier as it is |
+| render-ahead, the arbiter, pass costs | per (pipe, form) slots |
+| `picture-check`, `kt-cli` picture hashes | of the SDR rendition, as a person sees |
+| export-host-copy's readback | planes as today |
+| a machine whose adapter lacks blendable/renderable `Rgba16Float` | none of wgpu's native ones; GL ES 3.0 without the extension: the project's deep precision is refused with its reason at opening the setting, an opened deep project shows 8-bit and says so |
 
 ## D16. Stages and tests
 
@@ -272,15 +224,13 @@ Where no 10-bit hardware encoder opens, it writes nothing, and the Diagnostics w
 3. A device decode equals the processor's (t3807), where `device-decode-sources` is in.
 4. Names (t4143), facts and trace (t3810, t3811). t3808 and t3809 stay free (the export default was built as t3603).
 
-6. The 16-bit path (the owner answered Q1–Q4, kkt-26.11.20b B4):
-   - the precision setting, the file's next free format, OTIO (t3877–t3880);
-   - the decode to linear f16, exact on every processor (t3881–t3883);
-   - the pool by format, the core float shaders, `FrameTol` float classes (t3884–t3887);
-   - the effect's precision, the island and its mark, the colour family's float kernels (t3888–t3891);
-   - the display: the HDR surface where offered, the tone map elsewhere (t3892);
-   - the export SDR / HDR10 / HLG with their tags and mastering metadata (t3893–t3895);
-   - the reels' boundaries and the prerender's Main10 segments (t3896, t3897);
-   - the settings' control and the chain's mark (t3898); the idle check on a 16-bit heavy showcase (t3899).
+6. The 16-bit path, six sessions, a merge after each (all behind the setting, so every merge is safe):
+   - 5.1 the model, the file, the two mechanical commits (`Quality::new`, `VideoFrame::rgba8`), keys (t3877–t3880, t3883);
+   - 5.2 the decode (t3881, t3882);
+   - 5.3 the executor's forms and twins, transitions, boundaries, generators (t3884–t3887, t3896);
+   - 5.4 extended taps, islands, the marks, streams (t3888–t3891);
+   - 5.5a the SDR display, the settings' control, the idle check (t3892 first half, t3898, t3899); 5.5b the HDR surface (t3892, t4155);
+   - 5.6 the export and the prerender (t3893–t3895, t3897, t4156).
 
 ## Risks (the 16-bit path)
 
