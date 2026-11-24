@@ -8519,6 +8519,7 @@ fn t3447_a_heavy_range_survives_an_edit_beside_it_and_the_store_says_so() {
     title.opacity = 0.5;
     p.clips = vec![heavy, title.clone()];
     p.transitions.clear();
+    p.morphers.clear();
     p.region = None;
     app.model = kt_model::TimelineModel::new(p);
     app.model_rev += 1;
@@ -8558,7 +8559,7 @@ fn t3447_a_heavy_range_survives_an_edit_beside_it_and_the_store_says_so() {
     h.state().player.render_cache().set_heavy_for_tests(Some(u64::MAX));
 
     let moved = h.state_mut().apply(kt_model::Command::MoveClip { id: title.id, new_start: Tick(315_000), new_lane: 0 });
-    assert!(moved, "the title moves");
+    assert!(moved, "the title moves: {:?}", h.state().status);
     until(&mut h, "the heavy range did not stay bright after the edit", &|h| bright(h, &a) == 6 && !h.state().player.final_video_runs().1);
     assert_eq!((bright(&h, &b), bright(&h, &b_new)), (0, 0), "the title's old and new moments are dim");
 

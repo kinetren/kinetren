@@ -79,6 +79,7 @@ impl KtApp {
             cap: kt_engine::render_cache::cap_from_env(),
         }));
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(PathBuf::from));
+        self.player.render_cache().set_notify(crate::wake::soon);
         let copies = self.player.copies();
         copies.set_mode(mode);
         copies.set_notify(crate::wake::soon);

@@ -519,6 +519,7 @@ impl Player {
                 loop_region: loop_region.clone(),
                 wake: wake.clone(),
                 composer: composer.clone(),
+                render_cache: render_cache.clone(),
                 memo,
             };
             std::thread::Builder::new().name("engine-build".into()).spawn(move || build_loop(ctx)).expect("spawn the engine builder")
@@ -699,6 +700,8 @@ impl Player {
         // a parked prefetch warms the new size
         self.wake.notify();
         self.copies.kick();
+        // what lies on disk at this quality, for the bars
+        self.render_cache.wake.notify();
     }
 
     pub fn preview_quality(&self) -> Quality {
@@ -2503,13 +2506,14 @@ struct BuildCtx {
     loop_region: Arc<Mutex<Option<(i64, i64)>>>,
     wake: Arc<Wake>,
     composer: Arc<crate::compose_queue::Composer>,
+    render_cache: Arc<crate::render_cache::RenderCache>,
     memo: crate::incremental::BuildMemo,
 }
 
 /// The `engine-build` thread: the newest want, built once and published; the probe's states
 /// synced and the loop's head pinned with the new renderer; the render thread and the UI woken.
 fn build_loop(ctx: BuildCtx) {
-    let BuildCtx { builds, media, cache, probe, loop_region, wake, composer, mut memo } = ctx;
+    let BuildCtx { builds, media, cache, probe, loop_region, wake, composer, render_cache, mut memo } = ctx;
     let mut done = builds.built_seq();
     while builds.next_want(done).is_some() {
         builds.wait_gate();
@@ -2554,6 +2558,9 @@ fn build_loop(ctx: BuildCtx) {
         wake.notify();
         // the media the build reaches, and the sizes it decodes them at
         media.copies.kick();
+        // the moments of it that lie on disk (found-defects 974): nothing else tells the tier of an edit
+        // that leaves the picture on screen as it is
+        render_cache.wake.notify();
         composer.wake_ui();
     }
 }

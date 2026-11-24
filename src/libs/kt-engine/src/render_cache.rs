@@ -892,6 +892,8 @@ pub struct RenderCache {
     pub(crate) wake: crate::player::Wake,
     /// A heavy moment was measured since the prerender last looked.
     pub(crate) news: AtomicBool,
+    /// Told when what lies on disk for the bars moved.
+    notify: Mutex<Option<fn()>>,
     /// Writes and restores so far (tests, the bench).
     pub(crate) stores: AtomicU64,
     pub(crate) restores: AtomicU64,
@@ -952,6 +954,18 @@ impl RenderCache {
     pub(crate) fn key(&self, plan: &FramePlan<'_>) -> Option<DiskKey> {
         let made = self.cfg.lock().unwrap().as_ref().map_or(Made::of(0), |c| c.made);
         disk_key(plan, &made)
+    }
+
+    /// Told (with no lock held) when the bars may draw otherwise: a segment written, a scan done.
+    pub fn set_notify(&self, f: fn()) {
+        *self.notify.lock().unwrap() = Some(f);
+    }
+
+    fn tell(&self) {
+        let f = *self.notify.lock().unwrap();
+        if let Some(f) = f {
+            f();
+        }
     }
 
     /// The person acted (D4): an atomic stamp, no notify.
@@ -1116,6 +1130,7 @@ fn commit(rc: &RenderCache, seg: &mut Option<OpenSeg>) {
             for (t, k) in &s.moments {
                 rc.note_on_disk(*t, *k, s.state.1);
             }
+            rc.tell();
             *rc.encoder.lock().unwrap() = Some(encoder);
         }
         Ok(_) => {}
@@ -1223,8 +1238,12 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
         // the bars' scan: once per state and per five seconds of the playhead's place (no device)
         let bucket = head.div_euclid(5 * kt_time::TICK_HZ);
         if scanned != Some((sk, bucket)) {
-            scanned = Some((sk, bucket));
-            scan(&parts, &rc, &store, &display, &video, versions, q, region, head);
+            scanned = scan(&parts, &rc, &store, &display, &video, versions, q, region, head).then_some((sk, bucket));
+            if scanned.is_none() {
+                // broken off by the person: again at their rest
+                rc.wake.wait_timeout(rc.quiet_left().unwrap_or(QUIET));
+                continue;
+            }
         }
         let unavailable = rc.unavailable.lock().unwrap().is_some();
         if full || unavailable {
@@ -1359,7 +1378,8 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
 }
 
 /// The disk moments of the loop region (or five seconds round the playhead) for the bars (D3): durable
-/// keys asked of the index, no device and no decode; only when the store holds anything.
+/// keys asked of the index, no device and no decode; only when the store holds anything. `false` — the
+/// person broke it off.
 #[allow(clippy::too_many_arguments)]
 fn scan(
     parts: &crate::player::PreviewParts,
@@ -1371,18 +1391,20 @@ fn scan(
     q: kt_media::Quality,
     region: Option<(i64, i64)>,
     head: i64,
-) {
+) -> bool {
     const MAX: usize = 1200;
     if store.used().1 == 0 {
-        return;
+        return true;
     }
     let step = video.grid.frame_step().max(1);
     let (a, b) = region.unwrap_or((head - 5 * kt_time::TICK_HZ, head + 5 * kt_time::TICK_HZ));
     let mut t = video.grid.align_floor(kt_time::Tick(a.max(0))).0;
     let (mut looked, mut found) = (0u64, 0u64);
     let input = rc.input_stamp();
+    let mut whole = true;
     while t < b && (looked as usize) < MAX {
         if parts.transport.is_playing() || rc.input_stamp() != input {
+            whole = false;
             break;
         }
         if !video.layers_at(kt_time::Tick(t), q).is_empty() {
@@ -1399,6 +1421,10 @@ fn scan(
         t += step;
     }
     trace::ev(Ev::RenderCache).aux(rc::SCAN).a(looked).b(found).emit();
+    if found > 0 {
+        rc.tell();
+    }
+    whole
 }
 
 /// Prerender the moment `t` (D4): decode its layers at the lowest priority, advance its stream stages,
