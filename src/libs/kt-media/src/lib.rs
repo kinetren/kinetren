@@ -192,6 +192,7 @@ pub trait MediaSource: Send {
 pub const PEAK_BLOCK_FRAMES: usize = 256;
 
 pub mod cache_folder;
+pub mod copy;
 pub mod factory;
 pub mod frame_alloc;
 pub mod ffmpeg;
