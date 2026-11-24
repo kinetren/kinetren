@@ -514,6 +514,7 @@ mod tests {
         assert_eq!(std::env::var(ENV_CHILD).as_deref(), Ok("1"), "the child is not marked supervised");
         crate::journal::start_run_at(&crate::journal::path(), "FFmpeg test");
         crate::journal::log("INFO", "t1072 child: about to end");
+        crate::journal::flush(std::time::Duration::from_secs(5));
         match mode.as_str() {
             "panic" => {
                 crate::journal::install_panic_hook();

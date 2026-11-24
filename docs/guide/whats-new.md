@@ -5,6 +5,7 @@ month, newest first.
 
 ## kt26.11
 
+- **A busy disk no longer freezes the interface for a message.** A refusal (dragging an event of a locked track), a warning, saving the panel layout or the list of recent projects used to wait for the disk, for seconds when it was busy; now the program writes them on its own time. And on Linux, a program started together with the desktop's window manager could stay without a window; it asks for its window again.
 - **A loop that plays from its finished frames no longer keeps its sources in memory.** Once the preview holds every frame of a loop, the decoded footage it was made from is let go, and the memory comes down; the loop goes on playing, and an edit elsewhere decodes nothing. A Datamosh over a file you replaced by another starts a new history instead of keeping the old file's.
 
 - **Windows tidied up.** An effects window says which event it edits ("interview.mp4 — Effects"; its number is small inside), a transition's names the two events it joins. Nothing of the main window shows through a window any more: not the glow of the preview and the meters, not the project's title. A program started maximized goes back to a normal size when you drag it, from the bottom toolbar too. In a narrow window the mouse wheel slides the bottom toolbar. Copy and paste of effect chains and envelopes are icons, and the strip beside an opened chain is gone.

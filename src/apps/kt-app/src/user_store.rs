@@ -536,7 +536,7 @@ pub fn load_workspace() -> Workspace {
 }
 
 pub fn load_workspace_at(path: &std::path::Path) -> Workspace {
-    let Ok(text) = std::fs::read_to_string(path) else { return Workspace::default() };
+    let Ok(text) = crate::later::read(path) else { return Workspace::default() };
     let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
         // a broken file does not bring the programme down and does not eat the work: it will be
         // moved aside to `.broken` on the first write
@@ -598,11 +598,8 @@ pub fn save_workspace_at(path: &std::path::Path, w: &Workspace) {
     if let Some(on) = w.geom_controls {
         doc["geom_controls"] = serde_json::json!(on);
     }
-    if let Some(d) = path.parent() {
-        let _ = std::fs::create_dir_all(d);
-    }
     // by the same code as the project: a break midway leaves no stump
-    let _ = kt_otio::write_atomic(path, &format!("{doc:#}\n"));
+    crate::later::write(path, format!("{doc:#}\n"), true);
 }
 
 // ---- between-projects records (welcome-window-and-tour) -------------------
@@ -749,7 +746,7 @@ pub fn project_key(p: &std::path::Path) -> PathBuf {
 }
 
 fn read_record(path: Option<&std::path::Path>) -> (Option<serde_json::Value>, FileState) {
-    let Some(text) = path.and_then(|p| std::fs::read_to_string(p).ok()) else {
+    let Some(text) = path.and_then(|p| crate::later::read(p).ok()) else {
         return (None, FileState::default());
     };
     match serde_json::from_str::<serde_json::Value>(&text) {
@@ -902,16 +899,9 @@ impl StartStore {
         }
         let mut doc = body;
         doc["version"] = serde_json::json!(RECORDS_VERSION);
-        if let Some(d) = path.parent() {
-            let _ = std::fs::create_dir_all(d);
-        }
         // tmp + rename, WITHOUT fsync: a break midway leaves no stump, and these records are
-        // conveniences — a lost recent list costs nothing, while two fsyncs per open stall the
-        // UI thread for seconds on a busy disk (t985 took 90 s with `write_atomic`)
-        let tmp = path.with_extension("json.tmp");
-        if std::fs::write(&tmp, format!("{doc:#}\n")).is_ok() {
-            let _ = kt_otio::replace_file(&tmp, &path);
-        }
+        // conveniences — a lost recent list costs nothing (t985 took 90 s with `write_atomic`)
+        crate::later::write(&path, format!("{doc:#}\n"), false);
     }
 
     fn save_recent(&mut self) {

@@ -187,6 +187,7 @@ pub fn install_panic_hook() {
         }
         log("CRASH", &format!("panic report written to {}", p.display()));
         // the records queued before the panic reach the file before the process goes
+        flush(std::time::Duration::from_millis(300));
         crate::tele_journal::flush(std::time::Duration::from_millis(300));
         kt_time::trace::flush();
         prev(info);
@@ -383,17 +384,105 @@ pub fn last_run_tail(path: &Path, n: usize) -> Vec<String> {
 /// an auxiliary channel, and crashing or making noise because of it, when the user
 /// is just losing a project, would be mockery.
 pub fn log(level: &str, text: &str) {
-    write_to(&path(), level, text);
+    if cfg!(test) {
+        // a test reads the file after the line
+        write_to(&path(), level, text);
+    } else {
+        lines().push(line_of(level, text));
+    }
     // the same line in the telemetry journal, among what the person did (telemetry-journal)
     crate::tele_journal::record(crate::tele_journal::Kind::Log, &format!("{level} {text}"));
 }
 
+/// The journal's lines on their way to the file (found-defects 833): a refusal or a warning is said on
+/// the UI thread, and opening and writing a file there waits for the disk — on a busy one a locked
+/// track's refusal held the frame for 5.2 s. Written by a thread of its own, in order, at once.
+pub(crate) struct Lines {
+    st: std::sync::Mutex<LinesSt>,
+    cv: std::sync::Condvar,
+}
+
+#[derive(Default)]
+struct LinesSt {
+    queue: std::collections::VecDeque<String>,
+    /// Lines that found the queue full: a disk that answers nothing must not take the memory.
+    lost: u64,
+    writing: bool,
+}
+
+/// Lines waiting at most.
+const LINES_KEPT: usize = 4096;
+
+impl Lines {
+    pub(crate) fn start(mut write: impl FnMut(&str) + Send + 'static) -> std::sync::Arc<Lines> {
+        let l = std::sync::Arc::new(Lines { st: Default::default(), cv: Default::default() });
+        let me = l.clone();
+        let _ = std::thread::Builder::new().name("journal".into()).spawn(move || {
+            loop {
+                let (line, lost) = {
+                    let mut st = me.st.lock().unwrap_or_else(|e| e.into_inner());
+                    st.writing = false;
+                    me.cv.notify_all();
+                    while st.queue.is_empty() {
+                        st = me.cv.wait(st).unwrap_or_else(|e| e.into_inner());
+                    }
+                    st.writing = true;
+                    (st.queue.pop_front().unwrap_or_default(), std::mem::take(&mut st.lost))
+                };
+                write(&line);
+                if lost > 0 {
+                    write(&line_of("WARN", &format!("{lost} lines of the journal were dropped: the disk did not answer")));
+                }
+            }
+        });
+        l
+    }
+
+    pub(crate) fn push(&self, line: String) {
+        let mut st = self.st.lock().unwrap_or_else(|e| e.into_inner());
+        if st.queue.len() >= LINES_KEPT {
+            st.lost += 1;
+            return;
+        }
+        st.queue.push_back(line);
+        self.cv.notify_all();
+    }
+
+    /// Wait until what was pushed is written, at most `bound`; `false` — it is not.
+    pub(crate) fn flush(&self, bound: std::time::Duration) -> bool {
+        let st = self.st.lock().unwrap_or_else(|e| e.into_inner());
+        let waits = |s: &mut LinesSt| s.writing || !s.queue.is_empty();
+        let (st, _) = self.cv.wait_timeout_while(st, bound, waits).unwrap_or_else(|e| e.into_inner());
+        !st.writing && st.queue.is_empty()
+    }
+}
+
+fn lines() -> &'static std::sync::Arc<Lines> {
+    static L: std::sync::OnceLock<std::sync::Arc<Lines>> = std::sync::OnceLock::new();
+    L.get_or_init(|| {
+        let p = path();
+        Lines::start(move |line| write_line(&p, line))
+    })
+}
+
+/// The lines said so far are in the file (the program's end), or `bound` ran out.
+pub fn flush(bound: std::time::Duration) -> bool {
+    cfg!(test) || lines().flush(bound)
+}
+
+fn line_of(level: &str, text: &str) -> String {
+    format!("{} {:<5} {}\n", stamp(), level, text.replace('\n', " | "))
+}
+
 pub(crate) fn write_to(path: &Path, level: &str, text: &str) {
+    write_line(path, &line_of(level, text));
+}
+
+fn write_line(path: &Path, line: &str) {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
     rotate(path);
-    let line = format!("{} {:<5} {}\n", stamp(), level, text.replace('\n', " | "));
     let _ = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -747,6 +836,38 @@ mod tests {
         let ours = kt_dirs::data_dir().join(kt_dirs::EFRAME_SETTINGS_FILE);
         let eframe = eframe::storage_dir("kinetren").map(|d| d.join(kt_dirs::EFRAME_SETTINGS_FILE));
         assert_eq!(Some(ours), eframe);
+    }
+
+    /// Test 3727 (found-defects 833): a line is said while the disk answers nothing; the lines reach the
+    /// file in order once it does, and the end waits for them no longer than its bound.
+    #[test]
+    fn t3727_a_line_of_the_journal_waits_for_no_disk() {
+        use std::sync::{Arc, Condvar, Mutex};
+        let disk = Arc::new((Mutex::new(false), Condvar::new()));
+        let file = Arc::new(Mutex::new(Vec::<String>::new()));
+        let l = {
+            let (disk, file) = (disk.clone(), file.clone());
+            Lines::start(move |line| {
+                let mut free = disk.0.lock().unwrap();
+                while !*free {
+                    free = disk.1.wait(free).unwrap();
+                }
+                file.lock().unwrap().push(line.to_string());
+            })
+        };
+        // every push returns: the writer holds the first line and the disk is stuck
+        for i in 0..LINES_KEPT + 10 {
+            l.push(format!("line {i}"));
+        }
+        assert!(file.lock().unwrap().is_empty());
+        assert!(!l.flush(std::time::Duration::ZERO), "nothing is written yet");
+        *disk.0.lock().unwrap() = true;
+        disk.1.notify_all();
+        assert!(l.flush(kt_time::TEST_WAIT), "the lines never reached the file");
+        let got = file.lock().unwrap().clone();
+        let said: Vec<&String> = got.iter().filter(|x| x.starts_with("line ")).collect();
+        assert!(said.len() >= LINES_KEPT && said.iter().enumerate().all(|(i, x)| **x == format!("line {i}")), "in order");
+        assert!(got.iter().any(|x| x.contains("were dropped")), "what the bound cost is said");
     }
 
     /// Test 1310 (render-finish-crash D3): a test process never reaches the person's data

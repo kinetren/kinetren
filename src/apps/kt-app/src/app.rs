@@ -11599,6 +11599,9 @@ impl eframe::App for KtApp {
         // after the recovery write (durability first): the clean-close event, within a
         // fixed budget; a dead network looks exactly like no telemetry
         crate::telemetry::signal(crate::telemetry::Signal::Exit);
+        // the workspace, the records and the journal's last lines (found-defects 833)
+        crate::later::flush(std::time::Duration::from_secs(1));
+        crate::journal::flush(std::time::Duration::from_secs(1));
         // what the close did is in the file before the drops join threads (a clean exit flushed
         // nothing, and the owner's trace ended a second before his close)
         kt_time::trace::flush();
@@ -11805,6 +11808,8 @@ pub fn run() -> eframe::Result {
     // before the C exit hooks run (close-while-busy)
     kt_time::shutdown::mark(kt_time::trace::shutdown::RETURNED, "eframe");
     kt_time::trace::flush();
+    // a window that never opened says why in the journal, and nothing else flushes it
+    crate::journal::flush(std::time::Duration::from_secs(1));
     ran
 }
 

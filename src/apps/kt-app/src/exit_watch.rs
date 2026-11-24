@@ -47,6 +47,8 @@ fn forced() {
         crate::tele_journal::Kind::Note,
         &format!("the exit passed {} s and was forced; still waited for: {names}", EXIT_BOUND.as_secs()),
     );
+    crate::journal::flush(Duration::from_millis(500));
+    crate::later::flush(Duration::from_millis(500));
     kt_time::trace::flush();
 }
 

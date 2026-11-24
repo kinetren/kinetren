@@ -59,6 +59,7 @@ mod isp_panel;
 mod journal;
 #[cfg(test)]
 mod layout_tests;
+mod later;
 mod lessons;
 mod load_watch;
 #[cfg(test)]
