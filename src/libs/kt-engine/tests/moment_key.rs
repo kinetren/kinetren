@@ -500,3 +500,26 @@ fn t4113_an_edit_elsewhere_asks_no_decode_an_edit_here_asks_its_own() {
     wait("the edited moment never came", || matches!(player.present_preview(a, SHOW), Some((_, true))));
     assert!(decodes() > d0, "the changed moment asks its sources");
 }
+
+/// Test t3608 (durable-moment-key D4, found-defects 970): a loop kept whole at one preview quality is not
+/// kept at another: after the quality moves the bars draw none of it, the window asks its frames at the new
+/// size with nobody composing them; back at the former quality a moment shown is a replay again.
+#[test]
+fn t3608_a_moment_kept_at_one_quality_is_not_kept_at_another() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((player, _, moments)) = loop_player(0.53) else { return };
+    lap(&player, &moments);
+    wait("the loop was never kept whole", || kept(&player, &moments) == moments.len());
+    player.seek(moments[0]);
+    let mut last = decodes();
+    wait("the decoders never rested", || {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        std::mem::replace(&mut last, decodes()) == decodes()
+    });
+    let d0 = decodes();
+    player.set_preview_quality(Quality { width: 256, height: 144 });
+    assert_eq!(kept(&player, &moments), 0, "the bars draw what another quality kept");
+    wait("the window never asked the new quality's frames", || decodes() > d0);
+    player.set_preview_quality(Quality { width: 320, height: 180 });
+    assert!(matches!(player.present_preview(moments[5], SHOW), Some((_, true))), "still held by the executor");
+}

@@ -1450,6 +1450,11 @@ impl PreviewParts {
         *self.preview_quality.lock().unwrap()
     }
 
+    /// The state a moment kept now at the quality `q` belongs to.
+    pub(crate) fn kept_state(&self, q: Quality) -> KeptState {
+        kept_state(self.versions(), q)
+    }
+
     pub(crate) fn shown_gen(&self) -> u64 {
         self.shown_gen.load(Ordering::Relaxed)
     }
@@ -1716,7 +1721,7 @@ impl PreviewParts {
                     && let Some(e) = kept_by
                     && let Some(key) = e.present_key(&plan)
                 {
-                    self.note_kept(aligned, key);
+                    self.note_kept(aligned, key, q);
                 }
                 // what the moment cost on the device, for the render window's prediction
                 // (render-honest D2): a replay of a kept composite composed nothing
@@ -1784,7 +1789,7 @@ impl PreviewParts {
             return None;
         }
         let store = self.rc.store(display.info())?;
-        let versions = self.versions();
+        let state = self.kept_state(q);
         let plan = video.probe_plan(&self.cache, t, q);
         // kept under the moment's own key: a composed one replaces it
         let key = display.present_key(&plan)?;
@@ -1792,7 +1797,7 @@ impl PreviewParts {
         let (w, h) = (plan.out_w, plan.out_h);
         drop(plan);
         if display.holds(key) {
-            self.note_kept(t, key);
+            self.note_kept(t, key, q);
             return Some(key);
         }
         if !store.contains(dk) {
@@ -1812,8 +1817,8 @@ impl PreviewParts {
         span.aux(k::RESTORE).a(t.0 as u64).b(pic.rgba.len() as u64).c(dk.id());
         drop(span);
         self.rc.restores.fetch_add(1, Ordering::Relaxed);
-        self.rc.note_on_disk(t.0, dk, versions);
-        self.note_kept(t, key);
+        self.rc.note_on_disk(t.0, dk, state);
+        self.note_kept(t, key, q);
         Some(key)
     }
 
@@ -1834,10 +1839,10 @@ impl PreviewParts {
         missing
     }
 
-    /// The moment `t` is kept under `key` (cached-range-plays): the bars show it.
-    pub(crate) fn note_kept(&self, t: Tick, key: u64) {
-        let versions = (self.project_version.load(Ordering::Acquire), self.content_version.load(Ordering::Acquire));
-        let entry = (key, versions.0, versions.1);
+    /// The moment `t` at the quality `q` is kept under `key` (cached-range-plays): the bars show it.
+    pub(crate) fn note_kept(&self, t: Tick, key: u64, q: Quality) {
+        let state = self.kept_state(q);
+        let entry = (key, state.0, state.1);
         if self.shown.lock().unwrap().insert(t.0, entry) != Some(entry) {
             self.shown_gen.fetch_add(1, Ordering::Relaxed);
         }
@@ -1889,7 +1894,7 @@ impl PreviewParts {
         exec_span.id(frame).a(key).aux(trace::exec::COMPLETE | trace::exec::MEMO_HIT);
         drop(exec_span);
         kt_time::work::bump(kt_time::work::Work::CompositeReplay);
-        self.note_kept(t, key);
+        self.note_kept(t, key, q);
         Some((q, true, true, Default::default(), plan_ns, exec.last_stages()))
     }
 
@@ -1903,7 +1908,8 @@ impl PreviewParts {
             if g.poisoned.is_none() { g.exec.clone() } else { None }
         };
         let Some(exec) = exec else { return (false, false) };
-        let now = self.versions();
+        let q = self.quality();
+        let now = self.kept_state(q);
         // the executor is asked with the map free: its memo stands behind a whole composite, and
         // the bars read the map on the UI thread
         let keys: Vec<(i64, u64)> = self.shown.lock().unwrap().iter().map(|(t, (k, _, _))| (*t, *k)).collect();
@@ -1932,7 +1938,6 @@ impl PreviewParts {
             }
             return (changed, false);
         }
-        let q = self.quality();
         // the renderer of the state the moments are rechecked for: this runs on the compose
         // thread, which waits for that build (edit-without-rebuild)
         let video = self.builds.wait_current().video.clone();
@@ -1950,7 +1955,7 @@ impl PreviewParts {
             let mut shown = self.shown.lock().unwrap();
             match (shown.get_mut(&t), key) {
                 // the versions the plan was built at: an edit since then leaves it stale
-                (Some(e), Some(k)) if e.0 == k && self.versions() == now => (e.1, e.2) = now,
+                (Some(e), Some(k)) if e.0 == k && self.kept_state(self.quality()) == now => (e.1, e.2) = now,
                 (Some(e), Some(k)) if e.0 == k => {}
                 _ => {
                     shown.remove(&t);
@@ -1974,7 +1979,8 @@ impl Player {
     /// then asked for, and the preview's thread wakes the UI when it has moved. Runs of ticks,
     /// each moment `[t, t + frame)`.
     pub fn final_video_runs(&self) -> (Vec<std::ops::Range<i64>>, bool) {
-        let now = self.preview_parts().versions();
+        let parts = self.preview_parts();
+        let now = parts.kept_state(parts.quality());
         let step = self.video_grid().frame_step();
         let shown = self.shown.lock().unwrap();
         let mut moments: std::collections::BTreeSet<i64> = std::collections::BTreeSet::new();
@@ -2118,6 +2124,18 @@ type Workers = Arc<std::sync::RwLock<HashMap<MediaId, MediaWorker>>>;
 type Natives = Arc<std::sync::RwLock<crate::video::SourceFacts>>;
 
 /// The moments the preview presented: tick → (the executor's key, project and content versions).
+/// The state a kept moment belongs to: the project's and the sources' versions and the preview's quality,
+/// the latter two mixed into one — a moment kept at another quality is not kept at this one.
+pub(crate) type KeptState = (u64, u64);
+
+pub(crate) fn kept_state((project, content): (u64, u64), q: Quality) -> KeptState {
+    let mut h = [0u8; 16];
+    h[..8].copy_from_slice(&content.to_le_bytes());
+    h[8..12].copy_from_slice(&q.width.to_le_bytes());
+    h[12..].copy_from_slice(&q.height.to_le_bytes());
+    (project, xxhash_rust::xxh3::xxh3_64(&h))
+}
+
 type Shown = Arc<Mutex<std::collections::BTreeMap<i64, (u64, u64, u64)>>>;
 
 /// The UI's own FX states over the shared audio renderer (`Player::with_probe`), with the project
@@ -3578,7 +3596,7 @@ fn prefetch_loop(
         // this state, play without work: neither their decodes nor their stream history are asked
         // (structured-telemetry, I8), and their frames leave the cache's want (cache-audit cut 1): a
         // moment's key does not depend on what is decoded (durable-moment-key; found-defects 965)
-        let versions = (project_version.load(Ordering::Acquire), content_version.load(Ordering::Acquire));
+        let versions = kept_state((project_version.load(Ordering::Acquire), content_version.load(Ordering::Acquire)), q);
         if versions_seen != Some(versions) {
             versions_seen = Some(versions);
             edited = std::time::Instant::now();

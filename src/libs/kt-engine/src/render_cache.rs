@@ -857,7 +857,8 @@ pub fn candidates(
 
 // ---- the player's tier ---------------------------------------------------------------------------
 
-/// A moment the store holds: its durable key and the versions it was computed at.
+/// A moment the store holds: its durable key and the state it was computed at (the quality with it: a
+/// moment on disk at another quality is not on disk at this one).
 type OnDisk = (DiskKey, (u64, u64));
 
 /// What the host sets (D7).
@@ -882,7 +883,7 @@ pub struct RenderCache {
     store: Mutex<Option<(String, Arc<DiskStore>)>>,
     /// Held while a store is opened.
     opening: Mutex<()>,
-    /// Moments the store holds: tick → (durable key, the versions it was computed at).
+    /// Moments the store holds: tick → (durable key, the state it was computed at).
     on_disk: Mutex<BTreeMap<i64, OnDisk>>,
     pub(crate) disk_gen: Arc<AtomicU64>,
     /// The last input's trace clock (ns); 0 — none yet.
@@ -1184,7 +1185,7 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
         }
         let video = built.video.clone();
         let q = parts.quality();
-        let versions = parts.versions();
+        let versions = parts.kept_state(q);
         let region = parts
             .loop_region
             .lock()
@@ -1212,7 +1213,7 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
             rc.wake.wait_since(seen);
             continue;
         }
-        let costs = parts.preview_costs.lock().unwrap().snapshot();
+        let costs = parts.preview_costs.lock().unwrap().at_size((q.width, q.height));
         let list = candidates(
             &costs,
             step,

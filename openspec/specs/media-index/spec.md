@@ -1021,7 +1021,7 @@ the window and the loop without them, the window's peak forgotten when their num
 counted again when the held number fell, when it moved by a sixteenth of the loop, and at a lap's end, not on
 every pass. A moment whose kept composite waits to be checked against an edit SHALL count as held until the check
 answers, at most 200 ms after the edit; the prefetch SHALL ask for that check itself, and it SHALL go from the
-playhead outward. The cap still grows with what the window needs (kkt-26.11.10 J4) and never goes
+playhead outward. A moment is held for the preview quality it was made at only. The cap still grows with what the window needs (kkt-26.11.10 J4) and never goes
 below the cache's base.
 Why: the cache audit (kkt-26.11.22 D2, cut 1) — on the heavy showcase the decoded frames held 7.9 GB of
 10.7 GB resident: the window skipped the kept composites but not the disk prerender, and the want was a
@@ -1044,6 +1044,12 @@ second fell to 2; with the key of `durable-moment-key` it does not.
 - **WHEN** the loop of the scenario above plays from its kept composites and a title outside it is edited, then a parameter of an event inside it
 - **THEN** after the first edit no source frame of the loop is asked and the moments are confirmed from the playhead outward; after the second the changed moments' sources are asked within 300 ms, the moment on screen first, and the picture on screen is complete again
 - **TEST** t4113 (`src/libs/kt-engine/tests/moment_key.rs`)
+
+#### Scenario: A moment kept at one quality is not kept at another
+- **PATH** play a loop until its bars are bright → raise the preview quality → the bars are dim and turn bright again as the loop plays → lower it back → the shown moments are there at once
+- **WHEN** a loop is kept whole at one preview quality, and the quality is changed and changed back with nobody composing
+- **THEN** at the other quality the bars draw none of it and the window asks its frames; back at the first a moment is shown without composing
+- **TEST** t3608 (`src/libs/kt-engine/tests/moment_key.rs`)
 
 #### Scenario: The held moments are not counted on every pass
 - **WHEN** a 1500-moment loop fills its kept moments one by one over 1500 passes, then loses one

@@ -17,23 +17,23 @@
 
 ## 1. The value measure and the frames (kt-engine)
 
-- [ ] 1.1 value per byte for every store entry: the measured cost saved per read (the plan's device time from
+- [x] 1.1 value per byte for every store entry: the measured cost saved per read (the plan's device time from
       `Player::note_cost`, `player.rs:1457`, and the pass timer's `predict`, `kt-gpu/src/pass_time.rs:175`)
       × the reads in this project ÷ the bytes, kept in the folder's `usage.tsv` beside the last-use stamp;
       `project-cache-folder`'s `ask_room` ranks by it; t3453
-- [ ] 1.2 the export never reads `results/` (a counter that does not move during an export); t3445
+- [x] 1.2 the export never reads `results/` (a counter that does not move during an export); t3445
 
 ## 2. Frames only, at the preview's quality
 
-- [ ] 2.1 the store writes and reads two kinds only (`Entry::{Frame, Copy}`); nothing in the plan or the producer
+- [x] 2.1 the store writes and reads two kinds only (`Entry::{Frame, Copy}`); nothing in the plan or the producer
       writes a picture at a point inside a plan (no read-back of a layer's or a stage's texture for the store);
       t3451
-- [ ] 2.2 the frames' quality rule (design D8): the key and the prerender's state already carry the quality
+- [x] 2.2 the frames' quality rule (design D8): the key and the prerender's state already carry the quality
       (`render_cache.rs:717`, `:1141`); fix heaviness by size: `PreviewCosts::snapshot` (`preview_cost.rs:66`)
       returns `(ns, w, h)` or a per-size view, and `candidates` (`render_cache.rs:1164`) judges a moment by its time
       at the current size, else the nearest size scaled by pixels; an edit misses exactly the moments whose plan
       changed; t3452, t4106
-- [ ] 2.3 `cargo test -p kt-engine` (`tests/persistent_cache.rs`); clippy; the idle check on the heavy showcase with
+- [x] 2.3 `cargo test -p kt-engine` (`tests/persistent_cache.rs`); clippy; the idle check on the heavy showcase with
       the store full; commit "persistent-cache 2: final frames only, at the preview's quality"
 
 ## 3. Source copies (kt-ffmpeg, kt-media)
