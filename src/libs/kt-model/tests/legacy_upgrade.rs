@@ -34,6 +34,7 @@ fn clip(id: u64, kind: ClipKind, lane: u32, start: i64, dur: i64, src: i64) -> C
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     }
 }
 
@@ -202,6 +203,7 @@ fn t164_legacy_import_keeps_overlaps_and_lanes() {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
     };
     add(1, ClipKind::Video, 0, 0, 90_000, Some(1));

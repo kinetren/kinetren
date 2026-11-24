@@ -115,8 +115,6 @@ pub struct ThumbKey {
     pub t: i64,
 }
 
-/// Source step for thumbnails (port of videoClipThumbnailSourceStepMs):
-/// one thumb for a clip ≤5 s, otherwise dur/slots, clamped to 1..15 s.
 /// The thumb step is QUANTIZED to a fixed ladder (item 2): a continuous
 /// dependence on zoom produced a new set of keys on every wheel click —
 /// the filmstrip was reloaded entirely. Adjacent rungs reuse the cache
@@ -169,6 +167,9 @@ pub fn material_key_t(
     thumb_key_t(source_in, material_at(warp, duration, reversed, tl), step)
 }
 
+/// Source step for thumbnails (port of videoClipThumbnailSourceStepMs):
+/// one thumb for a clip ≤5 s, otherwise dur/slots, raised to the next rung of
+/// [`THUMB_STEP_LADDER`] (0.5 s – 2 min).
 pub fn thumb_source_step(clip_dur: Tick, inner_width_px: f32, thumb_w_px: f32) -> i64 {
     if clip_dur.0 <= 5 * 90_000 {
         // short clip: one thumb, the key is stable (a multiple of 0.5 s)

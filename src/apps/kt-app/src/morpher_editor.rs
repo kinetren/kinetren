@@ -758,6 +758,7 @@ impl KtApp {
                         slots: vec![],
                         src_in: kt_time::Tick(0),
                         fx_off: false,
+                        fx_in: Vec::new(),
                     },
                     name: old.clone(),
                     rename_of: Some(old),

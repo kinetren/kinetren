@@ -77,6 +77,12 @@ pub struct LayerSrc<'a> {
     /// once when the plan is built — both executors see the ready
     /// parameters. Without curves — a borrow from VideoClip (zero clones).
     pub fx: LayerChain<'a>,
+    /// The chain's wiring aligned with `fx` (fx-graph-dag D3): empty — a line. The executor lowers
+    /// it with `kt_fx::plan::lower` into the one plan (invariant 7).
+    pub fx_in: &'a [kt_model::SlotInputs],
+    /// The layer's other reads (fx-graph-dag D2): read `k` is `reads[k].1`, a layer of the same event
+    /// over its own line, whose finished frame stands at chain slot `reads[k].0`. Empty — one read.
+    pub reads: Vec<(usize, LayerSrc<'a>)>,
     /// Names the chain in the executor's keys.
     pub fx_hash: u64,
     /// Clip progress 0..1 (CamMotion).
@@ -124,6 +130,16 @@ pub enum LayerInput<'a> {
     Frame(Option<Arc<VideoFrame>>),
     /// Subtree: the reel's plan, assembled on the instance's INNER time.
     Nest(Box<NestSrc<'a>>),
+    /// A stream stage's picture left on the compute host's device (stream-picture-stays D3): an
+    /// executor on that device converts its planes there; any other reads them back. Present, opaque,
+    /// the layer's decode size — keyed as the `Frame` it stands for.
+    Held(Arc<HeldLayer>),
+}
+
+/// A held stream picture: the planes and the moment it is of.
+pub struct HeldLayer {
+    pub out: kt_plugin_api::stream::HeldStreamOut,
+    pub pts: Tick,
 }
 
 impl<'a> LayerInput<'a> {
@@ -132,14 +148,22 @@ impl<'a> LayerInput<'a> {
     pub fn frame(&self) -> Option<&Arc<VideoFrame>> {
         match self {
             LayerInput::Frame(f) => f.as_ref(),
-            LayerInput::Nest(_) => None,
+            LayerInput::Nest(_) | LayerInput::Held(_) => None,
+        }
+    }
+
+    /// The held stream picture, if the input is one.
+    pub fn held(&self) -> Option<&Arc<HeldLayer>> {
+        match self {
+            LayerInput::Held(h) => Some(h),
+            _ => None,
         }
     }
 
     pub fn nest(&self) -> Option<&NestSrc<'a>> {
         match self {
             LayerInput::Nest(n) => Some(n),
-            LayerInput::Frame(_) => None,
+            LayerInput::Frame(_) | LayerInput::Held(_) => None,
         }
     }
 }
@@ -247,10 +271,13 @@ impl FramePlan<'_> {
     /// that is there but of a foreign size is found only by resolving it.
     pub fn starved(&self) -> bool {
         fn src(s: &LayerSrc<'_>) -> bool {
-            match &s.input {
+            let own = match &s.input {
                 LayerInput::Frame(f) => f.is_none(),
                 LayerInput::Nest(n) => n.plan.starved(),
-            }
+                LayerInput::Held(_) => false,
+            };
+            // a read without its frame starves the layer too (fx-graph-dag D2)
+            own || s.reads.iter().any(|(_, r)| src(r))
         }
         self.layers.iter().any(|l| match l {
             PlanLayer::One { src: s, .. } => src(s),
@@ -327,6 +354,8 @@ pub fn chain_plan_with<'a>(
         blend_mode: kt_model::BlendMode::Normal,
         lead: None,
         masks,
+        fx_in: &[],
+        reads: Vec::new(),
     };
     let layers = vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }];
     FramePlan { t, out_w, out_h, layers }

@@ -1,5 +1,5 @@
 //! Media sources: the `MediaSource` trait, synthetic sources for tests,
-//! rsmpeg/FFmpeg backend (feature `ffmpeg`, M3) and the sidecar index DB (M3,
+//! the FFmpeg backend over kt-ffmpeg (feature `ffmpeg`, M3) and the sidecar index DB (M3,
 //! see docs/media-index.md).
 
 use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS, Tick};
@@ -166,6 +166,7 @@ pub mod frame_alloc;
 pub mod ffmpeg;
 pub mod generator;
 pub mod index;
+pub mod listen;
 #[cfg(feature = "ffmpeg")]
 pub mod muxer;
 // The 3×5 font moved into the plugin API with the generators (plugin-api-stage1, D13).

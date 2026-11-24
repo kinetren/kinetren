@@ -331,18 +331,23 @@ impl Compiled {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
+        // a build stops between two pipelines once the close is bounded (found-defects 962)
+        let exiting = || GpuInitError::Unsupported("the process is exiting".into());
         let pipes: Vec<wgpu::RenderPipeline> = src
             .fixed
             .iter()
-            .map(|(name, body)| render_pipe(role, device, &pipe_layout, pc, name, format!("{COMMON}\n{body}"), FORMAT))
-            .collect();
+            .map(|(name, body)| (!crate::exit::exiting()).then(|| render_pipe(role, device, &pipe_layout, pc, name, format!("{COMMON}\n{body}"), FORMAT)))
+            .collect::<Option<_>>()
+            .ok_or_else(exiting)?;
         let plugin_pipes: Vec<wgpu::RenderPipeline> = src
             .plugins
             .iter()
             .map(|(name, body, word, _)| {
-                render_pipe(role, device, &pipe_layout, pc, name, format!("{COMMON}\n{body}"), if *word { WORD_FORMAT } else { FORMAT })
+                (!crate::exit::exiting())
+                    .then(|| render_pipe(role, device, &pipe_layout, pc, name, format!("{COMMON}\n{body}"), if *word { WORD_FORMAT } else { FORMAT }))
             })
-            .collect();
+            .collect::<Option<_>>()
+            .ok_or_else(exiting)?;
         let display_pipe = render_pipe(role, device, &pipe_layout, pc, "display", format!("{COMMON}\n{DISPLAY}"), DISPLAY_FORMAT);
         // The merged geometry pass (R.44): the GEOM_UNIFORM_BYTES uniform does not fit into
         // the shared layout (128 B) — its own layout and pipe from the same arena buffer.
@@ -479,7 +484,7 @@ impl Compiled {
     /// What the trace calls a pipeline (structured-telemetry).
     fn label(&self, i: usize) -> String {
         const FIXED: [&str; PIPE_COUNT] =
-            ["resample", "mirror", "composite", "layer_mix", "unpremul", "premul", "grid_tile", "mask", "yuv"];
+            ["resample", "mirror", "composite", "layer_mix", "unpremul", "premul", "grid_tile", "mask", "yuv", "matte"];
         match self.slot(i) {
             Slot::Fixed(f) => FIXED[f].to_string(),
             Slot::Plugin(p) => format!("{}:pass{p}", self.plugin_owner[p]),

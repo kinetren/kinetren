@@ -1,7 +1,7 @@
 # Proposal: stream-picture-stays
 
-> DESIGN ONLY (spec session). Code starts after the owner answers the question at the end and the
-> orchestrator gives the go. Tests reserved: t3812–t3823. Base: `orch-26-11-01` at `3420bf58`.
+> The owner answered Q1 (kkt-26.11.20 Q51, row A7): **b) share now**, no measurement gate. Tests
+> reserved: t3812–t3823. Base: `orch-26-11-01` at `5e7a8ea9`.
 
 ## Why
 
@@ -26,7 +26,7 @@ backend can compute.
 
 ## What Changes
 
-- **Measure first.** The trace gains the crossing: the bytes and the processor time of every stream or
+- **The crossing in the trace** (evidence, not a gate: Q1 b). The trace gains the crossing: the bytes and the processor time of every stream or
   compute-generator frame read back and uploaded. `kt-cli trace … loop` sums them per lap.
 - **One device per adapter where the display can compute.** On Vulkan, DX12 or Metal the program opens the
   window's device itself, through kt-gpu's one instance, with compute and the pass timer's features. It

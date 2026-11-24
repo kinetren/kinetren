@@ -6,17 +6,18 @@ some generators in the tests — pull them out". A real window, real clicks, OUR
 synthetic clip):
 
 1. File → no "Create a generator" row;
-2. Edit → Create a generator → Audio → Tone → an audio event at the cursor, no video event;
-3. a right click on the audio track at 6 s → Create a generator (one item, generator-from-track,
+2. a right click on the audio track at 6 s → Create a generator (one item, generator-from-track,
    `v26.10` G1) → a sound event (Tone) starts where the click was and its window opens; its Kind
    gallery turns it into a Beep train;
-4. Home, Space → the tone plays and the meters move (their level is read from the program).
+3. the beep selected, Edit → Create a generator (one item, kkt-26.11.20 A1) → a tone at the cursor
+   on the selected audio track, no video event;
+4. Home, a loop region inside the tone, Space → the tone plays round and the meters move (their level is read from the program).
 """
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, poll_step, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -35,36 +36,15 @@ def main(out):
         app.step("file-menu", "File: New, Open, Import…, Save… — no “Create a generator”")
         app.key("Escape")
 
-        # 2) Edit → Create a generator → Audio → Tone
-        app.click_probe("menu.edit", "the Edit menu")
-        app.hover_probe("gen.new", "“Create a generator” in Edit")
-        app.hover_probe("gen.new.group.audio", "the Audio group")
-        app.step("edit-menu", "Edit › Create a generator › Audio: Tone, Audio noise, Sine sweep, Beep train, Silence")
-        app.click_probe("gen.new.tone", "Tone")
-        clips = []
-        for _ in range(20):
-            clips = app.live_clips()
-            if len(clips) == 2:
-                break
-            poll_step(0.25)
-        app.expect(len(clips) == 2, f"Tone adds ONE event (no picture): {clips}")
-        app.expect(sum(1 for c in clips if c[0] == 0) == 2, f"the tone starts at the cursor: {clips}")
-        app.step("edit-tone", "a “Tone” event on the first audio track under the cursor, its form open")
-        app.key("Escape")
-
-        # 3) a right click on the audio track at 6 s → one item: a sound event there, its window
+        # 2) a right click on the audio track at 6 s → one item: a sound event there, its window
         # open; the kind is changed in the window's gallery (generator-from-track, v26.10 G1)
         x6 = app.x_at(6 * SEC)
         app.right_click(x6, app.lane_y("audio", 0, 0.6))
         app.expect(not app.has_probe("gen.new.group.audio", tries=3), "the track menu lists no kinds")
         app.step("track-menu", "right click on the audio track at 6 s: one “Create a generator…” item")
         app.click_probe("gen.new", "“Create a generator” in the track menu")
-        for _ in range(20):
-            clips = app.live_clips()
-            if len(clips) == 3:
-                break
-            poll_step(0.25)
-        app.expect(len(clips) == 3, f"a sound event was added: {clips}")
+        app.expect(app.until(lambda: len(app.live_clips()) == 2), f"a sound event was added: {app.live_clips()}")
+        clips = app.live_clips()
         app.expect(app.has_probe("genw.kind.pick"), "its window opened with the Kind field")
         app.click_probe("genw.kind.pick", "the Kind field")
         app.click_probe("genw.kind.beep", "the Beep train cell")
@@ -79,25 +59,46 @@ def main(out):
         app.step("track-beep", "a “Beep train” event exactly at the click on the audio track, picked in its window")
         app.key("Escape")
 
-        # 4) play the tone: the meters move
+        # 3) the beep selected, Edit → the ONE item (kkt-26.11.20 A1: one item, by the track): the
+        # selected track is a sound track, so a tone at the cursor there — no picture
+        app.click(app.x_at(int(6.5 * SEC)), app.lane_y("audio", 0, 0.6))
         app.key("shift+Home")  # the project's start (Home is the previous edit point in the owner's keys, found-defects 951)
+        app.click_probe("menu.edit", "the Edit menu")
+        app.expect(not app.has_probe("gen.new.group.audio", tries=3), "Edit lists no kinds")
+        app.step("edit-menu", "the beep selected; Edit: one “Create a generator…” item")
+        app.click_probe("gen.new", "Create a generator…")
+        app.expect(app.until(lambda: len(app.live_clips()) == 3), f"ONE event added (a tone has no picture): {app.live_clips()}")
+        clips = app.live_clips()
+        app.expect(sum(1 for c in clips if c[0] == 0) == 2, f"the tone starts at the cursor: {clips}")
+        app.expect("tone" in app.saved_text(), "the new event is a Tone")
+        app.step("edit-tone", "a “Tone” event on the selected audio track under the cursor, its form open")
+        app.key("Escape")
+
+        # 4) play the tone in a loop: the meters move. A loop region inside the tone (0.5..4 s) keeps
+        # the playhead in the sound however late the meters are read: the earlier check read them in
+        # the first 4.5 s of play, and stage 23's loaded run read its first dump after that (a clock
+        # limit in disguise — the samples all fell past the tone)
+        app.key("shift+Home")  # the project's start (Home is the previous edit point in the owner's keys, found-defects 951)
+        ry = app.ruler_y()
+        app.drag(app.x_at(SEC // 2), ry, app.x_at(4 * SEC), ry)
+        app.key("l")  # Loop the region
         app.key("space")
         # time stands until the device hands out its first frames (invariant 6), and on a loaded
-        # machine the sound server can take seconds to open it (found-defects 425: 13.3 s in stage
-        # 21's finish run, when 6 s of polling all fell before the first sound): the meters are read
-        # once the sound has left, while the cursor is still inside the 5-s tone
+        # machine the sound server can take seconds to open it (found-defects 425)
         app.expect(app.until(lambda: app.playhead() > 0, timeout=60), "the sound started after Space")
         lit = []
-        for _ in range(30):
+
+        def heard():
             g = app.geom()
-            if g.get("playing") and int(g.get("playhead", 0)) < 4.5 * SEC:
+            if g.get("playing"):
                 lit.append(max(g.get("meter_db", [-120, -120])))
-            if len([v for v in lit if v > -40]) >= 3:
-                break
-            poll_step(0.2)
-        app.step("playing", "the tone plays: the meters on the right are lit")
+            return len([v for v in lit if v > -40]) >= 3
+
+        app.until(heard, timeout=60)
+        app.step("playing", "the tone plays in its loop: the meters on the right are lit")
+        app.expect(app.playhead() < 4.5 * SEC, f"the playhead goes round inside the tone: {app.playhead() / SEC:.2f} s")
         app.key("space")
-        app.expect(len([v for v in lit if v > -40]) >= 3, f"the meters moved while the tone played: {lit}")
+        app.expect(len([v for v in lit if v > -40]) >= 3, f"the meters moved while the tone played: {lit[-12:]}")
     return app.done()
 
 

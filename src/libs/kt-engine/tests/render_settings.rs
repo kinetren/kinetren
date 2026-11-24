@@ -49,6 +49,7 @@ fn project(secs: i64) -> Project {
             fx: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
     }
     p.validate().unwrap();
@@ -363,7 +364,7 @@ fn t2806_the_colour_tags_are_the_conversion() {
             audio_bitrate: 128_000,
             force_encoder: Some("libx264".into()),
             threads: 1,
-            format: OutputFormat { matrix: m, range: r, ..Default::default() },
+            format: OutputFormat { matrix: Some(m), range: r, ..Default::default() },
         })
         .unwrap();
         for _ in 0..3 {
@@ -383,6 +384,53 @@ fn t2806_the_colour_tags_are_the_conversion() {
     // as BT.601 is what this test used to see, found-defects 697)
     for (i, b) in back.iter().enumerate() {
         assert!(d(*b, [230, 20, 20]) <= 6, "file {i} comes back as written: {b:?}");
+    }
+}
+
+/// t3603 (export, found-defects 1054; owner kkt-26.11.20 Q50): the default matrix follows the
+/// decode's size rule — an HD file (1280 wide, or taller than 576, a portrait phone video included)
+/// is converted and tagged BT.709, a smaller one BT.601; the text form keeps `auto`, and a chosen
+/// matrix stays as chosen at any size.
+#[test]
+fn t3603_the_default_matrix_follows_the_size() {
+    let f = OutputFormat::default();
+    assert_eq!(f.matrix, None, "the default is the size rule");
+    assert_eq!(f.matrix_at(1920, 1080), Matrix::Bt709);
+    assert_eq!(f.matrix_at(1280, 720), Matrix::Bt709);
+    assert_eq!(f.matrix_at(720, 1280), Matrix::Bt709, "a portrait phone video is HD");
+    assert_eq!(f.matrix_at(720, 576), Matrix::Bt601);
+    assert_eq!(f.matrix_at(640, 360), Matrix::Bt601);
+    let chosen = OutputFormat { matrix: Some(Matrix::Bt601), ..Default::default() };
+    assert_eq!(chosen.matrix_at(1920, 1080), Matrix::Bt601, "a chosen matrix is not overridden");
+    let pairs = kt_engine::export_settings::pairs(&ExportOptions::default());
+    assert!(pairs.iter().any(|(k, v)| *k == "matrix" && v == "auto"), "{pairs:?}");
+    let back = kt_engine::export_settings::from_pairs(ExportOptions::default(), [("matrix", "auto")]).unwrap();
+    assert_eq!(back.format.matrix, None);
+    if !has_encoder("libx264") {
+        return;
+    }
+    // the files: the tags (BT.709 = 1, SMPTE 170M = 6) of the default at an HD and an SD size
+    let dir = tempfile::tempdir().unwrap();
+    for (w, h, matrix_tag) in [(1280u32, 720u32, 1u32), (640, 360, 6)] {
+        let path = dir.path().join(format!("d{w}.mp4")).to_string_lossy().into_owned();
+        let mut mux = kt_media::muxer::Muxer::open(&kt_media::muxer::MuxConfig {
+            path: path.clone(),
+            width: w,
+            height: h,
+            frame_rate: kt_media::muxer::Rate::whole(30),
+            time_base: None,
+            quality: 0,
+            video_bitrate: None,
+            audio_bitrate: 128_000,
+            force_encoder: Some("libx264".into()),
+            threads: 1,
+            format: OutputFormat::default(),
+        })
+        .unwrap();
+        let red: Vec<u8> = [230u8, 20, 20, 255].repeat((w * h) as usize);
+        mux.write_video(&red).unwrap();
+        mux.finish().unwrap();
+        assert_eq!(probe_output(&path).unwrap().color.0, matrix_tag, "{w}x{h}");
     }
 }
 
@@ -408,7 +456,7 @@ fn t3319_the_file_says_where_its_chroma_sits() {
         audio_bitrate: 128_000,
         force_encoder: Some("libx264".into()),
         threads: 1,
-        format: OutputFormat { matrix: Matrix::Bt709, range: Range::Limited, ..Default::default() },
+        format: OutputFormat { matrix: Some(Matrix::Bt709), range: Range::Limited, ..Default::default() },
     })
     .unwrap();
     let red: Vec<u8> = [230u8, 20, 20, 255].repeat(64 * 64);

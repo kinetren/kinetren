@@ -45,6 +45,7 @@ fn base_project() -> Project {
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     p
@@ -113,6 +114,7 @@ fn t18_add_media_preserves_cache_coverage_and_transport() {
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p2.normalize(); // tracks for the content (R.62)
     p2.validate().unwrap();
@@ -397,6 +399,7 @@ fn t316_replace_media_updates_the_decode_stage() {
         fx: vec![FxInstance::geometry_zoom(2.0)],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     let small: Box<dyn kt_media::MediaSource> =
@@ -462,6 +465,7 @@ fn t500_retune_keeps_worker_and_renderer() {
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     project.validate().unwrap();
 
@@ -603,6 +607,7 @@ fn t661_a_value_edit_does_not_rebuild_the_renderer() {
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     project.validate().unwrap();
     let (player, _consumer) = Player::new(

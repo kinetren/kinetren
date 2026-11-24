@@ -446,6 +446,7 @@ fn t94_forward_navigation_advances() {
             fx: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
         p.markers.push(Marker::at(Tick(7000)));
         p.validate().unwrap();
@@ -531,6 +532,7 @@ fn t95_clip_drag_snaps_to_neighbour() {
                     fx: vec![],
                     opacity: 1.0,
                     fx_off: false,
+                    fx_in: Vec::new(),
                 });
             }
             p.validate().unwrap();
@@ -1293,6 +1295,7 @@ fn t122_insert_lane_after_clicked_row() {
             fx: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -1388,6 +1391,7 @@ fn t120_space_hold_boosts_playback() {
             fx: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -1518,6 +1522,7 @@ fn t119_shift_nav_drags_region() {
                 fx: vec![],
                 opacity: 1.0,
                 fx_off: false,
+                fx_in: Vec::new(),
             });
         }
         p.validate().unwrap();
@@ -2035,6 +2040,7 @@ fn t139_move_plan_crossfade_and_clamp() {
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     let mut p = Project::new(ProjectSettings {
         fps: 30,
@@ -2143,6 +2149,7 @@ fn t139_drag_overlap_creates_crossfade() {
                 fx: vec![],
                 opacity: 1.0,
                 fx_off: false,
+                fx_in: Vec::new(),
             });
         }
         p.validate().unwrap();
@@ -2226,6 +2233,7 @@ fn t140_transition_edge_and_body_drags() {
                 fx: vec![],
                 opacity: 1.0,
                 fx_off: false,
+                fx_in: Vec::new(),
             });
         }
         p.transitions.push(TransitionEvent {
@@ -2347,6 +2355,7 @@ fn t163_overlap_drag_changes_nothing_but_position() {
                 fx: vec![],
                 opacity: 1.0,
                 fx_off: false,
+                fx_in: Vec::new(),
             });
         }
         p.validate().unwrap();
@@ -2448,6 +2457,7 @@ fn t160_pulling_apart_restores_trimmed_material() {
                 fx: vec![],
                 opacity: 1.0,
                 fx_off: false,
+                fx_in: Vec::new(),
             });
         }
         p.validate().unwrap();
@@ -2541,6 +2551,7 @@ fn t157_fade_edge_drag_without_neighbour() {
             fx: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
         // fade-in: there is no neighbor on the left at all
         p.transitions.push(TransitionEvent {
@@ -2780,6 +2791,7 @@ fn t169_preview_material_shifts_only_on_trim_start() {
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     let drag = |mode: DragMode, cur_start: i64, cur_end: i64| {
         Drag::Clip(DragState {
@@ -2923,6 +2935,7 @@ fn t172_blocked_gesture_is_an_error_not_a_pale_hint() {
             fx: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
     }
     p.validate().unwrap();
@@ -3043,6 +3056,7 @@ fn t173_corner_fade_and_level_gestures() {
             fx: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -3172,6 +3186,7 @@ fn t176_audio_and_video_share_one_level_line() {
             fx: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -3256,6 +3271,68 @@ fn t185_gpu_loss_notice_once() {
     assert_eq!(hits, 1, "exactly one warning: {texts:?}");
 }
 
+/// Test t3819 (stream-picture-stays D2): the window's device shared with the compute host is lost —
+/// the preview's executor answers DeviceLost and the host's jobs fail. The preview says once that it
+/// has no picture, the host takes no new job (a Datamosh frame takes its no-device path), and Ctrl+S
+/// still writes the project: the save and the close's durability need no device.
+///
+/// - **PATH** a project with an unsaved edit plays → the device is lost: the preview has no picture and
+///   one notice says so → Ctrl+S: the title loses its asterisk, the file holds the edit
+#[test]
+fn t3819_a_lost_shared_device_poisons_both_and_the_work_is_saved() {
+    struct LostGpu(kt_engine::GpuBackendInfo);
+    impl kt_engine::VideoGpuExec for LostGpu {
+        fn execute_into(&self, _p: &kt_engine::FramePlan<'_>, _o: &mut Vec<u8>) -> Result<bool, kt_engine::GpuExecError> {
+            Err(kt_engine::GpuExecError::DeviceLost)
+        }
+        fn info(&self) -> &kt_engine::GpuBackendInfo {
+            &self.0
+        }
+    }
+    crate::plugins::install();
+    let dir = std::env::temp_dir().join(format!("kt-t3819-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("lost.kt");
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        app.project_path = Some(path.clone());
+        app.model.apply(kt_model::Command::AddMedia { id: kt_model::MediaId(1), path: "synth:ramp".into() }).unwrap();
+        app.model_rev += 1;
+        app.dirty_content = true;
+        app.player.set_video_gpu(Some(std::sync::Arc::new(LostGpu(kt_engine::GpuBackendInfo {
+            name: "shared".into(),
+            backend: "Test".into(),
+            software: true,
+        }))));
+        // the same loss on the compute side: a job failed, the host is marked unusable
+        kt_plugin_api::compute::fail("the device was lost".into());
+        app.preview_key = None;
+    }
+    for _ in 0..3 {
+        h.step();
+    }
+    assert!(kt_plugin_api::compute::host().is_none(), "the host takes no new job");
+    assert!(kt_plugin_api::compute::unavailable().is_some_and(|w| w.contains("lost")), "and says why");
+    {
+        let app = h.state();
+        assert!(matches!(app.player.video_backend(), kt_engine::VideoBackendStatus::Poisoned { .. }), "the preview is poisoned");
+        let lost = crate::tf!(k::msg::VIDEO_FX_GPU_LOST, "DeviceLost");
+        assert_eq!(app.notices.iter().filter(|n| n.text == lost).count(), 1, "one notice");
+    }
+    h.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::S);
+    let deadline = kt_time::test_deadline();
+    while h.state().dirty_content || h.state().saving.is_some() {
+        assert!(std::time::Instant::now() < deadline, "the save never landed");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        h.step();
+    }
+    let back = KtApp::open(&path).expect("the file reads back");
+    assert_eq!(back.model.project().media.len(), 1, "the edit is in the file");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Test 221 (R.33 item 5): a single automation widget.
 /// Four user requirements are checked at once — switching graph↔table,
 /// conversion “material ↔ timeline” ACCOUNTING for reverse and speed
@@ -3294,6 +3371,7 @@ fn t221_automation_widget_maps_material_and_keeps_input_stable() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     let m = |c: &ClipEvent, t: Tick| {
         clip_material_at(c.source_in, c.start, c.duration, c.reversed, STEP, t)
@@ -3399,6 +3477,7 @@ fn t219_one_window_for_the_whole_link_group() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     p.clips.push(clip(1, ClipKind::Video, 0));
     let mut a = clip(2, ClipKind::Audio, 0);
@@ -3480,6 +3559,7 @@ fn t218_morpher_source_field_takes_files_and_reverts() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.ensure_tracks(kt_model::LaneKind::Morph, 1);
     p.morphers.push(MorpherEvent {
@@ -3574,6 +3654,7 @@ fn t217_one_chain_widget_for_events_and_morphers() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     // morpher batch with two effects — the second chain with the same widget
     p.ensure_tracks(kt_model::LaneKind::Morph, 1);
@@ -3685,6 +3766,7 @@ fn t193_fx_editor_automation_coalesces_into_one_undo() {
         }]],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     app.model = kt_model::TimelineModel::new(p);
     app.open_fx_editor(ClipId(9));
@@ -3833,6 +3915,7 @@ pub(crate) fn harness_three_clips_dt(
                 fx_auto: vec![],
                 opacity: 1.0,
                 fx_off: false,
+                fx_in: Vec::new(),
             });
         }
         p.validate().unwrap();
@@ -4033,6 +4116,7 @@ fn t211_returned_source_replaces_its_placeholder() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     std::fs::write(&path, crate::app::project_text_of(&p, &Default::default(), None)).unwrap();
@@ -4119,6 +4203,7 @@ fn t2541_a_returned_file_gets_its_waveform() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     std::fs::write(&path, crate::app::project_text_of(&p, &Default::default(), None)).unwrap();
@@ -4201,6 +4286,7 @@ fn t210_render_with_missing_sources_warns_and_runs() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
 
@@ -4292,6 +4378,7 @@ fn t209_missing_source_opens_with_placeholder_and_notices() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     let text = crate::app::project_text_of(&p, &Default::default(), None);
@@ -4510,6 +4597,7 @@ fn t204_multi_drag_moves_the_whole_block() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     p.clips = vec![clip(1, 0), clip(2, 100_000), clip(3, 400_000)];
     p.overlap_layers = false; // layering-free mode: the stop is real
@@ -4692,6 +4780,7 @@ fn t200_coalesced_edits_bump_revision_and_keep_dirty() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     app.model = kt_model::TimelineModel::new(p);
     app.model_rev += 1;
@@ -5433,6 +5522,7 @@ fn t376_clip_ids_are_not_reused_within_a_session() {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         }));
     };
 
@@ -7102,6 +7192,7 @@ fn t242_morph_editor_shows_target_mode_and_timing() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.ensure_tracks(kt_model::LaneKind::Morph, 1);
     p.morphers.push(MorpherEvent {
@@ -7197,6 +7288,7 @@ fn t244_morpher_has_one_chain_with_pinned_head() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
@@ -7354,6 +7446,7 @@ fn t246_thin_row_is_clickable_and_zoom_anchor_holds() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.ensure_tracks(kt_model::LaneKind::Morph, 1);
     p.morphers.push(MorpherEvent {
@@ -7579,6 +7672,7 @@ fn t248_video_warp_shows_only_what_matters() {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
     }
     p.validate().unwrap();
@@ -7642,6 +7736,7 @@ fn t249_previews_follow_the_warp() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
 
     // without a warp the map is not created at all — the mapping is linear, as before
@@ -7727,6 +7822,7 @@ fn t258_morph_layer_reuses_lane_and_honours_region() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
@@ -8104,6 +8200,7 @@ fn t265_automation_axis_and_field_bind() {
         fx_auto: vec![vec![]],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
@@ -8750,6 +8847,7 @@ fn t281_typed_key_value_reaches_the_model() {
         }]],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
@@ -8757,26 +8855,15 @@ fn t281_typed_key_value_reaches_the_model() {
     h.step();
     h.step();
 
-    // the field of the LIVE parameter sits in the grid between its own label and the label
-    // of the next parameter — we aim where a person would. `DragValue`
-    // does not create its own node in the accessibility tree, so it cannot be found by its label:
-    // we take the coordinate from the REAL layout.
-    let (lbl_rate, lbl_mix) =
-        (crate::widgets::param_label("rate"), crate::widgets::param_label("mix"));
-    // the parameter label occurs twice: in the value grid and as the curve-selection button
-    // in the automation panel BELOW. We need the UPPER one — the grid
-    // is drawn before the graph.
-    let top_label = |h: &Harness<'_, KtApp>, lbl: &str| -> egui::Rect {
-        h.query_all_by_label(lbl)
-            .map(|n| n.rect())
-            .min_by(|a, b| a.top().total_cmp(&b.top()))
-            .unwrap_or_else(|| panic!("the label of parameter {lbl:?} is not drawn"))
-    };
-    let r = top_label(&h, &lbl_rate);
-    let (x0, y) = (r.right(), r.center().y);
-    let x1 = top_label(&h, &lbl_mix).left();
-    assert!(x1 > x0 + 8.0, "there must be room for a field between the parameter labels");
-    let pos = egui::pos2((x0 + x1) * 0.5, y);
+    // the field of the LIVE parameter: `DragValue` does not create its own node in the
+    // accessibility tree, so it cannot be found by its label — we take its rectangle from the REAL
+    // layout, as the program publishes it (one field a row since fx-form-width: the field stands
+    // after its label, no longer between two labels).
+    let lbl_rate = crate::widgets::param_label("rate");
+    assert!(h.query_all_by_label(&lbl_rate).next().is_some(), "the label of parameter {lbl_rate:?} is not drawn");
+    let field = crate::widgets::field_probe::rect_of("rate").expect("the rate field is drawn");
+    assert!(field.width() > 8.0, "there must be room for the field: {field:?}");
+    let pos = field.center();
 
     // a click on the field switches it to input mode; then characters and Enter
     h.hover_at(pos);
@@ -8858,6 +8945,7 @@ fn t286_region_edits_do_not_rebuild_the_engine() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
@@ -8992,6 +9080,7 @@ fn t343_paste_chain_into_morpher_carries_curves() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
@@ -9014,6 +9103,7 @@ fn t343_paste_chain_into_morpher_carries_curves() {
         }],
         src_in: kt_time::Tick(45_000),
         fx_off: false,
+        fx_in: Vec::new(),
     });
     h.step();
     h.step();
@@ -9076,6 +9166,7 @@ pub(crate) fn harness_with_fx_window() -> egui_kittest::Harness<'static, crate::
         }]],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
@@ -9129,6 +9220,7 @@ pub(crate) fn sample_clip(id: kt_model::ClipId) -> kt_model::ClipEvent {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     }
 }
 
@@ -9217,6 +9309,7 @@ fn t346_preset_insert_appends_chain_with_curves() {
         }],
         src_in: kt_time::Tick(0),
         fx_off: false,
+        fx_in: Vec::new(),
     };
     let app = h.state_mut();
     app.presets.add("Glow ramp", &block).expect("add");
@@ -9289,6 +9382,7 @@ fn harness_with_eq_window() -> egui_kittest::Harness<'static, crate::app::KtApp>
         fx_auto: vec![vec![]],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
@@ -9878,6 +9972,7 @@ fn t460_fade_handle_redrag_keeps_kind() {
             fx: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
         // a corner fade-in with the CONFIGURED kind, curve and sound
         p.transitions.push(TransitionEvent {
@@ -9978,6 +10073,7 @@ fn t460b_overlap_redrag_keeps_kind() {
                 fx: vec![],
                 opacity: 1.0,
                 fx_off: false,
+                fx_in: Vec::new(),
             });
         }
         p.transitions.push(TransitionEvent {
@@ -13728,6 +13824,7 @@ fn t716b_lead_geometry_in_the_chain_editor() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
@@ -14114,6 +14211,7 @@ fn t722b_project_rule_change_repaints_the_paused_preview() {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -14688,6 +14786,7 @@ fn t744_track_chain_is_the_same_strip_and_refuses_curves_aloud() {
         }],
         src_in: kt_time::Tick::ZERO,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     h.state_mut().open_track_window(id);
     h.step();
@@ -14944,6 +15043,7 @@ fn t749_formula_is_typed_whole_and_drawn() {
             }]],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         };
         c.fx_bypass = vec![false];
         p.clips.push(c);
@@ -15232,6 +15332,7 @@ fn t751_the_menu_target_is_latched_on_press() {
             }]],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
         p.normalize();
         p.validate().unwrap();
@@ -18245,6 +18346,7 @@ fn t815_recovery_of_a_nested_scene_is_orders_of_magnitude_smaller() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     // that very scene: L1 of 10 clips, L2 of 8 instances of L1, the root of 8 L2
     let mut p = Project::new(ProjectSettings {
@@ -18443,6 +18545,7 @@ fn t905_preview_follows_the_loop_when_play_starts_outside() {
                 fx_auto: vec![],
                 opacity: 1.0,
                 fx_off: false,
+                fx_in: Vec::new(),
             });
         }
         p.validate().unwrap();
@@ -18596,6 +18699,7 @@ pub(crate) fn owner_morpher_scene(h: &mut Harness<'static, KtApp>) {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     for (i, name) in ["intro", "finale"].iter().enumerate() {
         p.areas.push(MarkedArea {
@@ -18753,6 +18857,7 @@ pub(crate) fn transition_scene(h: &mut Harness<'static, KtApp>) {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
     }
     p.transitions.push(TransitionEvent {
@@ -18920,6 +19025,7 @@ fn t914_speed_curve_shape_menu_offers_every_shape() {
             }]],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
         p.normalize();
         p.validate().unwrap();
@@ -21362,7 +21468,7 @@ fn t2810_the_window_drives_the_export_options() {
     h.step();
     pick_combo(&mut h, tr(k::render::SPEED_FAST), tr(k::render::SPEED_SLOW));
     pick_combo(&mut h, tr(k::render::DEPTH_8), tr(k::render::DEPTH_10));
-    pick_combo(&mut h, "BT.601 limited", "BT.709 limited");
+    pick_combo(&mut h, "By size (BT.709 from HD) limited", "BT.709 limited");
     pick_combo(&mut h, &crate::tf!(k::render::FPS_PROJECT, 30), "25");
     pick_combo(&mut h, "AAC", "FLAC");
     let texts = shown_texts(&h);
@@ -21385,7 +21491,7 @@ fn t2810_the_window_drives_the_export_options() {
         RateMode::Vbr,
         Speed::Slow,
         BitDepth::Ten,
-        Matrix::Bt709,
+        Some(Matrix::Bt709),
         AudioCodec::Flac
     ));
     assert_eq!((job.opts.video_bitrate, f.max_bitrate, job.opts.fps), (Some(6_000_000), Some(9_000_000), Some(25)));

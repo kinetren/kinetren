@@ -65,6 +65,9 @@ impl ComputeHost for Counting {
     fn keeps(&self) -> bool {
         self.0.keeps()
     }
+    fn holds_pictures(&self) -> bool {
+        self.0.holds_pictures()
+    }
     fn run_keeping(&self, job: &Job<'_>, keep: &[Buf]) -> Result<(Vec<Vec<u8>>, Vec<Held>), String> {
         self.count(job, || self.0.run_keeping(job, keep))
     }

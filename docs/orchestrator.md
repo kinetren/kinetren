@@ -195,7 +195,7 @@ an executor. A free executor gets its next work in the same turn.
 
 **Test numbers by block** (2026-11-20, after three collisions in one day): each session takes numbers only
 from its own block: fx-graph t3200–t3299, spec-engine t3300–t3399, spec-features t3400–t3599, mosh-sharp
-t3600–t3699, features-slow t3700–t3799, spec-engine's second block t3800–t3899 (2026-11-20, its first ran out), spec-features' second block t3900–t4099 (2026-11-20). The next free block starts at t4100. A collision found at a merge is renumbered on the later branch.
+t3600–t3699, features-slow t3700–t3799, spec-engine's second block t3800–t3899 (2026-11-20, its first ran out), spec-features' second block t3900–t4099 (2026-11-20). spec-engine's third block t4100–t4199 (2026-11-22). The next free block starts at t4200. A collision found at a merge is renumbered on the later branch.
 
 **found-defects rows by block** (2026-11-20, after rows 819–823 were taken twice): fx-graph 900–949,
 mosh-sharp 950–999, features-slow 1000–1049, spec-engine 1050–1099, spec-features 1100–1149; the

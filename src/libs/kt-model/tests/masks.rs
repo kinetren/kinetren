@@ -32,6 +32,7 @@ fn clip(id: u64, kind: ClipKind) -> ClipEvent {
         geometry_pos: 0,
         geometry_auto: Vec::new(),
         masks: Default::default(),
+        fx_in: Vec::new(),
     }
 }
 
@@ -307,6 +308,7 @@ fn t1262_commands_undo_trim_and_the_slot_clipboard() {
         }],
         src_in: Tick(0),
         fx_off: false,
+        fx_in: Vec::new(),
     };
     let json = serde_json::to_string(&block).unwrap();
     let back: ops::FxChainBlock = serde_json::from_str(&json).unwrap();

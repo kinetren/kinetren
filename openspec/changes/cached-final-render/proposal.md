@@ -1,9 +1,9 @@
 # Proposal: cached-final-render
 
-> DESIGN ONLY, FUTURE. The owner marked the cached final render "это на будущее" (kkt-26.11.18b U5);
-> `v26.10` X1 is `later`. This change records the architecture so the pieces built now (the durable key,
-> the segment manifests, the hardware cascade) stay compatible with it, and puts found-defects 773 to the
-> owner. No executor takes it before his go. Tests reserved: t3322–t3335. Base: `orch-26-11-01` at `ec30cb02`.
+> DESIGN (spec session). The owner answered Q1–Q3 (kkt-26.11.20 A16, lines 21–22): a draft render may take
+> the preview's prerender, the cached render is accepted, its index lives inside the video as SEI. An
+> executor builds it in stage 24 on the orchestrator's go. Tests reserved: t3322–t3335, t3870–t3876.
+> Revised on `orch-26-11-01` at `5e7a8ea9`.
 
 ## Why
 
@@ -32,8 +32,8 @@ So the reusable thing is not the preview's tier: it is an earlier EXPORT.
 
 ## What Changes
 
-- **An export may write an index of what it holds**: per frame the durable key at the export's size and
-  quality, the packets' places, the GOP boundaries, and one fingerprint of everything that decides the
+- **An export may write an index of what it holds, inside the video** (SEI, the owner's Q3 b): per frame
+  the durable key at the export's size and quality, per GOP a hash of its packets, and one fingerprint of everything that decides the
   bitstream (codec, encoder and its version, profile, level, pixel format, size, rate, rate control,
   bitrate/quality, GOP rule, colour tags, the device and the build).
 - **A cached render looks up earlier renders' indexes** and, for every run of the new timeline whose keys
@@ -45,7 +45,9 @@ So the reusable thing is not the preview's tier: it is an earlier EXPORT.
 - **Parameter sets in-band** (MKV, or MP4 with `avc3`/`hev1` sample entries), so a copied GOP carries
   its own SPS/PPS/VPS ("не мешает pps/sps/vps/etc перед сегментами класть").
 - **The render window shows what is already cached** and, as its own step, which files it reuses.
-- **The preview's disk tier is NOT read by the export** (found-defects 773 closed by decision, Q1).
+- **A draft render** (the owner's Q1 b): an option that takes the frames the preview's prerender holds
+  (preview size, lossy), composes the rest at the preview's quality, and writes a file marked as a draft.
+  The final render never reads the prerender (found-defects 773 is answered by the two modes).
 
 ## Capabilities
 
@@ -68,33 +70,11 @@ So the reusable thing is not the preview's tier: it is an earlier EXPORT.
   indexed files it reuses. Invariant 9: in-process, no external binary. No project format change.
 - `docs/features/export/pipeline/smart-render-passthrough.md` (F-EXP-003) gains the owner's later word.
 
-## Questions for the owner
+## The owner's decisions (kkt-26.11.20, lines 21–22)
 
-**Q1. Found-defects 773: may an export ever take frames from the preview's disk prerender?**
-Review R3 promised "a cached range exports at encoder speed". Today the prerender keeps lossy H.264 at
-the preview's size and quality, and on a card a preview frame may be computed in a slightly different
-order of passes than the export uses (1 code of difference at most). Invariant 11 says the export is byte
-for byte the same between runs on one device.
-- **a) Never.** The export reuses only earlier EXPORTS at the same settings (this change). A slow region
-  is fast in the second render, not the first. *(Recommended: the preview's files are at another size
-  and lossy; using them would make a final render worse than its own frames.)*
-- **b) A "draft render" option** that takes the prerender's frames where they exist (preview size,
-  scaled up, lossy), for a quick look-at file, never for the final.
-
-**Q2. A cached render's bytes depend on the files it reuses. Accept that for cached renders only?**
-Your X1 asks to copy frames "из одного файла в другом". A GOP copied from an earlier file is not the
-GOP a fresh full render would encode (the encoder's rate control carries state across GOPs), though it
-decodes to the same picture the earlier render made. Today: every render is byte-identical run to run.
-- **a) Yes, only for a render with "Cached render" on**: the same project and the same set of earlier
-  files give the same bytes; a render with it off stays as today. *(Recommended.)*
-- **b) No**: then reuse is impossible (a copied GOP can never equal a fresh encode), and X1 is dropped.
-
-**Q3. Where does the index of a rendered file live?**
-Your X1 names both: "в что-то типо SEI/etc вкладывать хэши" and "хранить мета-инфу рядом с файлом а не
-в SEI", with a tool to strip the SEI.
-- **a) A file beside the output** (`<name>.kt-render`, text like the prerender's manifests) plus a list
-  of the project's earlier renders in the data folder; nothing inside the video. *(Recommended: the
-  delivered file stays clean; a moved file is found again by its size and content hash.)*
-- **b) SEI** (user data unregistered, one per GOP, the frame keys) — survives renaming and moving, but
-  goes to whoever receives the file until stripped.
-- **c) Both**, SEI off by default.
+- **Q1 b — "Опция «черновой рендер»".** A draft render may take the preview's prerender. The final render
+  never does, so found-defects 773 is answered by the two modes (design D7).
+- **Q2 a — "Да".** A cached render's bytes depend on the earlier files it reuses. A render with the option
+  off is unchanged.
+- **Q3 b — "индекс в видео (SEI)".** The index lives INSIDE the video, one SEI per GOP; nothing is written
+  beside the file. The render window keeps a tool that strips it (design D5).

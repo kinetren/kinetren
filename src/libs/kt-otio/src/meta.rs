@@ -8,13 +8,14 @@ use serde_json::{Map, Value};
 use crate::{Error, Timeline};
 
 pub const KT_NS: &str = "kt";
-/// The maximum UNDERSTOOD envelope version. The writer sets the version BY CONTENT (R.29): v=2 ⇔ the file carries cameras/camera tracks
-/// (an old reader would silently lose them on rewrite → the regular refusal KtMetaTooNew,
-/// round 24 rule “ours so nobody breaks it”); otherwise v=1 — files without 3D
-/// are byte-stable and open in old builds.
+/// The maximum UNDERSTOOD envelope version. The writer sets the version BY CONTENT (R.29): the
+/// lowest version that holds what the file carries (`convert.rs`, from v17 — a track that names its
+/// sound track — down to v2 — cameras), so an old reader refuses with KtMetaTooNew instead of
+/// silently losing it on rewrite (round 24 rule “ours so nobody breaks it”); a file with none of
+/// it is v=1, byte-stable, and opens in old builds.
 /// One Pan3d does NOT bump the version: an unknown effect
 /// degrades into foreign-passthrough.
-pub const KT_META_VERSION: u32 = 17;
+pub const KT_META_VERSION: u32 = 18;
 pub const KT_META_V1: u32 = 1;
 /// Cameras and camera tracks (R.29).
 pub const KT_META_V2: u32 = 2;
@@ -95,6 +96,9 @@ pub const KT_META_V16: u32 = 16;
 /// track-device-sound: a video track names its sound track (`sound` in the track envelope). An old
 /// build would drop the link and leave the devices' sound halves unmirrored. Raised ONLY by content.
 pub const KT_META_V17: u32 = 17;
+/// fx-graph-dag: a chain's wiring (`in` in an effect's envelope) or a Merge (`kt:merge`). An old
+/// build would run the arms one after another and save them as a line. Raised ONLY by content.
+pub const KT_META_V18: u32 = 18;
 
 // ---- typed metadata.kt envelopes (otio-types approach) -----------------
 // Structurally small things get OWN types (model evolution does not silently move the file schema);

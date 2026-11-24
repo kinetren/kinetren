@@ -46,6 +46,11 @@ canvas. Note F-UI-011.
 
 ## Questions to the owner
 
+Decided (2026-11-20, `kkt-26.11.20` A26, his Q53–Q54): Q1 (a), outlines and handles only outside the frame; Q2 (a),
+the zoom is not remembered.
+
+The questions as asked:
+
 **Q1. Outside the frame: outlines or the picture?** Premiere/AE draw only outlines on the pasteboard; showing
 the picture beyond the frame needs a larger composite while you edit.
 - (a) **Outlines and handles only** (*recommended*: no extra render cost; the frame is what is exported).

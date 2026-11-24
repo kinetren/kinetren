@@ -1098,6 +1098,7 @@ fn render_cache_build() -> String {
     format!("{} avcodec {:?}", kt_version::FULL, kt_media::ffmpeg::backend_info().map(|b| b.avcodec_version))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn preview_run(
     project: &Project,
     path: &str,
@@ -1111,10 +1112,17 @@ fn preview_run(
     wav: Option<String>,
     device_open_ms: f64,
     render_cache: Option<String>,
+    one_device: bool,
 ) -> Result<(), String> {
     use kt_ffmpeg::iostats as io;
     use std::sync::atomic::Ordering::Relaxed;
     preview_decode_threads(project);
+    // before anything opens the compute host: the display's device becomes its device too
+    let display = kt_gpu::GpuContext::new_headless().map_err(|e| format!("no video device: {e}"))?;
+    let display = if one_device { kt_gpu::compute::share_display(&display.device, &display.queue, display.adapter_info.clone()) } else { display };
+    if one_device {
+        eprintln!("one device: compute on the display's device: {}", if kt_gpu::compute::shares_display() { "yes" } else { "no" });
+    }
     let mut sources: Vec<(kt_model::MediaId, Box<dyn kt_media::MediaSource>)> = Vec::new();
     for m in &project.media {
         let mut db = kt_media::index::MediaIndexDb::open(
@@ -1132,7 +1140,7 @@ fn preview_run(
         height: project.settings.height,
     });
     player.set_preview_quality(q);
-    let gpu = kt_gpu::GpuContext::new_headless().and_then(kt_gpu::GpuFxEngine::new).map_err(|e| format!("no video device: {e}"))?;
+    let gpu = kt_gpu::GpuFxEngine::new(display).map_err(|e| format!("no video device: {e}"))?;
     let backend = {
         use kt_engine::VideoGpuExec as _;
         format!("GPU ({})", gpu.info().name)
@@ -1494,6 +1502,16 @@ fn load_project_file(input: &str) -> Result<(Project, Retained), i32> {
 fn load_project_resolved(input: &str) -> Result<Project, i32> {
     let (mut p, _) = load_project_file(input)?;
     kt_otio::resolve_project_media(&mut p, std::path::Path::new(input).parent());
+    // what the audio-reactive generators hear, before any of them is raised (gen-audio-reactive): a
+    // render never depends on a background job; the sidecar keeps the series between runs
+    let mut db = kt_media::index::MediaIndexDb::open(&std::path::Path::new(input).with_extension("ktindex.db")).ok();
+    kt_engine::listen::ensure(
+        &p,
+        &|path| path.to_string(),
+        &|f| kt_media::factory::open_indexed(f, None).ok(),
+        db.as_mut().map(|d| d as &mut dyn kt_media::listen::SeriesStore),
+        &|| false,
+    );
     Ok(p)
 }
 
@@ -1773,7 +1791,7 @@ fn run(args: &[String]) -> i32 {
             let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3))
             else {
                 eprintln!(
-                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--ui-ms N] [--free-running] [--cold] [--loop S] [--wav out.wav] [--device-open-ms N] [--render-cache DIR]"
+                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--ui-ms N] [--free-running] [--cold] [--loop S] [--wav out.wav] [--device-open-ms N] [--render-cache DIR] [--one-device]"
                 );
                 return 2;
             };
@@ -1796,7 +1814,10 @@ fn run(args: &[String]) -> i32 {
             let wav = opt("--wav").cloned();
             let device_open_ms = opt("--device-open-ms").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
             let render_cache = opt("--render-cache").cloned();
-            match preview_run(&project, input, from, to, size, ui_ms, free, cold, looped, wav, device_open_ms, render_cache) {
+            // the window's device shared with the compute host, as the editor does where it can
+            // (stream-picture-stays D2): its stream pictures reach the composite as they lie
+            let one_device = args.iter().any(|a| a == "--one-device");
+            match preview_run(&project, input, from, to, size, ui_ms, free, cold, looped, wav, device_open_ms, render_cache, one_device) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{e}");
@@ -1999,11 +2020,9 @@ fn run(args: &[String]) -> i32 {
             };
             report_silenced(&project);
             let free = kt_gpu::memory::available();
-            kt_ffmpeg::set_decode_threads(kt_gpu::memory::decode_threads(free, project.settings.width, project.settings.height));
-            kt_ffmpeg::set_rgba_threads(
-                kt_gpu::memory::rgba_threads(free, project.settings.width, project.settings.height),
-            );
-            let (audio_sources, video_sources) = match (open_all(), open_all()) {
+            let (audio_sources, video_sources) = match open_render_sources(free, project.settings.width, project.settings.height, || {
+                (open_all(), open_all())
+            }) {
                 (Ok(a), Ok(v)) => (a, v),
                 (Err(e), _) | (_, Err(e)) => {
                     eprintln!("{e}");
@@ -2029,6 +2048,9 @@ fn run(args: &[String]) -> i32 {
                     return 2;
                 }
             };
+            // on a card the stream's pictures stay on the compute device and the export composes there
+            // (stream-picture-stays D4); a software adapter keeps its several devices
+            kt_gpu::compute::hold_pictures_for_export();
             // R.29: headless devices, the same composition code as the preview
             let mut engines: Vec<std::sync::Arc<dyn kt_engine::VideoGpuExec>> = match kt_gpu::export_engines(project.settings.width, project.settings.height) {
                 Ok(e) => {
@@ -2198,4 +2220,43 @@ fn kt_lock_holder(project: &str) -> Option<u32> {
         return kt_dirs::locks::read_holder(&former);
     }
     None
+}
+
+/// The export opens its sources with a render's decoder settings, scoped to this opening as the render
+/// window's (export: "A render's decoder settings are its own"; found-defects 1059): a process-wide
+/// set outlived the export and reached every source opened after it.
+fn open_render_sources<R>(free: Option<u64>, w: u32, h: u32, open: impl FnOnce() -> R) -> R {
+    let settings = kt_ffmpeg::DecodeSettings {
+        decode_threads: kt_gpu::memory::decode_threads(free, w, h),
+        rgba_threads: kt_gpu::memory::rgba_threads(free, w, h),
+    };
+    kt_ffmpeg::with_decode_settings(settings, open)
+}
+
+#[cfg(test)]
+mod export_tests {
+    /// Test t3602 (export, found-defects 1059): `kt-cli export` opens its sources with a render's
+    /// decoder settings, and nothing opened after them takes those settings.
+    #[test]
+    fn t3602_the_exports_decoder_settings_do_not_leak() {
+        let before = kt_ffmpeg::opening_settings();
+        // a machine short of memory: a render's settings differ from the defaults
+        let free = Some(1u64 << 30);
+        let want = kt_ffmpeg::DecodeSettings {
+            decode_threads: kt_gpu::memory::decode_threads(free, 3840, 2160),
+            rgba_threads: kt_gpu::memory::rgba_threads(free, 3840, 2160),
+        };
+        assert_ne!(want, before, "the scene: a render's settings equal the defaults");
+        let inside = super::open_render_sources(free, 3840, 2160, kt_ffmpeg::opening_settings);
+        assert_eq!(inside, want, "the export's sources did not open with a render's settings");
+        assert_eq!(kt_ffmpeg::opening_settings(), before, "the export's settings outlived its opening");
+        assert_eq!((kt_ffmpeg::decode_threads_set(), kt_ffmpeg::rgba_threads_set()), (before.decode_threads, before.rgba_threads));
+        // and the export goes through it: the one process-wide set left is the preview tools' own (the
+        // editor's preview takes a render's threads process-wide too)
+        let src = include_str!("main.rs");
+        let src = &src[..src.find(concat!("mod export", "_tests")).unwrap()];
+        let sets: Vec<&str> = src.lines().filter(|l| l.contains(concat!("kt_ffmpeg::set_", "decode_threads(")) || l.contains(concat!("kt_ffmpeg::set_", "rgba_threads("))).collect();
+        assert_eq!(sets, ["    kt_ffmpeg::set_decode_threads(threads);"], "a process-wide decoder setting outside the preview tools");
+        assert!(src.contains(concat!("match open_", "render_sources(free")), "the export opens its sources around the scope");
+    }
 }

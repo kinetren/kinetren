@@ -1,6 +1,6 @@
 //! Stylizing video effects as barrier plugins (plugin-api-barriers): pixelate, edges, halftone,
-//! chromatic_aberration, vhs, noise. Pixelate is the pilot (D7): one pass, no SIMD twin, no neighbours read —
-//! the pass graph's simplest form. Edges carries the family's AVX2 twins (`simd.rs`).
+//! chromatic_aberration, vhs, noise. Pixelate is the pilot (D7): one pass, no neighbours read — the pass
+//! graph's simplest form. Every kernel is a WGSL pass graph; there is no CPU twin.
 
 use kt_plugin_api::math::FrozenMath;
 use std::sync::Arc;

@@ -113,6 +113,7 @@ fn clip(id: u64, media: u64, start: i64, dur: i64, fx: Vec<FxInstance>) -> ClipE
         opacity: 1.0,
         fx_off: false,
         masks: Default::default(),
+        fx_in: Vec::new(),
     }
 }
 
@@ -779,4 +780,171 @@ fn t2707_the_pipelined_export_walks_the_stream_in_order() {
             assert!(got.0 == serial, "{name} {range:?}: the pipelined frames differ from the serial export");
         }
     }
+}
+
+/// t3814 (stream-picture-stays D3, found-defects 663): the mosh's picture stays on the compute host's
+/// device as the layer's input — an engine on that device composes it with no read back, and an engine
+/// on another device reads it back; both give the same bytes, and the frame is moshed.
+#[test]
+fn t3814_a_held_stream_picture_composes_where_it_lies() {
+    use kt_engine::VideoGpuExec;
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    if no_device() {
+        return;
+    }
+    let Some(on_host) = kt_gpu::front_on_compute() else { return };
+    // the host's device composes here as the window's would (no window in a test)
+    kt_gpu::compute::hold_pictures_for_tests();
+    let n = Tick(38 * STEP);
+    let p = project(true);
+    let (vr, cache) = (renderer(&p), big_cache());
+    warm(&vr, &cache, n);
+    let plan = vr.frame_plan(&cache, n, Q);
+    let is_held = |plan: &kt_engine::FramePlan<'_>| plan.layers.iter().any(|l| matches!(l, kt_engine::video_plan::PlanLayer::One { src, .. } if src.input.held().is_some()));
+    assert!(is_held(&plan), "the mosh layer's input is held");
+    let (on, back) = kt_gpu::held_pictures();
+    let mut here = vec![];
+    assert!(on_host.execute_once(&plan, &mut here).unwrap(), "complete on the host's device");
+    assert_eq!(kt_gpu::held_pictures(), (on + 1, back), "converted where it lies");
+    drop(plan);
+    let (there, complete) = kt_gpu::testkit::compose(&vr, &cache, n, Q);
+    assert!(complete);
+    assert_eq!(kt_gpu::held_pictures().1, back + 1, "another device reads it back");
+    assert_eq!(here, there, "the same bytes either way");
+    let plain = project(false);
+    let (pv, pc) = (renderer(&plain), big_cache());
+    warm(&pv, &pc, n);
+    assert_ne!(kt_gpu::testkit::compose(&pv, &pc, n, Q).0, there, "the frame is moshed");
+}
+
+/// t3823 (stream-picture-stays D3, task 2.3): the frames a walk computes ahead stay on the compute
+/// device too — the prefetch's walk over a run reads no picture back, and composing every frame of it
+/// on the host's device reads none back either; a frame of the run is the bytes another device gets.
+#[test]
+fn t3823_the_frames_walked_ahead_stay_on_the_device() {
+    use kt_engine::VideoGpuExec;
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    if no_device() {
+        return;
+    }
+    let Some(on_host) = kt_gpu::front_on_compute() else { return };
+    kt_gpu::compute::hold_pictures_for_tests();
+    let p = project(true);
+    let memo = Arc::new(StreamMemo::new(256 << 20));
+    let mut vr = VideoRenderer::new(&p);
+    vr.set_stream_memo(memo.clone());
+    let cache = big_cache();
+    for k in 0..=40 {
+        warm(&vr, &cache, Tick(k * STEP));
+    }
+    let read = kt_plugin_api::stream::pictures_read();
+    let walked = kt_plugin_api::stream::positions_walked();
+    assert!(!vr.stream_advance_run(&cache, Tick(31 * STEP), Tick(40 * STEP), Q), "the run walked whole");
+    assert!(kt_plugin_api::stream::positions_walked() > walked, "the run walked");
+    assert_eq!(kt_plugin_api::stream::pictures_read(), read, "the walk ahead read no picture back");
+    assert!(memo.device_bytes() > 0 && memo.device_bytes() <= memo.bytes(), "the memo names its device bytes: {}", memo.device_bytes());
+    let (_, back) = kt_gpu::held_pictures();
+    let mut at38 = vec![];
+    for k in 31..=40 {
+        let plan = vr.frame_plan(&cache, Tick(k * STEP), Q);
+        let mut out = vec![];
+        assert!(on_host.execute_once(&plan, &mut out).unwrap(), "frame {k} complete");
+        if k == 38 {
+            at38 = out;
+        }
+    }
+    assert_eq!(kt_plugin_api::stream::pictures_read(), read, "composing the run read no picture back");
+    assert_eq!(kt_gpu::held_pictures().1, back, "nothing read back by the executor");
+    let (there, complete) = kt_gpu::testkit::compose(&vr, &cache, Tick(38 * STEP), Q);
+    assert!(complete);
+    assert_eq!(at38, there, "the frame walked ahead is the bytes another device reads back");
+    // a megabyte more on the device is a `stream_held` record naming the memo's device bytes
+    let items = kt_time::trace::testing::capture(|| memo.put_device(u64::MAX, Arc::new(0u8), 2 << 20));
+    let held: Vec<_> = kt_time::trace::testing::recs(&items).into_iter().filter(|r| r.kind() == Some(kt_time::trace::Ev::StreamHeld)).collect();
+    assert_eq!(held.last().map(|r| r.a), Some(memo.device_bytes() as u64), "{held:?}");
+}
+
+/// t3812 (stream-picture-stays D1): every mosh picture that crosses the bus to be composed leaves a
+/// `stream_cross` record — the bytes read back, the bytes handed up, the conversion's span — where it
+/// crosses: on two devices the kernel's bytes path for each frame composed; a project with no stream
+/// stage crosses nothing.
+#[test]
+fn t3812_a_crossing_is_in_the_trace() {
+    use kt_time::trace::{self, cross, Ev};
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    if no_device() {
+        return;
+    }
+    let crossings = |p: &Project| {
+        let (vr, cache) = (renderer(p), big_cache());
+        for k in 0..=34 {
+            warm(&vr, &cache, Tick(k * STEP));
+        }
+        let items = trace::testing::capture(|| {
+            for k in 31..=34 {
+                assert!(kt_gpu::testkit::compose(&vr, &cache, Tick(k * STEP), Q).1, "frame {k} complete");
+            }
+        });
+        trace::testing::recs(&items).into_iter().filter(|r| r.kind() == Some(Ev::StreamCross)).collect::<Vec<_>>()
+    };
+    let moshed = crossings(&project(true));
+    assert_eq!(moshed.len(), 4, "one crossing a frame composed: {moshed:?}");
+    for r in &moshed {
+        assert_eq!(r.aux, cross::KERNEL, "the kernel's bytes path");
+        assert!(r.a > 0, "bytes read back");
+        assert_eq!(r.b, (Q.width * Q.height * 4) as u64, "the layer's RGBA handed up");
+    }
+    assert!(crossings(&project(false)).is_empty(), "no stream stage, no crossing");
+}
+
+/// t3820 (stream-picture-stays D4): an export composed on the compute host's device takes the mosh's
+/// pictures as they lie — no stream picture crosses the bus — and writes the frames an export on a
+/// device of its own writes (which reads each held picture back).
+#[test]
+fn t3820_an_export_on_the_hosts_device_crosses_nothing() {
+    use kt_time::trace::{self, cross, Ev};
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    if no_device() {
+        return;
+    }
+    kt_gpu::compute::hold_pictures_for_tests();
+    let host = kt_gpu::compute::host_device().expect("this crate's host");
+    let on_host = kt_gpu::GpuFxEngine::new_for_export(host.context()).unwrap();
+    let p = project(true);
+    let run = |backends: &kt_engine::export::ExportBackends| {
+        let mut out = vec![];
+        let items = trace::testing::capture(|| {
+            kt_engine::export::render_raw_video_range_with(
+                &p,
+                sources(),
+                Q,
+                Some((Tick(26 * STEP), Tick(40 * STEP))),
+                backends,
+                &Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                |_| {},
+                |f| {
+                    out.extend_from_slice(f);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        });
+        let crossed: Vec<_> = trace::testing::recs(&items).into_iter().filter(|r| r.kind() == Some(Ev::StreamCross)).collect();
+        (out, crossed)
+    };
+    let here = kt_engine::export::ExportBackends { video_gpu: Some(on_host as Arc<dyn kt_engine::VideoGpuExec>), ..Default::default() };
+    let (a, crossed_a) = run(&here);
+    assert!(crossed_a.is_empty(), "the host's device crosses nothing: {crossed_a:?}");
+    let (b, crossed_b) = run(&kt_gpu::testkit::backends());
+    assert!(!crossed_b.is_empty() && crossed_b.iter().all(|r| r.aux == cross::EXECUTOR), "a device of its own reads the pictures back");
+    assert_eq!(a.len(), b.len());
+    assert!(a == b, "the two exports write the same frames");
 }

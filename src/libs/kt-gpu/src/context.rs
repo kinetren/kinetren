@@ -92,6 +92,8 @@ impl std::fmt::Display for GpuInitError {
     }
 }
 
+/// A device and its queue (`Clone` shares them: the same `Arc`s).
+#[derive(Clone)]
 pub struct GpuContext {
     pub device: Arc<wgpu::Device>,
     pub queue: Arc<wgpu::Queue>,

@@ -27,3 +27,8 @@ events), and one `apply_batch` made four to five whole-project copies plus a ful
 - **WHEN** every command family edits an event whose fingerprint was already asked
 - **THEN** the cell's fingerprint after the edit equals the hash of the edited value's Debug text
 - **TEST** t3370 (`src/libs/kt-model/tests/shared_events.rs`)
+
+#### Scenario: No command copies events it does not write
+- **WHEN** every command family is applied once to one event of a 13 357-event project (and the lane-order and track-renumbering commands to three rows)
+- **THEN** each copies at most the events it writes; a command still writing through the container's `iter_mut` would copy every event and is named by the test
+- **TEST** t3375 (`src/libs/kt-model/tests/shared_events.rs`)

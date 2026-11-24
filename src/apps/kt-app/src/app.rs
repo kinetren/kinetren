@@ -829,11 +829,8 @@ impl KtApp {
                 crate::wake::now();
             })
         } else {
-            let ctx = kt_gpu::GpuContext::from_parts(
-                std::sync::Arc::new(rs.device.clone()),
-                std::sync::Arc::new(rs.queue.clone()),
-                rs.adapter.get_info(),
-            );
+            // the window's one context: the compute host's too where it shares the device (D2)
+            let ctx = kt_gpu::compute::share_display(&rs.device, &rs.queue, rs.adapter.get_info());
             std::thread::Builder::new().name("engine-build".into()).spawn(move || {
                 let _ = tx.send(kt_gpu::GpuFxEngine::new_kept(ctx).map_err(|e| e.to_string()));
                 crate::wake::now();
@@ -2148,6 +2145,11 @@ impl KtApp {
         // the index not having been built, and the person saw placeholders
         // instead of waveforms without a single word about the cause. Once per address:
         // the service may retry, and the message need not be repeated.
+        // a series an audio-reactive generator hears arrived: its feed holds it from now on
+        // (gen-audio-reactive); the player's builder rebuilds the generators' states
+        if crate::listen::service().take_fresh() {
+            self.player.sync_generators(&self.model.doc_arc());
+        }
         for e in self.index.take_errors() {
             if self.index_errs_said.insert(e.clone()) {
                 self.warn(crate::tf!(k::msg::INDEX_FAILED, e));
@@ -4895,7 +4897,7 @@ impl KtApp {
                 if let Some(k) = &c.r#gen {
                     cur.insert(
                         c.id,
-                        kt_model::GenState { kind: k.clone(), auto: c.gen_auto.clone() },
+                        kt_model::GenState::of(k.clone(), c.gen_auto.clone()),
                     );
                 }
             }
@@ -5025,6 +5027,21 @@ impl KtApp {
         self.edited_title().is_some()
     }
 
+    /// Ask the series of the files the audio-reactive generators hear (gen-audio-reactive): after an
+    /// edit and at the first sync of an opening; nothing when no generator listens.
+    fn ask_listened(&self) {
+        let heard = kt_engine::listen::heard_paths(self.model.doc());
+        if heard.is_empty() {
+            return;
+        }
+        let base = self.project_path.as_deref().and_then(|p| p.parent());
+        let files = heard.into_iter().map(|k| {
+            let f = resolve_media_path(base, &k);
+            (k, f)
+        });
+        crate::listen::service().ask(self.index_db_path(), files.collect());
+    }
+
     pub(crate) fn sync_media_sources(&mut self) {
         // A cheap check BEFORE building the map (R.53, item 413): sync is called from
         // every edit wrapper, that is, on EVERY frame of any
@@ -5037,6 +5054,7 @@ impl KtApp {
         }
         self.media_synced_rev = self.model_rev;
         self.media_sync_builds += 1;
+        self.ask_listened();
         let cur: HashMap<MediaId, String> =
             self.model.doc().media.iter().map(|m| (m.id, m.path.clone())).collect();
         if !self.media_synced {
@@ -5121,9 +5139,86 @@ impl KtApp {
     /// of parameters opened, but there was nothing in the preview — a title had to be typed
     /// blind, then go to the bin and place the card by hand.
     /// Ctrl+Z returns everything at once, because the batch is one.
-    /// Create a generator at the cursor — the bin's entry (one body with Edit and the track menu).
+    /// Create a generator of `kind` at the cursor on track 1 of its streams: the tests' and the
+    /// harness's shortcut (the person's entries go through `create_generator_by_selection`).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn create_generator(&mut self, kind: kt_model::GeneratorKind) {
         self.create_generator_at(kind, self.player.transport.playhead(), None);
+    }
+
+    /// A generator's kind changed — in its window's gallery or from its bin card — as ONE history
+    /// step: the media path, and every picture event's sound pair kept in step with the new kind
+    /// (generator-menu-one-item D2). A kind that sounds beside its picture (Sync flash) gives each
+    /// picture event of the media its sound event on audio track 1, linked to it, as the menu used
+    /// to; a kind with no sound takes the generator's sound events away (they would hold silence).
+    /// The window's gallery is the one way to a kind since kkt-26.11.20 A1.
+    pub(crate) fn gen_kind_switch_cmds(&self, media: MediaId, kind: &kt_model::GeneratorKind) -> Vec<Command> {
+        let set = Command::SetMediaPath { id: media, path: kt_model::gen_kind_path(kind) };
+        let sounds = kt_media::MediaSource::info(&kt_media::generator::GeneratorSource::new(kind.clone())).has_audio;
+        let clips = &self.model.project().clips;
+        let pictures: Vec<&ClipEvent> = clips.iter().filter(|c| c.media == media && c.kind == ClipKind::Video).collect();
+        let pair_of = |v: &ClipEvent| {
+            clips
+                .iter()
+                .filter(|p| p.kind == ClipKind::Audio && p.media == media && p.link_group.is_some() && p.link_group == v.link_group)
+                .map(|p| p.id)
+                .collect::<Vec<_>>()
+        };
+        if !sounds {
+            // the sound halves go first: the media's new kind is no sound kind
+            let mut cmds: Vec<Command> =
+                pictures.iter().flat_map(|v| pair_of(v)).map(|id| Command::RemoveClip { id }).collect();
+            cmds.push(set);
+            return cmds;
+        }
+        let mut cmds = vec![set];
+        let (mut next_id, mut next_group) = (self.next_clip_id(), self.next_group_id());
+        for v in pictures.into_iter().filter(|v| pair_of(v).is_empty()) {
+            let group = v.link_group.unwrap_or_else(|| {
+                next_group += 1;
+                GroupId(next_group - 1)
+            });
+            let id = ClipId(next_id);
+            next_id += 1;
+            let a = ClipEvent {
+                id,
+                kind: ClipKind::Audio,
+                lane: 0,
+                link_group: Some(group),
+                fx: Vec::new(),
+                fx_auto: Vec::new(),
+                fx_bypass: Vec::new(),
+                fx_off: false,
+                opacity: 1.0,
+                geometry: Default::default(),
+                geometry_pos: 0,
+                geometry_auto: Vec::new(),
+                masks: Default::default(),
+                ..v.clone()
+            };
+            cmds.push(Command::AddClip(a));
+            if v.link_group.is_none() {
+                cmds.push(Command::LinkClips { ids: vec![v.id, id], group });
+            }
+        }
+        cmds
+    }
+
+    /// "Create a generator…" from Edit or the bin (kkt-26.11.20 A1: one item, by the track): the
+    /// kind by the selected track — the track of the earliest selected event (a solid colour on
+    /// video, a tone on audio), created there at the cursor; nothing selected → a solid colour on
+    /// video track 1. The window it opens changes the kind.
+    pub fn create_generator_by_selection(&mut self) {
+        let lane = self
+            .selected
+            .iter()
+            .filter_map(|id| self.model.clip(*id))
+            .min_by_key(|c| (c.start, c.id))
+            .map(|c| (c.kind, c.lane));
+        let stream = lane.map_or(ClipKind::Video, |(kind, _)| kind);
+        if let Some(kd) = crate::gen_ui::first_kind_for(stream) {
+            self.create_generator_at(kd, self.player.transport.playhead(), lane);
+        }
     }
 
     /// Create a generator at `at` (generators-placement-and-audio D1): Edit and the bin pass the
@@ -7086,6 +7181,7 @@ impl KtApp {
                 fx_auto: Vec::new(),
                 opacity: 1.0,
                 fx_off: false,
+                fx_in: Vec::new(),
             }));
         }
         if self.apply_batch(cmds)
@@ -7255,6 +7351,7 @@ impl KtApp {
                 fx: vec![],
                 opacity: 1.0,
                 fx_off: false,
+                fx_in: Vec::new(),
             }));
             next_id += 1;
         }
@@ -11366,13 +11463,20 @@ impl eframe::App for KtApp {
         if !ended {
             crate::welcome::stop_posters();
         }
+        // from here background GPU work stops between its steps (found-defects 962): a stream front's
+        // engine still compiling would hold the exit hook past the close's bound, and a poster waiting
+        // on it with it
+        #[cfg(not(test))]
+        kt_gpu::begin_exit();
         // a reel strip may be on the device: the process must not exit under it. A test's process
         // goes on after this close, and every later render would wait on the parked engine for good
+        // bounded like every wait of the close (found-defects 964): a cancelled poster's or strip's frame
+        // still on the offline device took 4.3 s under load, and the watcher forced the exit. The process
+        // ends before the drivers' destructors (`kt_time::shutdown::end_before_libraries`), so a frame
+        // left on the device past this bound no longer takes it down
         #[cfg(not(test))]
-        {
-            let since = std::time::Instant::now();
-            kt_gpu::park_offline_engine();
-            record("offline-engine", since, true);
+        if let Ok(h) = std::thread::Builder::new().name("offline-park".into()).spawn(kt_gpu::park_offline_engine) {
+            kt_time::shutdown::join("offline-engine", h, kt_time::shutdown::deadline());
         }
         // after the recovery write (durability first): the clean-close event, within a
         // fixed budget; a dead network looks exactly like no telemetry
@@ -11504,6 +11608,12 @@ pub fn run() -> eframe::Result {
             // thread while the preview's thread composes on the same device (gpu-errors-survive)
             if let Some(rs) = &cc.wgpu_render_state {
                 kt_gpu::errors::watch(&rs.device, kt_gpu::errors::role::DISPLAY);
+                // ONE device per adapter (stream-picture-stays D2): before anything opens the compute
+                // host, the window's device becomes its device where the backend computes and the host
+                // would pick this adapter, so a Datamosh frame is composed where it was decoded
+                kt_gpu::compute::share_display(&rs.device, &rs.queue, rs.adapter.get_info());
+                let why = kt_gpu::compute::share_refusal(&rs.adapter.get_info(), kt_gpu::compute::compute_pick(&kt_gpu::adapter_facts()));
+                crate::journal::log("GPU", &format!("compute on the window's device: {}", why.unwrap_or("yes")));
             }
             // before the first KtApp: every app of this process takes the same telemetry
             crate::telemetry::install(crate::telemetry::Telemetry::for_process(
@@ -12394,6 +12504,7 @@ mod repaint_tests {
             fx: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         };
         // two OVERLAPPING clips: 1000..3000 and 2500..4000 → one
         // region 1000..4000; the joint inside is not counted as a boundary

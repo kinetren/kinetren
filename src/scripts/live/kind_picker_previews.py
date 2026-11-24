@@ -75,9 +75,7 @@ def main(out):
         b = app.geom()["bin"]
         app.click(app.x_at(9 * SEC), app.ruler_y())
         app.right_click(win["x"] + int((b["left"] + b["right"]) / 2), win["y"] + int(b["bottom"]) - 10)
-        app.click_probe("gen.new", "Create a generator")
-        app.hover_probe("gen.new.group.bg", "the backgrounds group")
-        app.click_probe("gen.new.solid", "Solid colour")
+        app.click_probe("gen.new", "Create a generator (nothing selected: a solid colour)")
         app.expect(app.has_probe("genw.kind.pick"), "the generator's window opened with its Kind field")
         app.click_probe("genw.kind.pick", "the generator's Kind field")
         app.expect(app.has_probe("genw.kind.checker"), "the generator gallery shows a Checker cell")

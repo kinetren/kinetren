@@ -2820,7 +2820,7 @@ Registry: `docs/ktprompts/kkt-26.11.09-index.md` (I1–I4). His files: `fails/26
 | Rules about UI convenience | 5+ (r.8–r.12) | a checklist of 15 items in apps/kt-app/CLAUDE.md |
 | **A window does not fill its area when enlarged ("a needle's eye")** | **"I am tired of reminding" (2026-11-01, and earlier rounds)** | `windows-fill-their-area`: one rule in the window shell (every window resizable, its body fills it, sizes remembered) and a guard over EVERY window that drags its corner (t1125); fixed sizes need a written reason (t1127) |
 | **"The agents did not work"** — a look shipped without anyone looking at it | 2026-11-01 (welcome window, lesson texts, VHS; the camera ISP: noise without its denoiser, defects without their compensation) | open: the 2026-11-01 round |
-| **A form leaves half of its width empty and runs long** | **"СТОЛЬКО РАЗ ПРОСИЛ НАВСЕГДА" (2026-11-07, Camera ISP)** | a guard over every effect form, change `fx-form-width` |
+| **A form leaves half of its width empty and runs long** | **"СТОЛЬКО РАЗ ПРОСИЛ НАВСЕГДА" (2026-11-07, Camera ISP)** | `fx-form-width`: the shared grid flows into columns by the width, groups are cards in columns (`widgets::CardFlow`); the guard lays every effect, transition and generator form out at 420/560/1600 pt and widens every registry window (t3591, t3593, t3593b, t3594, live `form_width`) |
 | **Dead ends: you can create it, you cannot control it** | **7 (r.33–r.40)** | the checklist did not work — the rules were written down and broken. The R.38 tests did not work either: they checked the REACHABILITY of what was made, not its consequence. R.40: a test asserts the observable consequence AND probes from the point where the person acts; for each item — a live scenario |
 | **"You did not check"** | **3 (r.12, r.13, r.40)** | the harness and the model prove nothing: `finish.sh`, a live scenario for each item, a check of the consequence |
 | **One claim sent twice (R.43)** | **2** | the first attempt fixed the symptoms: there was nothing to look at in the model. `kt-cli probe` appeared; for the complaint "sound from another event" it is run FIRST |
@@ -2999,3 +2999,52 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
    что-то, улучшать по спекам. подготавливать архитектурные вещи - спеки. но не выполнять их. выполняют
    только трое." — free executors get work at once; two more sessions only study and prepare
    architecture and specs (proposals, designs, feature notes), never code; three sessions execute.
+
+## 2026-11-20 — his answers to Q1–Q54 (verbatim: `docs/ktprompts/kkt-26.11.20.txt`, rows A1–A26)
+
+1. **Never "proxy".** "не называй это прокси никогда. неудачное название. пусть будет постоянный кэш или
+   что-то такое более компактное. просто кэш тоже нельзя - не понятно что он не в озу." The proxies
+   become an adaptive durable store at the quality the preview plays, rendered better when a better
+   quality is chosen, with a switch "as in the preview" beside it. Its name says it is on disk.
+2. **Everything downloaded is one library.** "все что у нас качается - надо переносить и делать
+   архитектурно в виде некоторой библиотеки, типо как плагины … вот и сделат библиотеку плагинов."
+   FFmpeg on Windows, the speech model, font packs and plugins go through one download library.
+3. **Caches live in a folder of the project, not in one sqlite base.** "у нас не будет все в одной базе
+   sqlite хранится а будет подпапка в папке проекта с разными кешами, вот с тем же превью кэшем".
+   Stored Datamosh history is compressed (LZ4 at least).
+4. **HDR by the project's setting.** "нужно от настроек проекта-композиции определять, если включено то
+   тракт f16 чтобы было нормально, если нет - то быстрый i8".
+5. **A preset of one effect replaces it; a chain preset is joined on the graph** ("мышкой быстро
+   выделить и удалить лишнее или соединить").
+6. **Build now, no measurement first:** shared events, the Datamosh frame on one device, export through
+   dma-buf, the Datamosh history on disk. Card decoding on by default WITH a checkbox in Settings.
+7. **Tracker: point and planar now**, "по умолчанию - самые удобные и точные", a neural wand later.
+8. Every chroma key moves to the new model; multicam gets an "audio follows the angle" option; a "draft
+   render" option may take the preview's prerender; the cached render's index lives inside the video (SEI).
+9. A case he does not follow yet is written down for him to check later (ripple across an edit point,
+   owner-checks C9), not decided over his head.
+
+## 2026-11-20..22 — his answers to the second round (verbatim: `docs/ktprompts/kkt-26.11.20b.txt`, rows B1–B12)
+
+1. **The persistent cache is about EFFECTS first.** "мне не нравится почему ты думаешь только о проигрывании и
+   декоде - А КАК ЖЕ ЭФФЕКТЫ??? У НАС СУТЬ ПО БОЛЬШЕЙ ЧАСТИ В КЭШИРОВАНИИ ЧТОБЫ ЭФФЕКТЫ ТЯЖЕЛЫЕ НЕ СЧИТАТЬ!" A
+   disk cache that only spares decoding misses the point: what it must keep is the result of heavy effects.
+   Its name is "Постоянный кэш".
+2. **Do not cut his words in a question.** Twice in one round a quote shortened his item until it meant something
+   else ("ты подрезал суть", "твоя вырезка фразы моей выглядит очень бессмысленной"). A question quotes the WHOLE
+   item, or the lines around the phrase, and says where it is. "Перемотка" in his fisheye item is the edit's own
+   speed (a speed curve on a composition), not the playhead.
+3. **Loudness is normalized in the project, by the professional path**, not as a render preset.
+4. **A full cache folder writes cyclically**, dropping the oldest, with an alert in the notices.
+5. Dragging a window by the preview: dropped by him.
+
+## 2026-11-22..23 — answers to Q55–Q58 (verbatim: `docs/ktprompts/kkt-26.11.22.txt`, rows D1–D5)
+
+1. **Cache the final preview frame, not stages of a chain.** "делай кеш имменно финального превью а не на каком-то
+   конкретном этапе цепочки fx. у тебя что, после каждой цепочки есть отдельный кэш?!?!? а не дохера ли мы данных
+   сейчас в таком случае храним??" A design that multiplies stores by stage is the wrong answer to "do not compute
+   heavy effects again".
+2. **An example is not the request.** "речь идет не про то как в очередной раз высрать в форму какой-то контролс и
+   соплями смазать код. а про то - как построить ТАКУЮ систему композитинга…" His letter physics is one application
+   of a compositing system; the design is the system and the list of every place in the program it serves.
+3. **No needless copies on a modern machine**: frames to a plugin process go through shared memory (RAM or GPU).

@@ -23,11 +23,11 @@
   and Metal; no CUDA or OpenCL; one text per kernel. The owner's acceleration scope (2026-11-04): all math,
   plain WGSL compute, ARM needed. One device per adapter keeps that: no new API, the same WGSL.
 
-## D1. Measure the crossing (stage 1)
+## D1. The crossing in the trace (evidence; Q1 b: not a gate)
 
 A `StreamCross` trace record per frame read back for a layer: bytes, processor microseconds of the
 row conversion, upload bytes, the kernel or generator id. `kt-cli trace <dir> loop` prints per lap: "stream
-frames crossed: N, X MB, Y ms of a core". The owner's Q1 reads it from his run. No behaviour changes.
+frames crossed: N, X MB, Y ms of a core". It proves the crossing gone (t3821); the owner chose to share without waiting for it.
 
 ## D2. One device per adapter
 
@@ -41,6 +41,15 @@ When the window's backend has compute (Vulkan, DX12, Metal):
 3. `compute::open` installs a `ComputeDevice` over that same device and queue, with its own pool, pipeline
    cache and timestamps, and the same arbiter ring (the ring is per adapter already).
 
+**As built (stage D2):** eframe keeps creating the window's device (`WgpuSetup::CreateNew`, its descriptor
+already asks the pass timer's `TIMESTAMP_QUERY`/`PIPELINE_CACHE`, the same features the compute host asks),
+so its less travelled `Existing` path is not needed. In the app's creation closure, before anything can open
+the compute host, `kt_gpu::compute::share_display` wraps the window's device as the process's one
+`GpuContext`; where `share_refusal` allows (not GL, and the window's adapter is the one `compute_pick`
+would open) the host opens over that same `Arc` (`ComputeDevice::on_context`), and the preview's engine is
+built on it too (`init_video_gpu`), so `held::on`'s pointer compare holds. The trace's machine fact
+`gpu.compute.shares_display` says `yes` or why not. t3817, t3818.
+
 On GL, or when the compute host's adapter differs from the display's (a hybrid laptop whose window is on
 the integrated chip while the compute picks the card), nothing changes: two devices, and the crossing.
 The trace's machine facts say which ("one device per adapter: yes/no, why").
@@ -51,6 +60,21 @@ can be reconfigured. If it cannot, the close path's durability steps still run (
 recovery file and Ctrl+S do not need the GPU.
 
 ## D3. A held layer input
+
+**Found while building (2026-11-20):** the crossing is not only in `render`. The codec's walk reads every
+SHOWN position back into the memo as host planes (`walk::keep` → `read3`, `Put::Lru`), so the prefetch
+thread's walk ahead already crosses for each frame it will show, and `render` then converts the memo's host
+planes to RGBA. Holding the picture means the shown positions stay in the memo's live tier as `HeldPic`
+(device memory, `LIVE_BYTES`) where the host shares the window's device, and the bytes path reads one back
+only when an executor on another device asks.
+
+**As built (task 2.3):** `ComputeHost::holds_pictures` says whether the host's device is the window's
+(`compute::share_display` shared it; a test seam forces it). Only then does the walk keep what it would
+read back into the memo as `HeldPic` — shown positions (LRU) and checkpoints (pinned) alike, in the memo's
+picture tiers under the same bound, the bytes counted as before — and `render_held` give the picture at `n`.
+On two devices (GL, a hybrid laptop) nothing changes: the pictures come back as host planes, as before. The
+memo's bound is the ledger's RAM sizing; on a discrete card these bytes are device memory (risk below).
+`stream::pictures_read` counts what walks read back (t3823).
 
 - `LayerInput` gains `Held(HeldLayer { held: Held, w, h, form: Planes8 | Rgba8, content })`. `content` is
   the same content key the bytes path puts on the layer (the kernel's output key), so every memo key is
@@ -103,7 +127,25 @@ a processor-memory device, and the crossing there is a memcpy (D1 measures it th
 
 Spare: t3823.
 
+## The compute generator's hold (task 2.4): not this change's shape
+
+A stream picture has ONE consumer, the layer's input, built in the plan's common code, so a held form
+there reached every executor with one fallback. A compute generator's frame does not: it is a
+`GenKernel::frame` → `GeneratorSource` → `VideoFrame` in the burst cache, read by the frame blending
+(`dissolve_into`, the processor's), the reel strips and posters, the thumbnails and the effect cells, the
+coverage bars, the export's chunks — each a processor reader of the bytes. Holding it means a held form
+of `VideoFrame` in the cache with a fallback at every one of those readers, a change of the cache's and
+the source's contract (kt-cache, kt-media), not of the plan. Left open with that scope; the crossing it
+would save is one read back and one upload of an RGBA frame per generator frame shown, which the trace's
+`stream_cross` does not count (only stream pictures are), so its cost is not measured yet either.
+
 ## Risks
+
+- **Device memory on a card:** with the host sharing the window's device, the stream memo's pictures
+  live in device memory under a bound the memory ledger sized from the processor's memory. On an
+  integrated chip or a software adapter they are the same memory; on a discrete card a large memo may
+  ask more than the card holds — a device refusal is a job failure (the kernel's no-device path), not a
+  crash. Not measured on a card yet.
 
 - **eframe's existing-device path is less travelled** than `CreateNew`. The surface's format and present
   modes are eframe's choice either way. t3818 runs the setup headless with a surface-less device.

@@ -253,6 +253,7 @@ fn t2559_an_open_gallery_of_a_heavy_event_costs_nothing_at_rest() {
         fx,
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     p.clips.push(clip(1, 0, vec![mosh, FxInstance::plugin("vhs_tape").expect("vhs_tape")]));
     p.validate().unwrap();
@@ -334,6 +335,7 @@ fn t2813_an_open_render_settings_window_costs_nothing_at_rest() {
         fx,
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
@@ -413,6 +415,7 @@ fn t3003_an_open_node_editor_costs_nothing_at_rest() {
         fx,
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
@@ -479,4 +482,111 @@ fn t3236_an_open_track_pair_costs_nothing_at_rest() {
         h.step();
     }
     assert!(next_repaint(&h) > Duration::from_secs(3600), "after a hover the track pair asks for a frame in {:?}", next_repaint(&h));
+}
+
+/// Test t3822 (stream-picture-stays D2, D3): a paused Datamosh moment on one device costs nothing at
+/// rest. The compute host holds the mosh's pictures and the preview composes on its device; once the
+/// history is walked and the frame shown, a pointer moving over the preview walks no position, composes
+/// nothing, submits nothing to the device, runs no prefetch pass, and no frame is asked.
+/// - **PATH** the heavy showcase with a Datamosh loop → Space plays a lap → Space stops → the mouse
+///   rests, then moves over the preview → nothing redraws or walks by itself
+#[test]
+fn t3822_a_paused_mosh_on_one_device_costs_nothing() {
+    use kt_model::*;
+    use kt_time::work::{count, Work};
+    crate::plugins::install();
+    kt_plugin_api::compute::install(kt_gpu::compute::open);
+    kt_gpu::compute::hold_pictures_for_tests();
+    let Some(engine) = kt_gpu::front_on_compute() else {
+        eprintln!("skipped: no compute device");
+        return;
+    };
+    let mut h = rest_harness();
+    let app = h.state_mut();
+    // the first sync only records the paths; the second (below) raises the new source on the player
+    app.model_rev += 1;
+    app.sync_media_sources();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    let mut mosh = FxInstance::plugin("datamosh").expect("datamosh");
+    for (name, v) in [("lines", 0.0), ("before", 12.0), ("mosh", 1.0), ("gop", 12.0)] {
+        assert!(mosh.set_param(name, v), "{name}");
+    }
+    let clip = |id: u64, start: i64, fx: Vec<FxInstance>| ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
+        overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
+        masks: Default::default(),
+        id: ClipId(id),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: kt_time::Tick(start),
+        duration: kt_time::Tick(90_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx_bypass: vec![],
+        fx_in: vec![],
+        fx_auto: vec![],
+        fx,
+        opacity: 1.0,
+        fx_off: false,
+    };
+    p.clips.push(clip(1, 0, vec![]));
+    p.clips.push(clip(2, 90_000, vec![mosh]));
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.model_rev += 1;
+    app.sync_media_sources();
+    app.push_project_to_player();
+    app.player.set_video_gpu(Some(engine as std::sync::Arc<dyn kt_engine::VideoGpuExec>));
+    app.player.seek(kt_time::Tick(120_000));
+    app.preview_key = None;
+
+    // the history walks and the frame comes: the walk first — a run of still counters before it is
+    // a source still loading under load, not rest (found-defects 950's class)
+    let snapshot = || {
+        (
+            kt_plugin_api::stream::positions_walked(),
+            count(Work::Composite),
+            count(Work::DeviceSubmit),
+            count(Work::PrefetchPass),
+        )
+    };
+    let deadline = kt_time::test_deadline();
+    while kt_plugin_api::stream::positions_walked() == 0 || h.state().preview_catching_up > 0 {
+        // the harness hears no wake (`wake::news` is 0 under test): the frame the walk completes is
+        // asked again here, as the program's wake asks it
+        h.state_mut().preview_key = None;
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(std::time::Instant::now() < deadline, "the history was never walked to a complete frame");
+    }
+    // then nothing moves for a while
+    let (mut last, mut still) = (snapshot(), 0);
+    while still < 25 {
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+        let now = snapshot();
+        still = if now == last { still + 1 } else { 0 };
+        last = now;
+        assert!(std::time::Instant::now() < deadline, "the paused mosh never came to rest");
+    }
+    // at rest, the pointer over the preview
+    for i in 0..60 {
+        h.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(600.0 + (i % 30) as f32 * 4.0, 200.0)));
+        h.step();
+    }
+    assert_eq!(snapshot(), last, "a moving pointer walked, composed, submitted or passed (walked, composites, submits, passes)");
+    // the pointer stops: a hover's own frames end, and nothing asks another
+    for _ in 0..6 {
+        h.step();
+    }
+    assert!(next_repaint(&h) > Duration::from_secs(3600), "a program at rest asks for a frame in {:?}", next_repaint(&h));
+    assert_eq!(snapshot(), last, "the rest after the pointer ran work");
 }

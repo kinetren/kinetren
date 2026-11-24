@@ -56,6 +56,11 @@ legacy effects get a parameter audit. Note F-FX-019.
 
 ## Questions to the owner
 
+Decided (2026-11-20, `kkt-26.11.20` A24, his Q44–Q45): "Старые отражают как раньше, остальное потом" — Q1 (a), old
+Mirrors keep flipping, a new one reflects; Q2 (a), the rest of the audit as ranked rows, built later.
+
+The questions as asked:
+
 **Q1. A Mirror added from now on reflects; old Mirrors keep flipping?** Your words: "в sony vegas можно
 назначить угол отражения". Today's Mirror flips the whole frame (v1's port); Vegas/AE reflect across a line.
 - (a) **Old slots keep the flip; a new Mirror starts in reflect mode (angle 90°, centre in the middle); the

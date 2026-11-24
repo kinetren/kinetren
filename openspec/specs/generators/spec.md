@@ -328,14 +328,14 @@ track a person clicked.
 
 #### Scenario: One list of kinds for all entries
 - **WHEN** the File menu, the Edit menu, the clip track menu and the bin menu are checked
-- **THEN** File has no generator item; Edit, the track menu and the bin call the common generators menu and do not enumerate `GeneratorKind::all()` themselves
-- **PATH** click "File" → no "Create a generator" row; click "Edit" → "Create a generator" → the groups, Audio among them; right click on a track → the same item first; right click on the bin's empty background → the same item
+- **THEN** File has no generator item; Edit, the track menu and the bin draw the one plain "Create a generator…" item (`gen_ui::generator_item`) and enumerate no kinds; the kind is picked in the window's gallery (kkt-26.11.20 A1)
+- **PATH** click "File" → no "Create a generator" row; click "Edit" → one "Create a generator…" item, no groups; right click on a track → the same item first; right click on the bin's empty background → the same item
 - **TEST** t560 (`src/apps/kt-app/src/reach_tests.rs`)
 
 #### Scenario: Edit creates at the cursor
-- **WHEN** Edit → "Create a generator" → Audio → Tone is picked with the cursor at 3 s
-- **THEN** one history step adds the media and ONE audio clip at 3 s on audio track 1 (no video clip), and the form opens on it
-- **PATH** click "Edit" → hover "Create a generator" → hover "Audio" → click "Tone" → an audio event "Tone" appears under the cursor on the first audio track, its form opens at the head of the effects window
+- **WHEN** an event of audio track 2 is selected and Edit → "Create a generator…" is pressed with the cursor at 3 s
+- **THEN** one history step adds the media and ONE audio clip, a tone, at 3 s on audio track 2 — the selected track (no video clip) — and the form opens on it
+- **PATH** click an event on audio track 2 → click "Edit" → click "Create a generator…" → an audio event "Tone" appears under the cursor on that audio track, its form opens at the head of the effects window
 - **TEST** t1164 (`src/apps/kt-app/src/gen_audio_tests.rs`)
 
 #### Scenario: The track menu creates at the clicked place
@@ -533,9 +533,9 @@ tone/noise".
 - **TEST** t3701 (`src/libs/kt-media/tests/gen_technical.rs`)
 
 #### Scenario: Reached from Edit and captioned
-- **WHEN** Sync flash and Safe areas are created from Edit › Create a generator › Signal check; the catalogs are read
+- **WHEN** Sync flash and Safe areas are created from Edit › Create a generator… and picked in the window's Kind gallery; the catalogs are read
 - **THEN** the flash is a picture event and its beep on A1, the guides a picture event; every number and flag row has a caption in all five languages
-- **PATH** Edit → Create a generator… → Signal check → Sync flash / Safe areas
+- **PATH** Edit → Create a generator… → its window → Kind → Sync flash / Safe areas
 - **TEST** t3702 (`src/apps/kt-app/src/gen_audio_tests.rs`)
 
 ### Requirement: A title runs a timecode, a stopwatch or a countdown
@@ -563,7 +563,7 @@ controlled as text).
 #### Scenario: The window chooses the source
 - **WHEN** a Text generator is created from Edit and its source set to Countdown in its window; then back to the typed text
 - **THEN** the source is a countdown; the Format row and the Start field show; with the typed text the Start field is gone while the grid is in view; every new text exists in all five catalogs
-- **PATH** Edit → Create a generator… → Titles and countdown → Text → Text: Countdown → Format: 1:05 … and Start (s) appear → Text: Typed → they go
+- **PATH** Edit → Create a generator… → its window → Kind → Text → Text: Countdown → Format: 1:05 … and Start (s) appear → Text: Typed → they go
 - **TEST** t3705 (`src/apps/kt-app/src/gen_audio_tests.rs`)
 
 ### Requirement: The moving backgrounds
@@ -581,9 +581,9 @@ like in the 90s.
 - **TEST** t3707 (`src/libs/kt-media/tests/gen_backgrounds.rs`), live scenario `src/scripts/live/gen_backgrounds.py` (`./scripts/live-check.sh`)
 
 #### Scenario: Reached from Edit and captioned
-- **WHEN** each is created from Edit › Create a generator › Background; the catalogs are read
+- **WHEN** each is created from Edit › Create a generator… and picked in the window's Kind gallery; the catalogs are read
 - **THEN** each is one picture event of its kind; every number, flag and choice row, every colour and the pattern's four choices are captioned in all five languages
-- **PATH** Edit → Create a generator… → Background → Moving gradient / Plasma / Particles / Pattern
+- **PATH** Edit → Create a generator… → its window → Kind → Moving gradient / Plasma / Particles / Pattern
 - **TEST** t3708 (`src/apps/kt-app/src/gen_audio_tests.rs`)
 
 ### Requirement: The shapes and plates
@@ -602,7 +602,48 @@ progress bar".
 - **TEST** t3709 (`src/libs/kt-media/tests/gen_shapes.rs`), live scenario `src/scripts/live/gen_shapes.py` (`./scripts/live-check.sh`)
 
 #### Scenario: Reached from Edit, captioned, each colour its own alpha
-- **WHEN** each is created from Edit › Create a generator › Shapes; the passports and colour groups are read
+- **WHEN** each is created from Edit › Create a generator… and picked in the window's Kind gallery; the passports and colour groups are read
 - **THEN** each is one picture event of its kind; every row is captioned in five languages; every colour component, the alphas of two-colour kinds included, lands in its own eyedropper
-- **PATH** Edit → Create a generator… → Shapes → Progress bar → its window: Track and Fill, each with its eyedropper and transparency
+- **PATH** Edit → Create a generator… → its window → Kind → Progress bar → its window: Track and Fill, each with its eyedropper and transparency
 - **TEST** t3710 (`src/apps/kt-app/src/gen_audio_tests.rs`), t508 (`src/apps/kt-app/src/reach_tests.rs`)
+
+### Requirement: An audio-reactive generator listens to a track's files
+The Waveform, Spectrum and Level rings generators SHALL draw what the audio track named by their
+"Hears track" row sounds like, from an analysis series of each FILE on that track. The series has one
+record per audio burst (the RMS of each channel, the peak, 16 log bands and 32 waveform points) and
+SHALL be a pure function of the file's decoded sound. It SHALL be computed in the background from a
+short-lived source of the job's own, kept behind one store seam (today the sidecar, cleared when the
+file changes), and keyed by the file. The generator's state SHALL carry its FEED, built by
+`gen_sources`: the pieces of series it hears, in its own material time. A series that arrives, a moved
+or replaced event, or another track SHALL retune the source and move the frame's keys (`src_rev`, the
+event memo). A render SHALL compute every missing series before its first frame. A frame SHALL read the
+values at its moment and the same values held over the last half second, as a fold over the series, so
+the picture is a function of the time alone. The visualizer SHALL hear the raw file at the event's
+plain material time, not the mix after effects (owner question Q55).
+Why: `v26.10` G5, the audio-reactive group; the orchestrator's choice of option (a), 2026-11-20.
+
+#### Scenario: The series is pure and kept by the file
+- **WHEN** a 2 s 1 kHz sine is analysed twice, stored in a sidecar, read back, and the file changes
+- **THEN** one record per burst, the same bytes twice, the level of a −9 dBFS RMS sine, the store gives the same hash without opening the file, a changed file has none, a stop keeps nothing
+- **TEST** t3714 (`src/libs/kt-media/tests/listen.rs`)
+
+#### Scenario: The feed follows the track it hears
+- **WHEN** a waveform on V1 over 0..8 s hears A1, where a music event lies at 2..6 s from its 1 s; the series becomes known; the event moves; the waveform hears track 2
+- **THEN** no series — no piece; then one piece 2..6 s heard at the file's 1..5 s; the piece and the feed's key follow the event; track 2 hears nothing
+- **TEST** t3715 (`src/libs/kt-engine/tests/listen.rs`)
+
+#### Scenario: A reactive frame follows the sound and only it
+- **WHEN** each reactive kind hears a sine for 0..2 s and is drawn at 1 s and at 3 s
+- **THEN** the two frames differ, the same moment gives the same bytes, the spectrum and the rings light more while it sounds, and a kind hearing nothing draws the silent frame
+- **TEST** t3716 (`src/libs/kt-media/tests/gen_reactive.rs`)
+
+#### Scenario: The reactive kinds are created and captioned
+- **WHEN** Waveform, Spectrum and Level rings are picked in a new generator's Kind gallery
+- **THEN** each is one picture event in the group "Reacts to sound", its window shows "Hears track"; every row, flag, choice and colour is captioned in five languages
+- **PATH** Edit → "Create a generator…" → its window → Kind → Reacts to sound → Waveform / Spectrum / Level rings → a picture event at the cursor, its window with "Hears track 1" first
+- **TEST** t3718 (`src/apps/kt-app/src/gen_audio_tests.rs`), t1163 (`src/apps/kt-app/src/gen_audio_tests.rs`), live scenario `src/scripts/live/gen_reactive.py` (`./scripts/live-check.sh`)
+
+#### Scenario: A render computes what its generators hear first
+- **WHEN** a render prepares a project whose waveform hears a file the registry lacks; then again; then a stopped one; then a missing file
+- **THEN** the series is computed once from a source of its own and stored, the generator hears it, the second preparation opens nothing, the stopped one keeps nothing, the missing file is silence
+- **TEST** t3719 (`src/libs/kt-engine/tests/listen.rs`)

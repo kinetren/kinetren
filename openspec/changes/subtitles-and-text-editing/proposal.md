@@ -79,6 +79,13 @@ SRT/VTT, no recognition, no transcript. Note F-TXT-004 rejected bundled model we
 
 ## Questions to the owner
 
+Decided (2026-11-20, `kkt-26.11.20` A11, his Q14–Q16): Q1–Q3 (a) — whisper.cpp with a model pinned by sha256, the
+Text tab beside the bin, font packs on a click; and "все что у нас качается - надо переносить и делать архитектурно
+в виде некоторой библиотеки, типо как плагины": every download (the recognizer, its models, the font packs) goes
+through one library of downloads, designed in its own change `download-library`.
+
+The questions as asked:
+
 **Q1. Which recognizer is downloaded?** Your words (2026-11-01): "speech to text … мне нужна возможность
 "ходить" по этому тексту". Taken: local, a Whisper-class model downloaded on a click as FFmpeg on
 Windows. Today: nothing. FFmpeg 8 has a `whisper` filter only when built with whisper.cpp — most Linux

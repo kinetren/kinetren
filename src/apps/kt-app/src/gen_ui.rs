@@ -22,36 +22,27 @@ use eframe::egui;
 use kt_model::{GeneratorKind, HasParams, TextAlign, TextAnchor};
 
 /// The localized name of the kind. Full paths — test 125 looks up the key by them.
-/// The “Create generator…” submenu — ONE BODY for all entries (rule 17).
-///
-/// R.53: there are nineteen kinds, and a flat list of them is a mess. A group is a FUNCTION of the kind (`GenGroup::of`),
-/// there is no second list: a new kind gets into the menu by itself. The rectangles of items and groups are exposed
-/// for live scenarios (R.49): a submenu is not searched in the accessibility tree.
-///
-/// R.55 (C4 claim 8): the entry point is no longer the only one.
-/// Previously the generator was created ONLY by a right click
-/// on the empty background of the bin — “I don’t know how to
-/// create a media generator; the code exists, but how to create
-/// it in the UI is unclear”. Now the same list hangs in the
-/// main menu too, and no second list of kinds was created for it.
-pub fn generator_menu(ui: &mut egui::Ui) -> Option<GeneratorKind> {
-    generator_kind_menu_keyed(ui, tr(k::bin::menu::NEW_GENERATOR), Some(k::bin::menu::NEW_GENERATOR))
-}
-
-/// "Create a generator…" on a clip track's right-click menu (generator-from-track, `v26.10` G1): ONE
-/// plain item — "Не вижу смысла делать выпадающие меню с перечислением всех видов … Достаточно в самом
-/// окне менять тип". It gives the first kind that lands on the track (a solid colour on a video track,
-/// a tone on an audio one); the window it opens picks the kind in its gallery (G6).
-pub fn generator_item_for(ui: &mut egui::Ui, stream: kt_model::ClipKind) -> Option<GeneratorKind> {
+/// "Create a generator…" — ONE plain item, wherever it is drawn (rule 17): a track's right-click
+/// menu, the Edit menu and the bin's empty-space menu. The owner on the track menu
+/// (generator-from-track, `v26.10` G1: no submenu listing every kind, the kind is changed in the
+/// window); on Edit and the bin (kkt-26.11.20 A1): one item, by the track. The item gives the first kind that lands on the track; the window it opens picks the
+/// kind in its gallery (G6). True when clicked.
+pub fn generator_item(ui: &mut egui::Ui) -> bool {
     let r = ui.button(tr(k::bin::menu::NEW_GENERATOR));
     crate::widgets::field_probe::note("gen.new", r.rect);
     crate::widgets::lesson_mark::item(ui, k::bin::menu::NEW_GENERATOR, r.rect);
-    if !r.clicked() {
-        return None;
-    }
+    r.clicked()
+}
+
+/// The first kind that lands on a track of `stream`: a solid colour on video, a tone on audio.
+pub fn first_kind_for(stream: kt_model::ClipKind) -> Option<GeneratorKind> {
     GeneratorKind::all().into_iter().find(|kd| lands_on(kd, stream))
 }
 
+/// The track menu's item: [`generator_item`] with the clicked track's first kind.
+pub fn generator_item_for(ui: &mut egui::Ui, stream: kt_model::ClipKind) -> Option<GeneratorKind> {
+    if generator_item(ui) { first_kind_for(stream) } else { None }
+}
 
 /// The same menu under another caption: “create” and “change kind” — ONE list of kinds (rule 17),
 /// and a new kind reaches both entries by itself.
@@ -166,11 +157,13 @@ pub(crate) enum GenGroup {
     Check,
     /// The sound kinds (generators-placement-and-audio).
     Audio,
+    /// The audio-reactive kinds (gen-audio-reactive): pictures that hear a track.
+    Reactive,
 }
 
 impl GenGroup {
-    pub(crate) const ALL: [GenGroup; 5] =
-        [GenGroup::Background, GenGroup::Shapes, GenGroup::Titles, GenGroup::Check, GenGroup::Audio];
+    pub(crate) const ALL: [GenGroup; 6] =
+        [GenGroup::Background, GenGroup::Shapes, GenGroup::Titles, GenGroup::Check, GenGroup::Reactive, GenGroup::Audio];
 
     pub(crate) fn name(self) -> &'static str {
         tr(self.key())
@@ -184,6 +177,7 @@ impl GenGroup {
             GenGroup::Titles => k::genkind::GROUP_TITLES,
             GenGroup::Check => k::genkind::GROUP_CHECK,
             GenGroup::Audio => k::genkind::GROUP_AUDIO,
+            GenGroup::Reactive => k::genkind::GROUP_REACTIVE,
         }
     }
 
@@ -196,6 +190,7 @@ impl GenGroup {
             GenGroup::Titles => "titles",
             GenGroup::Check => "check",
             GenGroup::Audio => "audio",
+            GenGroup::Reactive => "reactive",
         }
     }
 
@@ -697,6 +692,7 @@ pub fn draw_gen_section(
                 }
             });
         crate::widgets::field_probe::note("genw.kind.pick", combo.response.rect);
+        crate::widgets::lesson_mark::control(ui, "genw.kind", &combo.response);
     });
     if out.switch_kind.is_some() {
         // the kind goes away entirely — there is no point drawing the old form any further
@@ -887,6 +883,10 @@ pub(crate) fn choice_label(row: &str, key: &str) -> Option<&'static str> {
         ("pattern", "dots") => tr(k::genc::DOTS),
         ("pattern", "grid") => tr(k::genc::GRID),
         ("pattern", "waves") => tr(k::genc::WAVES),
+        ("style", "line") => tr(k::genc::STYLE_LINE),
+        ("style", "filled") => tr(k::genc::STYLE_FILLED),
+        ("style", "mirror") => tr(k::genc::STYLE_MIRROR),
+        ("style", "bars") => tr(k::genc::STYLE_BARS),
         _ => return None,
     })
 }

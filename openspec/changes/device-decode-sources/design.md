@@ -151,8 +151,16 @@ would be a different filter and different bytes (rejected).
 
 ## D6. The export
 
-The export's sources (`render_dialog.rs`, kt-cli `export`) open through the same factory call as the
-preview's, so they decode on the device under the same rules. Invariant 11: by D1 the bytes are those
+Today the sources open at four places, not one:
+- the preview: `util.rs:38` → `kt_media::factory::open_indexed`;
+- the render window: `render_dialog.rs` `open_all` → `FfmpegSource::open` (no index);
+- kt-cli export: `open_render_sources` → `FfmpegSource::open_indexed`;
+- kt-cli's other commands: `open_sources` → `FfmpegSource::open_indexed`.
+
+This change routes all four through one factory call, `factory::open_source(path, db, Purpose::{Preview,
+Export})`, so the device rule (D2) and the setting (D11) are decided in one place. The render window gains
+the index as a side effect: its sources stop rescanning a file the index holds. Thumbnails, the filmstrip
+and stills keep their own software opens (D9). Invariant 11: by D1 the bytes are those
 of the processor's decode, so two runs on one device are equal AND an export on a machine without a
 device equals one with it (stronger than required). The export's stage profile adds the pictures per
 decoder kind and the transfer time (`ExportStage` decode record's aux), so a slow export can be read.
@@ -203,6 +211,24 @@ It stays the next step if the owner's trace shows the transfer, not the decode, 
 | The memory ledger | changed | tenant `Surfaces` (D4) |
 | The GPU arbiter | unchanged | the decode block is a separate engine; it shares memory bandwidth, not shader time; the trace will show if it matters |
 | The export's encoder device | unchanged | its own context (D3) |
+
+## D11. The setting (the owner's Q2 b)
+
+- **The switch:** Preferences (`prefs_window.rs`), FFmpeg section, the checkbox "Decode video on the card",
+  on by default. It follows the Economy checkbox's pattern:
+  - `StartChoice.decode_on_card: bool` in `user_store.rs`, default `true`, loaded and saved with the rest;
+  - the setter `set_decode_on_card` is added to t1294's list of the store's writers;
+  - a `field_probe::note("prefs.decode_on_card")` and a hint line.
+- **The bit:** a process-wide atomic in kt-ffmpeg, `set_decode_device(bool)` beside `set_decode_threads`
+  (lib.rs). It is set from the store at start and on every toggle. `KT_DECODE_DEVICE=off|on` in the
+  environment wins, for A/B runs and tests.
+- **The effect:** read when a decoder is opened. A toggle reaches decoders opened after it; the player
+  reopens its sources on the toggle (the same path as a returned file, `replace_media`). An export reads
+  the bit at its start.
+- **What the person sees:** the Diagnostics line, "Decoding on the card: N files; on the processor: M
+  (why)", in `draw_diagnostics` beside the memory ledger lines. When the box is off it says "off in
+  Settings".
+- The choice cannot change a frame (D1), so it is a speed switch, not a look.
 
 ## D10. Stages
 

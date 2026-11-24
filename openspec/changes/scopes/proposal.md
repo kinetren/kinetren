@@ -66,6 +66,11 @@ nothing in the picture.
 
 ## Questions to the owner
 
+Decided (2026-11-20, `kkt-26.11.20` A8, his Q6–Q7): "Окно, кадр превью" — Q1 (a), a Scopes window; Q2 (a), the
+preview frame while playing, the full-size frame once on a pause.
+
+The questions as asked:
+
 **Q1. Where do the scopes live?** Your words (candidate ★8): "Нужны waveform, RGB-parade,
 вектороскоп, гистограмма и false color по кадру превью или по событию." Your rule R.63 (UI rule
 22): "I am putting a ban on any agents producing any additional windows without an obvious purpose."

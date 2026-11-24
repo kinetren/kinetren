@@ -57,12 +57,14 @@ NO_WAKE_THREADS = (
 # process (cpal's ALSA worker, PipeWire's data loop) wakes; before, the open device woke ~24 and ~48
 # times a second handing out silence
 AUDIO_THREADS = ("audio-output", "cpal_alsa_out", "pw-data-loop", "alsa-pipewire")
+# the sound server client's protocol loop: it answers the server's broadcasts to every client
+SERVER_CLIENT = "alsa-pipewire"
 
 
 def sound_stands(pid, window=0.5):
     """No thread of the sound output woke over `window` seconds (a paused or closed device)."""
     def sound(tw):
-        return {k: v for k, v in tw.items() if k.split("#")[0].startswith(AUDIO_THREADS)}
+        return {k: v for k, v in tw.items() if k.split("#")[0].startswith(AUDIO_THREADS) and not k.startswith(SERVER_CLIENT)}
     a = sound(thread_wakes(pid))
     kt_live._poll(window)
     b = sound(thread_wakes(pid))
@@ -254,14 +256,19 @@ def main(out):
         app.until(lambda: sound_stands(pid), timeout=10.0)
         wait_quiet(meter, "after the play")
         tw0 = thread_wakes(pid)
+        cb0 = app.geom().get("sound_callbacks", 0)
         kt_live._poll(5.0)
         tw1 = thread_wakes(pid)
+        cb1 = app.geom().get("sound_callbacks", 0)
         woken = {k: v - tw0.get(k, 0) for k, v in tw1.items() if v - tw0.get(k, 0) > 0}
-        print(f"   pause after a play, 5 s: threads that woke {woken}")
+        print(f"   pause after a play, 5 s: threads that woke {woken}, device callbacks {cb1 - cb0}")
         # the sound's threads only: the engine's are judged on the pause above, and right after a
-        # play under load a late composite or a trace flush may still land once
-        sound = {k: v for k, v in woken.items() if k.split("#")[0].startswith(AUDIO_THREADS)}
-        app.expect(not sound, f"a pause after a play wakes the sound: {sound}")
+        # play under load a late composite or a trace flush may still land once. The sound server's
+        # client loop (`alsa-pipewire`) is not ours: it wakes for what the server tells every client —
+        # another program's stream opening on the same server (found-defects 963: a parallel scenario's
+        # Play woke it four times) — so the paused stream is judged by its callbacks into the program
+        sound = {k: v for k, v in woken.items() if k.split("#")[0].startswith(AUDIO_THREADS) and not k.startswith(SERVER_CLIENT)}
+        app.expect(not sound and cb1 == cb0, f"a pause after a play wakes the sound: {sound}, callbacks {cb1 - cb0}")
 
         g = app.geom()
         win = kt_live.geometry()

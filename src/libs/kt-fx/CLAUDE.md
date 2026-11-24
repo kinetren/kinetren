@@ -376,3 +376,14 @@ frozen form follow from `FxInstance::all()`; the semantic test — in geo_fuse (
   feather alike.
 - The coverage is uploaded; `kt-gpu` applies it in integers (`mask.wgsl`, the coverage branch of
   `layer_mix.wgsl`). `MaskOp`/`mask_space`/`mask_stops` are the plan's door. The memo is keyed by the full Debug text, bounded to 16.
+
+## Effect graphs in the plan (fx-graph-dag D3)
+
+- **`lower(fx, fx_in)` is the one lowering**: a value read by anything but the previous LIVE slot's
+  next main input is held right after it is made; a slot whose main input is not the current frame
+  loads it; a register is free after its last reader; a slot that reaches no Output is skipped; a
+  Merge with no Foreground passes its Background. A line (canonical: the empty list) lowers to
+  `None`, and `plan_graph_in(.., None, ..)` is `plan_chain_in` op for op.
+- **Every graph position is a stop** (`Lowered::cuts`): geometry series, point-wise runs and K×
+  barriers fuse only between them, the K accumulators zero there, a merge runs at 1×. Phases A and D
+  track a register's SIZE: a `Load` makes it current again. t3203.

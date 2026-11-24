@@ -123,10 +123,30 @@ pub fn compiling(from: i64, to: i64, f: impl FnOnce() -> usize) {
 /// checkpoints it kept.
 pub fn walked(first: i64, positions: usize, reads: u64, checkpoints: u32) {
     WALKED.fetch_add(positions as u64, std::sync::atomic::Ordering::Relaxed);
+    PICTURES_READ.fetch_add(reads, std::sync::atomic::Ordering::Relaxed);
     kt_time::trace::ev(kt_time::trace::Ev::StreamWalk).a(first as u64).b(positions as u64).c(reads).aux(checkpoints).emit();
 }
 
 static WALKED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static PICTURES_READ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Where a picture crossed (`cross`'s `aux`): the kernel's bytes path, or an executor's read back.
+pub use kt_time::trace::cross as cross_where;
+
+/// A stream picture crossing the bus to be composed (stream-picture-stays D1): `read` bytes back from
+/// the device, `up` handed to the composite to upload; the span covers the processor's conversion.
+/// `aux` is `kt_time::trace::cross`'s where.
+pub fn cross(read: u64, up: u64, aux: u32) -> kt_time::trace::Span {
+    let mut s = kt_time::trace::span(kt_time::trace::Ev::StreamCross);
+    s.a(read).b(up).aux(aux);
+    s
+}
+
+/// Pictures every walk of the process read back from the device so far (stream-picture-stays D3: a
+/// host that holds pictures reads none back for what it shows).
+pub fn pictures_read() -> u64 {
+    PICTURES_READ.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// History positions every walk of the process computed so far: the host's sign of progress
 /// (gpu-throughput D3 — a look-ahead that computed nothing over several passes stops retrying).
@@ -194,6 +214,42 @@ pub struct StreamOut {
     pub key: u64,
 }
 
+/// A render left on the compute host's device (stream-picture-stays D3): three 8-bit planes, luma
+/// `pw`×`ph` (padded) and chroma half of it in each direction, the picture cropped to `w`×`h`, and its
+/// key as [`StreamOut::key`]. Its RGBA is [`planes_to_rgba`] of the planes.
+#[derive(Debug, Clone)]
+pub struct HeldStreamOut {
+    pub planes: [crate::compute::Held; 3],
+    pub pw: u32,
+    pub ph: u32,
+    pub w: u32,
+    pub h: u32,
+    pub key: u64,
+}
+
+/// Three 8-bit planes (luma `pw` wide, chroma `pw / 2` wide, half the rows) to opaque RGBA cropped to
+/// `w`×`h`, chroma by nearest neighbour, in integer arithmetic (stream-round-trips D5): the one
+/// conversion a stream's picture takes, on the processor here and as the device pass in kt-gpu, so the
+/// two give the same bytes (stream-picture-stays D3, invariant 11).
+pub fn planes_to_rgba(y: &[u8], cb: &[u8], cr: &[u8], pw: usize, w: usize, h: usize, out: &mut Vec<u8>) {
+    out.clear();
+    out.resize(w * h * 4, 255);
+    let cw = pw / 2;
+    for (yy, row) in out.chunks_exact_mut((w * 4).max(1)).enumerate().take(h) {
+        let ys = &y[yy * pw..yy * pw + w];
+        let cbs = &cb[(yy / 2) * cw..(yy / 2) * cw + w.div_ceil(2)];
+        let crs = &cr[(yy / 2) * cw..(yy / 2) * cw + w.div_ceil(2)];
+        for (xx, (o, &l)) in row.chunks_exact_mut(4).zip(ys).enumerate() {
+            let l = l as i32;
+            let cb = cbs[xx / 2] as i32 - 128;
+            let cr = crs[xx / 2] as i32 - 128;
+            o[0] = (l + ((359 * cr + 128) >> 8)).clamp(0, 255) as u8;
+            o[1] = (l - ((88 * cb + 183 * cr + 128) >> 8)).clamp(0, 255) as u8;
+            o[2] = (l + ((454 * cb + 128) >> 8)).clamp(0, 255) as u8;
+        }
+    }
+}
+
 /// A stream kernel (`VideoClass::Stream`).
 pub trait StreamKernel: Send + Sync {
     /// The encoded height: the host's `StreamLayout::coded` is `coded_size(lines, the layer's size)`.
@@ -243,6 +299,13 @@ pub trait StreamKernel: Send + Sync {
         memo: &StreamMemo,
         out: &mut Vec<u8>,
     ) -> Option<StreamOut>;
+    /// Frame `n` left where the compute host made it (stream-picture-stays D3), for an executor on
+    /// that device to convert there; `None` — not held (no host keeping buffers, a picture finished on
+    /// the processor), and the host asks [`StreamKernel::render`]. A frame this gives, `render` gives as
+    /// [`planes_to_rgba`] of the same planes.
+    fn render_held(&self, _p: &[f64], _input: &dyn StreamInput, _n: i64, _memo: &StreamMemo) -> Option<HeldStreamOut> {
+        None
+    }
 }
 
 /// One memo entry: opaque to the host, sized for the bound.
@@ -259,6 +322,8 @@ struct Entry {
     /// Admitted while the memo was full of the loop's own laps (stream-memo-budget): it lives in the
     /// window past the part of the loop the memo keeps, and goes first.
     probation: bool,
+    /// It lies in the compute device's memory (`put_device`, stream-picture-stays D3).
+    device: bool,
 }
 
 /// The newest transient entries the eviction spares like any other: what the next step still reads
@@ -313,6 +378,9 @@ struct MemoInner {
     pinned: usize,
     /// Of `bytes`, the window's (`Entry::probation`).
     probation: usize,
+    /// Of `bytes`, the compute device's (`Entry::device`), and what the trace last said of it.
+    device: usize,
+    device_traced: usize,
     clock: u64,
     /// A loop is kept (`keep_loop`).
     looping: bool,
@@ -386,7 +454,43 @@ impl StreamMemo {
         self.put_entry(key, v, bytes, false, Some(rank));
     }
 
+    /// `put` of a value that lies in the compute device's memory (stream-picture-stays D3): bounded and
+    /// evicted as any picture, its bytes also named as the device's (`device_bytes`, the trace's
+    /// `stream_held`).
+    pub fn put_device<T: Any + Send + Sync>(&self, key: u64, v: Arc<T>, bytes: usize) {
+        self.put_entry_on(key, v, bytes, false, None, true);
+    }
+
+    /// `put_transient` of a value in the compute device's memory.
+    pub fn put_transient_device<T: Any + Send + Sync>(&self, key: u64, v: Arc<T>, bytes: usize) {
+        self.put_entry_on(key, v, bytes, true, None, true);
+    }
+
+    /// `put_pinned` of a value in the compute device's memory.
+    pub fn put_pinned_device<T: Any + Send + Sync>(&self, key: u64, v: Arc<T>, bytes: usize, rank: u32) {
+        self.put_entry_on(key, v, bytes, false, Some(rank), true);
+    }
+
+    /// Of the bytes held, those in the compute device's memory.
+    pub fn device_bytes(&self) -> usize {
+        self.lock().device
+    }
+
+    /// The account and, when the device's bytes moved by a megabyte since the trace last said, a
+    /// `stream_held` record (his trace answers how much of a card the history takes).
+    fn settle(&self, g: &mut MemoInner) {
+        self.account.set(g.bytes as u64);
+        if g.device.abs_diff(g.device_traced) >= 1 << 20 {
+            g.device_traced = g.device;
+            kt_time::trace::ev(kt_time::trace::Ev::StreamHeld).a(g.device as u64).b(g.bytes as u64).c(self.bytes_cap() as u64).emit();
+        }
+    }
+
     fn put_entry<T: Any + Send + Sync>(&self, key: u64, v: Arc<T>, bytes: usize, transient: bool, pinned: Option<u32>) {
+        self.put_entry_on(key, v, bytes, transient, pinned, false);
+    }
+
+    fn put_entry_on<T: Any + Send + Sync>(&self, key: u64, v: Arc<T>, bytes: usize, transient: bool, pinned: Option<u32>, device: bool) {
         let cap = self.bytes_cap();
         if bytes > cap || pinned.is_some() && bytes > cap / 2 {
             return;
@@ -400,15 +504,18 @@ impl StreamMemo {
         }
         // the memo full of the loop's own laps: the new one goes to the window past the kept part
         let probation = g.looping && !transient && pinned.is_none() && g.bytes + bytes > cap && Self::stale_victim(&g).is_none();
-        let e = Entry { v, bytes, used: now, transient, pinned, lap, probation };
+        let e = Entry { v, bytes, used: now, transient, pinned, lap, probation, device };
         Self::count(&mut g, &e);
         g.map.insert(key, e);
         Self::evict_to(&mut g, cap, key);
-        self.account.set(g.bytes as u64);
+        self.settle(&mut g);
     }
 
     fn count(g: &mut MemoInner, e: &Entry) {
         g.bytes += e.bytes;
+        if e.device {
+            g.device += e.bytes;
+        }
         if e.pinned.is_some() {
             g.pinned += e.bytes;
         }
@@ -419,6 +526,9 @@ impl StreamMemo {
 
     fn uncount(g: &mut MemoInner, e: &Entry) {
         g.bytes -= e.bytes;
+        if e.device {
+            g.device -= e.bytes;
+        }
         if e.pinned.is_some() {
             g.pinned -= e.bytes;
         }
@@ -567,7 +677,7 @@ impl StreamMemo {
         for k in ks {
             Self::remove(&mut g, k, 0);
         }
-        self.account.set(g.bytes as u64);
+        self.settle(&mut g);
     }
 
     /// Bytes of the pinned tier (checkpoints).
@@ -585,7 +695,7 @@ impl StreamMemo {
         self.cap.store(cap_bytes, std::sync::atomic::Ordering::Relaxed);
         let mut g = self.lock();
         Self::evict_to(&mut g, cap_bytes, 0);
-        self.account.set(g.bytes as u64);
+        self.settle(&mut g);
     }
 
     /// Its account in the memory ledger: the base is its first bound.
@@ -606,7 +716,8 @@ impl StreamMemo {
         g.bytes = 0;
         g.pinned = 0;
         g.probation = 0;
-        self.account.set(0);
+        g.device = 0;
+        self.settle(&mut g);
     }
 }
 

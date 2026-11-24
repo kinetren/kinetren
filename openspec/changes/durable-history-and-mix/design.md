@@ -37,15 +37,24 @@ The trace gains a `Restart` summary over the first minute after a project opens:
 again (bursts the mix store would have held had it been kept: approximated by bursts whose scene equals a
 scene the PREVIOUS run's trace wrote as kept — the trace carries the kept scenes' count, not the bytes).
 `kt-cli trace summary` prints "after the start: N history positions walked (M ms of device), K covered
-audio bursts rendered again". Owner Q1 decides from his trace whether stages 2–3 follow.
+audio bursts rendered again". The owner chose to build all stages now (Q1 b, kkt-26.11.20), so the line is
+telemetry, not a gate: it shows what the tiers saved on his next restart.
 
-## D2. One blob store, three tenants
+## D2. Two tenants of the project's cache folder
 
-`render_cache::DiskStore` splits into a generic `BlobStore` (folder rules, cap, LRU, the "used in this
-process" mark, manifests) and its users: the composites (as today, segments by the hardware codec), stream
-entries (one file per entry or packed per stage, D3) and mix runs (D5). One cap for all three (the
-owner's disk is short), the composites first in value: eviction takes stream entries and mix runs before
-composites of the same age. `KT_RENDER_CACHE=off` turns all off.
+The owner moved every cache of a project into a folder beside it (kkt-26.11.20 line 19, change
+`project-cache-folder`). The history is the `history/` kind of its persistent cache
+(`results/v<FORMAT>/<device class>/history/`, beside `frames/`, kkt-26.11.20b B1; `layers/` withdrawn by the owner's D1), and the mix
+runs are `mix/v<FORMAT>/`. They share its rules:
+- the entry header and the atomic write (`project-cache-folder` D1);
+- an entry of another salt is a miss, removed when met (no sweep at open);
+- the folder's cycle (`project-cache-folder` D3, the owner's B2): a write that does not fit drops the
+  history and the mix before the picture results and the media index, least recently used first, never
+  what this process used in the last minute; a notice once per session.
+
+`render_cache::DiskStore`'s folder rules become the cache folder's, and the three stores are its users.
+Stream entries are one file per stage run (D3); mix runs are one file per run (D5).
+`KT_RENDER_CACHE=off` turns all three off.
 
 ## D3. The stream memo's backing store
 
@@ -53,9 +62,12 @@ composites of the same age. `KT_RENDER_CACHE=off` turns all off.
   EntryCodec>` with `version() -> u32`, `encode(&dyn Any) -> Option<Vec<u8>>` (exact bytes of the entry;
   `None` — this entry type is not stored) and `decode(&[u8]) -> Option<Arc<dyn Any + Send + Sync>>`. A kernel
   without one is never stored (today's behaviour). Datamosh encodes `Planes` (its picture planes and the
-  clean encoder's reconstruction) as raw planes or LZ4 per Q2.
-- **The durable salt of a stage**: `xxh3` of the program build salt (with the FFmpeg version), the kernel id
-  and its codec version, and the identities of every file the stage reads (render-cache-disk's
+  clean encoder's reconstruction) as the exact raw planes; the HOST compresses every stored entry with LZ4
+  (the owner's Q2 b; D9), so the kernel stays one exact encoding and any later kernel's entries are
+  compressed alike.
+- **The durable salt of a stage**: `xxh3` of the persistent cache's salt (`project-cache-folder` D1b: the
+  store's format and the device class as the folder, the decoder's major, the versions and WGSL hashes of
+  the kernels that ran and `COMPOSITE_PATH_VERSION`, not the whole build), the kernel id and its codec version, and the identities of every file the stage reads (render-cache-disk's
   `Leaves` "every file for a stream stage", path + size + mtime ns). Disk key = `mix(entry key, salt)`. The
   entry key already carries positions, quality, parameters and the front slots (it is what the memo
   trusts in-process); the salt adds what a process could assume.
@@ -123,12 +135,84 @@ burst shown bright is handed out with no decode and no effect run once loaded.
 | Pass-time measurements, compiled run shapes | yes (pass-time disk cache) / per process | unchanged |
 | Loudness/sync analysis | yes (sidecar) | unchanged |
 
-## D8. Stages
+## D8. Stages (all now, the owner's Q1 b)
 
-1. D1: the restart line in the trace. t3336, t3337.
-2. D2 + D3: the blob store, the entry codec, Datamosh's codec, the memo's backing, writes at rest. t3338–t3345.
+1. D1: the restart line and the compression ratio in the trace. t3336, t3337.
+2. D2 + D3: the tenants in the cache folder, the entry codec, Datamosh's codec, LZ4 in the host, the
+   memo's backing, writes at rest. t3338–t3345.
 3. D5 + D6: the mix runs, the handoff, the bars. t3346–t3352.
 Spare: t3353–t3355.
+
+## D9. Why the history is stored without loss, and why LZ4 (the owner's question)
+
+The owner asked: "почему история datamosh без сжатия если сам по себе datamosh это и есть сжатие?"
+
+- **What a checkpoint holds.** Datamosh runs a real encoder and decoder (`fx-video-codec` `walk.rs`). Two
+  pictures make the walk's state at a frame:
+  - the decoder's reference picture: the last frame it painted, onto which the next frame's motion
+    vectors and residual are applied;
+  - the clean encoder's reconstruction: what the encoder believes the decoder holds.
+
+  These are decoded pictures (`Planes`: Y, Cb, Cr), the codec's MEMORY, not its compressed output.
+- **Why not store the compressed packets.** They are small, but a P-frame packet says only "take blocks
+  of the previous picture, move them, add this correction". Datamosh removes the keyframes, so the
+  picture at frame k exists only by applying all k packets from the event's start. Replaying the packets
+  IS the walk. A checkpoint exists to start the walk from frame k in one step, so it has to be the picture
+  itself.
+- **Why it must be exact.** Every later frame of the event is painted on the checkpoint. A lossy form
+  (JPEG, or the hardware H.264 the preview's prerender uses) changes some values. The motion then carries
+  that change into every later frame, the event after a restart differs from an uninterrupted play, and
+  the export differs from the preview. Invariant 11 promises the same bytes with and without a cache. So
+  the store may only shrink the bytes reversibly.
+- **Why LZ4.** It is lossless and unpacks at several GB/s on one core: a 1080p checkpoint (two pictures,
+  ~6 MB) comes back in a few milliseconds, far below the walk of even a few frames. Its ratio on camera
+  pictures is modest, about 1.3–2×; the flat and smeared areas a mosh makes compress better.
+- **Rejected:**
+  - a stronger compressor (zstd at high levels) unpacks several times slower, for maybe 30 % more;
+  - raw (the former recommendation) holds fewer checkpoints in the same limit.
+- **The ratio is measured:** each write records its raw and stored bytes; `trace cache` prints the
+  tenant's ratio. If the owner's projects show LZ4 below 1.2×, the trace says so, and a later change can
+  weigh zstd's fast levels.
+
+## D10. What the tree has today, and the corrections it forces (checked at orch `873934f7`)
+
+- **The memo's API** (`kt-plugin-api/src/stream.rs`). `StreamMemo` (`:330`) has no `insert`. Writes go
+  through `put` (`:420`), `put_transient` (`:428`) and `put_pinned` (`:436`), all into `put_entry` (`:440`);
+  reads through `get<T>` (`:403`), `contains` (`:415`) and `holds` (`:596`, both tiers). The disk tier hooks
+  in at `put_entry` (marks a pinned or broken entry unwritten) and at `holds`/`get` (a memory miss asks the
+  disk index). `mosh::needs` (`mosh.rs:550`) already starts from `memo.holds(...)`, so no kernel change is
+  needed for a walk to resume from disk.
+- **The codec deals in bytes.** kt-plugin-api may depend only on kt-time, serde and libm, so `EntryCodec`
+  encodes to and decodes from `Vec<u8>`. LZ4 (`lz4_flex`, a new workspace and kt-engine dependency; none is
+  present today) lives in kt-engine's writer and reader.
+- **What a checkpoint is.**
+  - Host checkpoints are `Planes` (`fx-video-codec/src/codec.rs:18`).
+  - Transients are `Clean` (recon `Planes` + a `Packet`, `codec.rs:46`).
+  - With `hold_ahead` set (`walk.rs:317`), a pinned checkpoint can be a device buffer `HeldPic`
+    (`walk.rs:53`, written at `:882`). `compute::Held` is opaque, with no readback API. So writing a
+    device-held checkpoint at rest needs a host copy job on the compute host (a `run` that reads the
+    buffer back into `Planes`), at class `background`, only at rest. Transients (`Clean`) are not stored.
+- **The salt must reach the memo.** The preview's memo is one process-wide static (`stream_memo()`,
+  `video_stream.rs:58`), shared by every stage. Each export makes its own (`export.rs:287`,
+  `export_pipeline.rs:718`). `get(key)` knows neither the stage's salt nor its codec, so `run` (`:884`) and
+  `key_only` (`:863`) set a thread-local scope, as `with_leaves` does. The scope holds the stage's salt (D3:
+  the store's salt, the plugin's id, version and WGSL hash, the codec's version, and the files of
+  `FileIds.all` through `RenderCache::files`, `render_cache.rs:907`) and its `EntryCodec`. The backing reads
+  them from there.
+- **The mix's samples are a `Box`.** `Unit.data` (`mix.rs:56`) is `Box<[f32]>`. D5's no-copy snapshot needs it
+  to become `Arc<[f32]>` (one allocation per kept burst, as today).
+- **There is no channel into the render thread today.** `RenderCtx` (`player.rs:2081`) has atomics, mutexes
+  and the outgoing `rtrb::Producer`. The restore handoff is a second `rtrb` ring (bounded, lock-free; `rtrb`
+  is already a dependency), drained at the top of a pass in `audio_render_loop` (`player.rs:2442`). The
+  loader is `prefetch_loop` (`:3400`), beside its `mix.budget.ask` (`:3522`). `MixCoverage` (`mix.rs:499`)
+  carries the snapshot of unwritten units out.
+- **The scene hash** is `audio.rs:1012` (`scene_base` + `clips[i].fp` over the widened range's active clips).
+  That widened range is where the mix salt's audio file identities are collected.
+- **The trace kinds** for history and mix records go into `kt_time::trace::render_cache` (`trace.rs:631`).
+  The restart summary has no recorder yet; it is new (D1), as is `kt-cli trace summary`'s line
+  (`trace_query.rs:466`). `trace cache` (`:130`) is extended.
+- **The store** (folder, header, `ask_room`, the key without the build) is `project-cache-folder`'s sections
+  1 and 3. This change starts after them.
 
 ## Risks
 

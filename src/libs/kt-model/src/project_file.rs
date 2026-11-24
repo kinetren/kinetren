@@ -92,12 +92,19 @@ pub const PROJECT_FILE_VERSION_TRACK_SOUND: u32 = 6;
 /// the typed text instead — so it is told the version and refuses.
 pub const PROJECT_FILE_VERSION_TEXT_SOURCE: u32 = 7;
 
+/// The version a file is written with WHEN a chain branches or holds a Merge (fx-graph-dag D7). An
+/// older build would read the slots as a line and run the arms one after another, then save them so
+/// — so it is told the version and refuses.
+pub const PROJECT_FILE_VERSION_FX_GRAPH: u32 = 8;
+
 /// The highest version this build reads.
-pub const PROJECT_FILE_READS: u32 = PROJECT_FILE_VERSION_TEXT_SOURCE;
+pub const PROJECT_FILE_READS: u32 = PROJECT_FILE_VERSION_FX_GRAPH;
 
 /// The version this project needs — by its content.
 pub fn version_for(project: &Project) -> u32 {
-    if project.has_text_sources() {
+    if project.has_fx_graph() {
+        PROJECT_FILE_VERSION_FX_GRAPH
+    } else if project.has_text_sources() {
         PROJECT_FILE_VERSION_TEXT_SOURCE
     } else if project.has_track_sound() {
         PROJECT_FILE_VERSION_TRACK_SOUND
@@ -220,9 +227,9 @@ pub fn from_text(text: &str) -> Result<ProjectFile, ProjectFileError> {
     if version > u64::from(PROJECT_FILE_READS) {
         return Err(ProjectFileError::TooNew { version: version as u32 });
     }
-    // versions BELOW the current one are read by migration on read, one-way; format 2 only
-    // ADDS the masks (format 1 has none), so there is nothing to migrate — the place for
-    // future repairs is here
+    // versions BELOW the current one are read by migration on read, one-way; formats 2-7 only
+    // ADD what an older one lacks (masks, the echo, device sound, marker notes, a track's sound
+    // track, a title's source), so there is nothing to migrate — the place for future repairs is here
     let env: Envelope =
         serde_json::from_value(peek).map_err(|e| ProjectFileError::Json(e.to_string()))?;
     let mut project = env.project;

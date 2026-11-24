@@ -16,7 +16,7 @@ tests: []
 depends_on: [F-TXT-006]
 trackers: []
 services: []
-checked: 2026-09-21
+checked: 2026-11-23
 ---
 
 # F-FX-005 — Physics: motion that is not in the keys
@@ -80,6 +80,8 @@ How to read this. The second quote is the passport of the whole domain in three 
 It was not possible to add verbatim user complaints to this, and this should be said directly: `docs.blender.org`, `projects.blender.org` and `helpx.adobe.com` return 403 from this environment, and Apple's pages on Motion behaviors return only the table of contents of the manual without the article body. The facts about the Blender and Final Cut lines in the table were collected from secondary retellings of the official pages and are marked in the Sources section as `[NOT VERIFIED against the primary source]`.
 
 ## How it fits Kinotrain
+
+Since 2026-11-23: designed as a compositing system in change `simulated-elements` (the owner's D3: element sets of any producer — glyphs, mask vertices, tracker points, particles, reel layers — with stateful operators from a `sim` plugin family, driven by the edit, a function from the owner's start with a fixed step, poses as numbers in the plan key); letters on springs driven by the edit's speed are its first application.
 
 ### What already exists
 

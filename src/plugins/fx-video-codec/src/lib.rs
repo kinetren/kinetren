@@ -316,7 +316,18 @@ impl StreamKernel for Datamosh {
         let (w, h) = mosh::out_size(&mosh::Rows::from(p), input);
         // the conversion back stays here: a job of its own would wait behind the frame's other passes
         // on the device (stream-layout-per-build D4: 1.6 → 9.8 ms a stage run on llvmpipe)
+        // the picture crosses to the composite here (stream-picture-stays D1)
+        let _cross = kt_plugin_api::stream::cross(pic.bytes() as u64, w.min(pic.w as u32) as u64 * h.min(pic.h as u32) as u64 * 4, kt_plugin_api::stream::cross_where::KERNEL);
         pic.to_rgba(w, h, out);
         Some(StreamOut { w: w.min(pic.w as u32), h: h.min(pic.h as u32), key })
+    }
+
+    fn render_held(&self, p: &[f64], input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Option<kt_plugin_api::stream::HeldStreamOut> {
+        if !kt_plugin_api::compute::host()?.holds_pictures() {
+            return None;
+        }
+        let (pic, key, (pw, ph)) = mosh::render_held(mosh::Rows::from(p), input, n, memo)?;
+        let (w, h) = mosh::out_size(&mosh::Rows::from(p), input);
+        Some(kt_plugin_api::stream::HeldStreamOut { planes: pic.0.clone(), pw: pw as u32, ph: ph as u32, w: w.min(pw as u32), h: h.min(ph as u32), key })
     }
 }

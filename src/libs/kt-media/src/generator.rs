@@ -11,8 +11,8 @@
 //! function of this triple, otherwise the cache key stops determining the frame.
 //!
 //! Contracts on which everything rests:
-//! - the frame is EXACTLY the requested Quality: the composite silently drops a layer
-//!   of a foreign size (kt-engine/video.rs, `fits`);
+//! - the frame is EXACTLY the requested Quality: the GPU executor drops a layer of a
+//!   foreign size and the composite comes out incomplete (kt-gpu `resolve_plan`, t633);
 //! - the frame is a deterministic function (parameters, pts, Quality): the engine’s
 //!   cache keys and the GPU upload will not survive anything else (invariant 11);
 //! - “no sound” = `has_audio: false` AND `Ok(AudioBurst::silence)`:
@@ -116,6 +116,14 @@ impl GeneratorSource {
         // return the first frame all the way.
         if self.state.animated() || depends_on_time(&self.state.kind) {
             let kind = self.kind_at(pts);
+            // an audio-reactive kind draws over what its feed hears at this moment (gen-audio-reactive)
+            if let (GeneratorKind::Plugin(p), Some(listen)) = (kind.as_ref(), kind.kernel().and_then(|g| g.listen())) {
+                let mut au = [0f32; kt_plugin_api::audio_series::at::LEN];
+                if let Some((series, t)) = self.state.feed.at(pts) {
+                    kt_plugin_api::audio_series::frame_values(series, t, &mut au);
+                }
+                return listen(&p.values, pts, q.width, q.height, &au);
+            }
             return render_at(&kind, pts, q.width, q.height);
         }
         if self.cache.as_ref().is_none_or(|(cq, _)| *cq != q) {
@@ -836,7 +844,7 @@ mod tests {
         let titled = |anim: TextAnim| {
             let mut kind = kt_model::parse_gen_path("gen:text:t=ABCD:s=0.3").expect("title path");
             text_anim_values(&mut kind, anim);
-            GeneratorSource::from_state(GenState { kind, auto: text_anim_curves(anim, 2.0, 2.0) })
+            GeneratorSource::from_state(GenState::of(kind, text_anim_curves(anim, 2.0, 2.0)))
         };
         // machine: empty at the start, all the text by the end
         let mut s = titled(TextAnim::Typewriter);
@@ -874,7 +882,7 @@ mod tests {
         assert!(!depends_on_time(&plain), "the title’s look does not depend on time");
         assert!(!GenState::new(plain.clone()).animated(), "without curves the title is static");
         assert!(
-            GenState { kind: plain, auto: text_anim_curves(TextAnim::Typewriter, 2.0, 2.0) }
+            GenState::of(plain, text_anim_curves(TextAnim::Typewriter, 2.0, 2.0))
                 .animated(),
             "a curve must turn off the single-element cache"
         );

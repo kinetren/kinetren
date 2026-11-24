@@ -107,6 +107,9 @@ const GOLDEN: &[(&str, u64)] = &[
     ("sweep", 0x78346342d043aba9),
     ("beep", 0x4855b68097998df8),
     ("silence", 0xcf6786937dbeddd9),
+    ("waveform", 0xbb1b34c0d3a33985),
+    ("spectrum", 0x7fb44354e5c0b635),
+    ("levelrings", 0xa9c2f382ec991a9c),
 ];
 
 #[test]
@@ -183,6 +186,7 @@ fn t1050_a_missing_generator_kind_is_kept_and_named() {
         fx_auto: Vec::new(),
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     let text = to_text(&p, None);
     let read = from_text(&text).expect("a file with a missing generator kind opens");

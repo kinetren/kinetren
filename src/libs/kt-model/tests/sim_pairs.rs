@@ -30,6 +30,7 @@ fn clip(id: u64, kind: ClipKind, fx: Vec<FxInstance>) -> ClipEvent {
         fx,
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     }
 }
 
@@ -301,6 +302,7 @@ fn t1461c_a_preset_or_a_paste_carries_the_pair() {
         }],
         src_in: Tick(0),
         fx_off: false,
+        fx_in: Vec::new(),
     };
     let v = get(&m, 10);
     let (mut fx, mut bypass, mut auto) = (v.fx.clone(), v.fx_bypass.clone(), v.fx_auto.clone());
@@ -318,6 +320,7 @@ fn t1461c_a_preset_or_a_paste_carries_the_pair() {
         slots: vec![ops::FxSlotBlock { fx: FxInstance::plugin("vhs_tape_sound").unwrap(), bypass: false, curves: vec![], masks: Vec::new() }],
         src_in: Tick(0),
         fx_off: false,
+        fx_in: Vec::new(),
     };
     let (mut fx, mut bypass, mut auto) = (a.fx.clone(), a.fx_bypass.clone(), a.fx_auto.clone());
     ops::append_chain_block(&mut fx, &mut bypass, &mut auto, &block, a.source_in);
@@ -462,4 +465,100 @@ fn t3233_a_track_sound_link_raises_the_format() {
     assert!(matches!(project_file::from_text(&newer), Err(project_file::ProjectFileError::TooNew { .. })));
     p.track_mut(v1).unwrap().sound = Some(v2);
     assert!(matches!(p.validate(), Err(ProjectError::BadTrackSound(t)) if t == v1));
+}
+
+fn arm(main: fx_graph::FxIn) -> fx_graph::SlotInputs {
+    fx_graph::SlotInputs { main, ..Default::default() }
+}
+
+fn merge_of(main: fx_graph::FxIn, second: fx_graph::FxIn) -> fx_graph::SlotInputs {
+    fx_graph::SlotInputs { main, second: Some(second), matte: None }
+}
+
+fn merge_fx() -> FxInstance {
+    FxInstance::Merge { mode: MergeMode::Blend(BlendMode::Screen), mix: 1.0 }
+}
+
+/// t3222 (fx-graph-dag D6; capability `morpher`): a layer whose patch merges an arm over its input,
+/// over an event whose own chain branches: the effective chain is the event's graph followed by the
+/// patch's, the patch's Source being the event's Output and its addresses moved by the event's length.
+#[test]
+fn t3222_a_branching_layer_over_a_branching_event() {
+    use fx_graph::FxIn;
+    kt_plugins_builtin::install();
+    let mut m = TimelineModel::new(morph_project());
+    let p = |id: &str| FxInstance::plugin(id).unwrap();
+    m.apply_batch(vec![
+        Command::SetFx { id: ClipId(10), fx: vec![p("blur"), p("glow"), merge_fx()] },
+        Command::SetFxIn {
+            id: ClipId(10),
+            fx_in: vec![Default::default(), arm(FxIn::Source), merge_of(FxIn::Prev, FxIn::Slot(0))],
+        },
+    ])
+    .unwrap();
+    let patch = MorphPatch {
+        video_fx: vec![p("edges"), p("noise"), merge_fx()],
+        video_in: vec![Default::default(), arm(FxIn::Source), merge_of(FxIn::Prev, FxIn::Slot(0))],
+        ..Default::default()
+    };
+    m.apply(Command::AddMorpher(layer(patch))).unwrap();
+    let eff = m.project().effective_clips();
+    let v = eff.iter().find(|c| c.kind == ClipKind::Video).unwrap();
+    assert_eq!(&chain_ids(&v.fx)[..6], ["blur", "glow", "merge", "edges", "noise", "merge"]);
+    let want = [
+        Default::default(),
+        arm(FxIn::Source),
+        merge_of(FxIn::Prev, FxIn::Slot(0)),
+        Default::default(),
+        // the patch's Source is the event's Output, the event's Merge at slot 2
+        arm(FxIn::Slot(2)),
+        merge_of(FxIn::Prev, FxIn::Slot(3)),
+    ];
+    assert_eq!(&v.fx_in[..6], &want[..], "the patch's inputs were not moved onto the target");
+    fx_graph::check(&v.fx, &v.fx_in, 0).expect("the spliced graph is valid");
+    // a disabled slot of the patch drops out with its readers re-wired to its input
+    let mut ev = m.project().morphers[0].clone();
+    ev.patch.video_bypass = vec![false, true];
+    m.apply(Command::SetMorpher(ev)).unwrap();
+    let eff = m.project().effective_clips();
+    let v = eff.iter().find(|c| c.kind == ClipKind::Video).unwrap();
+    assert_eq!(&chain_ids(&v.fx)[..5], ["blur", "glow", "merge", "edges", "merge"]);
+    assert_eq!(v.fx_in.get(4).copied().unwrap_or_default(), merge_of(FxIn::Slot(2), FxIn::Prev), "the reader of the disabled noise");
+}
+
+/// t3223 (fx-graph-dag D6; capabilities `morpher`, `audio-fx`): a device's halves stay mirrored in
+/// presence and values while each lane keeps its own wiring; removing the SOUND half takes the
+/// picture half too, and the picture chain's Merge that read it reads the half's own input instead.
+/// (A sound chain takes no wiring until the sound graph, the owner's Q1 a: it is refused.)
+#[test]
+fn t3223_pairs_mirror_presence_not_wires() {
+    use fx_graph::FxIn;
+    kt_plugins_builtin::install();
+    let mut m = TimelineModel::new(morph_project());
+    m.apply(Command::AddMorpher(layer(MorphPatch::default()))).unwrap();
+    // the picture half in an arm of the picture chain, beside a blur, merged
+    let mut ev = m.project().morphers[0].clone();
+    ev.patch.video_fx = vec![FxInstance::plugin("blur").unwrap(), FxInstance::plugin("vhs_tape").unwrap(), merge_fx()];
+    ev.patch.video_in = vec![Default::default(), arm(FxIn::Source), merge_of(FxIn::Slot(0), FxIn::Prev)];
+    m.apply(Command::SetMorpher(ev)).unwrap();
+    let p = patch_of(&m);
+    assert_eq!(chain_ids(&p.audio_fx), ["vhs_tape_sound"], "the sound half was not mirrored");
+    assert!(p.audio_in.is_empty(), "the sound got the picture's wires");
+    // a value on the sound reaches the wired picture half
+    let mut ev = m.project().morphers[0].clone();
+    ev.patch.audio_fx[0].set_param("tracking_um", 9.0);
+    m.apply(Command::SetMorpher(ev)).unwrap();
+    assert_eq!(patch_of(&m).video_fx[1].get_param("tracking_um"), Some(9.0));
+    // the sound half removed: the picture half goes, its reader reads the Source
+    let mut ev = m.project().morphers[0].clone();
+    ev.patch.audio_fx.clear();
+    m.apply(Command::SetMorpher(ev)).unwrap();
+    let p = patch_of(&m);
+    assert_eq!(chain_ids(&p.video_fx), ["blur", "merge"]);
+    assert_eq!(p.video_in, vec![Default::default(), merge_of(FxIn::Prev, FxIn::Source)], "the Merge was not re-wired");
+    // wiring on the sound chain is refused until the sound graph
+    let mut ev = m.project().morphers[0].clone();
+    ev.patch.audio_fx = vec![FxInstance::plugin("gain").unwrap(), FxInstance::plugin("gain").unwrap()];
+    ev.patch.audio_in = vec![Default::default(), arm(FxIn::Source)];
+    assert!(m.apply(Command::SetMorpher(ev)).is_err(), "a sound branch was accepted before the sound graph");
 }

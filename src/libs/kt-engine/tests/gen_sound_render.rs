@@ -42,6 +42,7 @@ fn event(id: u64, lane: u32, start: i64, dur: i64, media: u64, kind: GeneratorKi
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     }
 }
 

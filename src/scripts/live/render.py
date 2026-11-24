@@ -86,7 +86,9 @@ def main(out):
             app.click_probe("render.pause", "Resume")
 
             # 7) the finish: frozen numbers, the summary and the next actions
-            app.expect(app.has_probe("render.close", tries=240), "the render finished")
+            # the render's own end, however long the machine makes it (found-defects 957: 6000 frames
+            # took 136 s at load 70 against a 120 s bound, 41 s on a quiet machine)
+            app.expect(app.until(lambda: app.has_probe("render.close", tries=1), timeout=900), "the render finished")
             app.expect(app.has_probe("render.open_file"), "Open file is offered")
             app.hover_probe("render.open_file", "Open file")
             app.hover_probe("render.open_folder", "Open folder")

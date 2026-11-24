@@ -1,4 +1,5 @@
-//! The native project format of Kinetren — OpenTimelineIO (.otio, JSON).
+//! The OpenTimelineIO (.otio, JSON) exchange doors of Kinetren: import and export. The project file
+//! is our own `.kt` (`kt_model::project_file`, R.70).
 //!
 //! A pure Rust implementation of a subset of OTIO schemas (the reference — the C++/Python
 //! library 0.18.x) with full passthrough of the not-understood: unknown FIELDS
@@ -29,7 +30,7 @@ pub use io::{
 };
 pub use legacy::import_legacy;
 pub use meta::{
-    KT_META_V6, KT_META_V8, KT_META_V9, KT_META_V10, KT_META_V11, KT_META_V12, KT_META_V15, KT_META_V16, KT_META_V17, KT_META_VERSION,
+    KT_META_V6, KT_META_V8, KT_META_V9, KT_META_V10, KT_META_V11, KT_META_V12, KT_META_V15, KT_META_V16, KT_META_V17, KT_META_V18, KT_META_VERSION,
     KT_NS,
     check_kt_version, kt_entry_mut, kt_version,
 };
@@ -110,12 +111,13 @@ pub enum FileFormat {
     FormerProject,
     Otio,
     /// An old .ktproj: it does not open as a project (decision R.24 item 12) —
-    /// only the “Import .ktproj…” item.
+    /// only through the import door ([`import_interchange`]).
     LegacyKtproj,
 }
 
-/// Loading an .otio project (a .ktproj file is an honest error: R.24 item 12,
-/// “how a project is not opened” — use import_legacy from the import item).
+/// Reading an .otio of the CURRENT envelope (the reader, R.67): a project file, a former-name one and
+/// a .ktproj are honest errors, and our envelope of an older version is `NeedsImport` — they go
+/// through [`import_interchange`] (R.24 item 12, R.70).
 pub fn load_project(
     text: &str,
     base_dir: Option<&std::path::Path>,

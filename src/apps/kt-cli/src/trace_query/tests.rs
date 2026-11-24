@@ -904,3 +904,31 @@ fn t3316_trace_export_names_copy_convert_and_upload() {
     );
     assert!(out.contains("  surface upload"), "the upload is a stage line of its own: {out}");
 }
+
+/// Test t3813 (stream-picture-stays D1, D3): `trace loop` sums per lap the stream pictures that
+/// crossed the bus (their count, megabytes and the conversion's processor time) and says how much of
+/// the device the history held at the lap's end; a lap with neither says nothing of them.
+#[test]
+fn t3813_a_lap_counts_the_stream_frames_that_crossed() {
+    let mut run = looped();
+    let b = lap_bounds(&run);
+    // lap 0: two crossings of 1 MB + 2 MB each, 3 ms and 5 ms; lap 1: none; held 64 MB from lap 0
+    for (t, dur) in [(b[0].0 + 10 * MS, 3 * MS), (b[0].0 + 50 * MS, 5 * MS)] {
+        run.recs.push(rec(Ev::StreamCross, t, |r| {
+            r.dur = dur;
+            r.a = 1 << 20;
+            r.b = 2 << 20;
+        }));
+    }
+    run.recs.push(rec(Ev::StreamHeld, b[0].0 + 60 * MS, |r| r.a = 64 << 20));
+    run.recs.push(rec(Ev::StreamHeld, b[1].1 + MS, |r| r.a = 0));
+    run.recs.sort_by_key(|r| r.t);
+    let out = laps(&run);
+    println!("{out}");
+    let lap = |n: usize| out.lines().filter(|l| l.split_whitespace().nth(1).is_some_and(|w| w.starts_with('+'))).nth(n).unwrap().to_string();
+    assert!(lap(0).contains("stream frames crossed: 2, 6.0 MB, 8.0 ms of a core;"), "{}", lap(0));
+    assert!(lap(0).contains("history on the device 64 MB;"), "{}", lap(0));
+    assert!(!lap(1).contains("crossed"), "{}", lap(1));
+    assert!(lap(1).contains("history on the device 64 MB;"), "the last said stands: {}", lap(1));
+    assert!(!lap(2).contains("history on the device"), "back to none: {}", lap(2));
+}

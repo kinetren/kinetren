@@ -1,44 +1,78 @@
 # Tasks: device-decode-sources
 
-> DESIGN ONLY until the owner answers Q1–Q2 (`proposal.md`) and the orchestrator gives the go. Tests
-> reserved: t3300–t3311 (of the spec session's t3300–t3399). Base: orch `ec30cb02`.
+> IMPLEMENTATION-READY (2026-11-22). The owner answered (kkt-26.11.20 A12): on by default, a checkbox in
+> Settings. Tests: t3300–t3311, t4100–t4102. Code references checked against orch `873934f7`. Read first:
+> `design.md` D1–D4, D6, D11; `src/libs/kt-ffmpeg/CLAUDE.md`, `src/libs/kt-media/CLAUDE.md`;
+> `openspec show media-index --type spec`. Commit per section; `scripts/target-prune.py` after each.
+> Build-queue areas: DECODE, `kt-time` mem/trace, SHELL (Preferences). Do not run beside another change
+> writing `source_impl.rs`, `mem.rs` or `trace.rs`.
 
 ## 0. Notes first
 
-- [x] 0.1 F-MED-010 (`docs/features/media/sources/hardware-decoding.md`); `features-index.py --check` green
-- [x] 0.2 proposal, design (D1–D10, class walk D9), deltas `media-index`, `export`, `telemetry`;
-      `openspec validate device-decode-sources --strict`
-- [ ] 0.3 his answers Q1–Q2 in `docs/user-feedback.md` and `docs/owner-checks.md` (orchestrator), folded in
+- [x] 0.1 F-MED-010 (`docs/features/media/sources/hardware-decoding.md`)
+- [x] 0.2 proposal, design (D1–D11, class walk D9), deltas `media-index`, `export`, `telemetry`, `ui-reach`
+- [x] 0.3 the owner's answers folded in (Q1 a, Q2 b)
 
-## 1. kt-ffmpeg — layout, device, eligibility
+## 1. kt-ffmpeg: the layout, one device, eligibility
 
-- [ ] 1.1 the exact layout after `download` into the processor decoder's format of the stream (D1); t3301
-- [ ] 1.2 one decode device per process, a reference per decoder (D3); `open_hw` keeps its signature
-- [ ] 1.3 the eligibility table (codec, flavour, crop) and the first-keyframe proof, memo per (path, size,
-      mtime, device) (D2); t3302
-- [ ] 1.4 a device fault reopens on the processor at the keyframe, the file processor-only (D6)
-- [ ] 1.5 `fixtures/fake_va`: a mutex around the driver state, a display counter, `KTFAKE_PERTURB`
-      (change one sample per picture, optionally after the first keyframe), `KTFAKE_FAIL_AT=N`; t3303,
-      t3304, t3306
+What exists (keep it): `Source::open_hw` (`lib.rs:1080` → `source_impl.rs:726`), `VideoDecode` (`lib.rs:552`),
+`decode_device_verdict` (`lib.rs:563`, the per-node trial memo), `VideoPath`/`HwDecode` (`source_impl.rs:143`,
+`:185`), `pick_hw_format` (`:195`), `open_decode_device` (`:217`), `open_decoder` (`:1022`), `use_hw` (`:1073`),
+`download` (`:1091`, with its fallback detection), `seek_and_reopen` (`:1126`, keeps the device),
+`decode_next_frame` (`:1161`), `to_rgba` (`:1362`). `source_impl.rs` is `include!`d once per FFmpeg major
+(`lib.rs:295`): never put tests in it.
 
-## 2. kt-media, kt-time, kt-engine — who opens on the device
+- [ ] 1.1 D1, the exact layout: after `download`, copy NV12 → yuv420p/yuvj420p and P010 → yuv420p10le into
+      the processor decoder's format of the stream (the tag decides yuvj), keep pts and colour tags, never
+      read line padding; then the one `to_rgba`. t3301 in a new `src/libs/kt-ffmpeg/tests/device_layout.rs`
+      on synthetic frames
+- [ ] 1.2 D3, one device per process: `open_decode_device` opens once (a process-wide `OnceLock` per API,
+      shaped like `decode_device_verdict`), each decoder takes an `av_buffer_ref`; `open_hw` keeps its
+      signature; Drop unrefs its own reference only
+- [ ] 1.3 D2, eligibility: the codec table (H.264, HEVC, VP9, AV1), 4:2:0 8/10-bit offered by `get_format`,
+      no odd crop the copy cannot keep; the first-keyframe proof (device picture == processor picture of the
+      same packet), memoized per (path, size, mtime, device); t3302 in `device_layout.rs`
+- [ ] 1.4 D6, a device fault mid-stream reopens that decoder on the processor at the same keyframe and marks
+      the file processor-only for the process
+- [ ] 1.5 the bit: `set_decode_device(bool)` beside `set_decode_threads` (`lib.rs:22`), read in `use_hw`;
+      `KT_DECODE_DEVICE=off|on` read once at start and winning over the setter
+- [ ] 1.6 `src/fixtures/fake_va/ktfake_drv_video.c`: a mutex around the driver's state, a display counter,
+      two new modes in the existing `KT_FAKE_VA` convention (`:157`, list `:18`): `perturb` (one sample per
+      picture, optionally after the first keyframe) and `KT_FAKE_VA_FAIL_AT=N`; t3303, t3304, t3306
+- [ ] 1.7 `cargo test -p kt-ffmpeg`; clippy; commit "device-decode-sources 1: exact layout, one device,
+      eligibility"
 
-- [ ] 2.1 kt-time `mem.rs`: tenant `Surfaces` (base 0, order `[Mix, Kept, History, Surfaces, Frames]`) (D4)
-- [ ] 2.2 `FfmpegSource`: the kind per decoder by eligibility and the ledger, kept across reopen,
-      released on drop; `KT_DECODE_DEVICE=off|on` (default per Q1); t3305
-- [ ] 2.3 the factory's preview and export opens use it; thumbs/filmstrip/stills stay software; t3309, t3310
-- [ ] 2.4 t3129: "within swscale's rounding" becomes "equal" (edit its scenario in `video-plan/spec.md`);
-      t3300
-- [ ] 2.5 export: stage profile with pictures per kind and transfer; t3307
-- [ ] 2.6 `cargo test` of kt-ffmpeg, kt-media, kt-engine, kt-time; clippy; target-prune; commit
+## 2. kt-media, kt-time, kt-engine: who opens on the device
 
-## 3. Trace and report
+- [ ] 2.1 `kt-time/src/mem.rs`: append `Tenant::Surfaces = 8` (the file's rule: a new kind is appended),
+      `KINDS = 9`, add it to `ALL` and to `GROWING` before `Frames`; base 0
+- [ ] 2.2 `FfmpegSource` (`kt-media/src/ffmpeg.rs:11`): its `hw: bool` field becomes the kind chosen per
+      decoder by eligibility, the bit and the `Surfaces` account; `cursor_for` (`:149`) opens extra cursors
+      by the same rule; released on drop; t3305
+- [ ] 2.3 D6: `factory::open_source(path, index, Purpose)` in `kt-media/src/factory.rs`; route the four
+      openers through it: `kt-app/src/util.rs:38`, `render_dialog.rs` `open_all` (`:616`, today
+      `FfmpegSource::open` with no index), kt-cli `open_render_sources` (`main.rs:2002`) and `open_sources`
+      (`main.rs:1338`); thumbnails, filmstrip and stills stay software; t4102, t3309, t3310
+- [ ] 2.4 t3129 (`kt-media/tests/segment.rs:105`): "within swscale's rounding" becomes "equal"; edit its
+      scenario in `openspec/specs/video-plan/spec.md`; t3300
+- [ ] 2.5 the export's stage profile: pictures per kind and the transfer time in `ExportStage`
+      (`export_pipeline.rs:132–171`, `decode_chunk` `:1226`); t3307 (`kt-engine/tests/export_options.rs`)
+- [ ] 2.6 `cargo test -p kt-media -p kt-time -p kt-engine`; clippy; commit "device-decode-sources 2: sources
+      open through one factory call and decode on the card"
 
-- [ ] 3.1 `Ev::Decoded` aux = kind; open/refusal record; transfer per source (D7)
-- [ ] 3.2 `kt-cli trace summary` decode line; t3308
-- [ ] 3.3 `kt-cli probe … --decode-check`; t3311
-- [ ] 3.4 Diagnostics line per Q2 (and a Settings checkbox only on Q2 b: `reach_tests`, i18n, font tests)
-- [ ] 3.5 kt-media/kt-ffmpeg `CLAUDE.md`: the layout rule ("a new device format gets its exact layout or
-      stays on the processor"); `docs/guide/whats-new.md` line; found-defects 775's follow-up closed
-- [ ] 3.6 idle-load check (paused, mouse over a static place, effects window open) on the heavy showcase:
-      no change expected at rest (decoders are not touched at rest)
+## 3. Trace, Preferences, Diagnostics
+
+- [ ] 3.1 `Ev::Decoded` (`kt-time/src/trace.rs:78`, emitted at `kt-engine/src/worker.rs:313`) gets the kind
+      as aux; an open/refusal record with the reason; transfer per source
+- [ ] 3.2 `kt-cli trace summary` (`trace_query.rs:466`) prints the decode line; t3308 (`trace_query/tests.rs`)
+- [ ] 3.3 `kt-cli probe … --decode-check` (`main.rs:1734`); t3311 (`kt-cli/tests/cli.rs`)
+- [ ] 3.4 D11: `StartChoice.decode_on_card` (`user_store.rs`, beside `economy_ui` `:679`), its setter in t1294's
+      writer list (`welcome_prefs_tests.rs:349`), the checkbox in `prefs_window.rs`'s FFmpeg section (`:557`,
+      after the Economy pattern `:494–500`), the bit set at start and on toggle, the player's sources reopened
+      on toggle; the Diagnostics line in `draw_diagnostics` (`app.rs:11065`); i18n in every catalog;
+      `reach_tests`, `layout_tests`, font tests; t4100, t4101
+- [ ] 3.5 kt-media and kt-ffmpeg `CLAUDE.md`: "a new device format gets its exact layout or stays on the
+      processor"; What's new line ("video decodes on the card where it can, with the same picture; a
+      checkbox in Preferences turns it off"); found-defects 775's follow-up closed
+- [ ] 3.6 the idle check on the heavy showcase (pause, the mouse over a static place, an effects window
+      open): nothing new at rest; commit; the report's "Найдено, не исправлено"

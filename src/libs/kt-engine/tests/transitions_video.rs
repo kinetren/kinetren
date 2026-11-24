@@ -51,6 +51,7 @@ fn project_pair() -> Project {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
     }
     p.transitions.push(TransitionEvent {
@@ -390,6 +391,7 @@ fn t174_clip_opacity_scales_the_layer() {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
     }
     p.normalize(); // tracks for the content (R.62)
@@ -899,6 +901,7 @@ fn t464_overlap_transition_reaches_picture() {
                 fx_auto: vec![],
                 opacity: 1.0,
                 fx_off: false,
+                fx_in: Vec::new(),
             });
         }
         if let Some(kind) = with {
@@ -1203,6 +1206,7 @@ fn t521_alpha_layer_under_a_chain_shows_through() {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
     }
     // the key — the upper layer's OWN color: the green screen knocks it out

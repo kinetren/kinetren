@@ -43,11 +43,8 @@ def main(out):
             win["x"] + int((b["left"] + b["right"]) / 2),
             win["y"] + int(b["bottom"]) - 10,
         )
+        # one item since kkt-26.11.20 A1: nothing selected gives a solid colour
         app.click_probe("gen.new", "“Create generator” item in the bin menu")
-        # R.53: there are nineteen kinds, laid out by groups; an egui submenu
-        # opens by HOVERING, a click on it would close the whole menu
-        app.hover_probe("gen.new.group.bg", "“Background” group in the submenu")
-        app.click_probe("gen.new.solid", "kind “Solid color” in the submenu")
         app.expect(
             app.has_probe("genw.color"),
             "the generator parameter window opened right after creation",
@@ -133,12 +130,9 @@ def main(out):
         app.key("Escape")
         app.until(lambda: int(app.geom().get("windows", 0)) == 0)
         app.key("ctrl+z")
-        back = None
-        for _ in range(20):
-            back = app.pixel(*preview)
-            if max(back) < 40:
-                break
-            poll_step(0.3)
+        # the undone frame is composed on its own thread: wait for the consequence, not a clock
+        app.until(lambda: max(app.pixel(*preview)) < 40)
+        back = app.pixel(*preview)
         app.expect(
             back is not None and max(back) < 40,
             f"undo must bring back the black solid: {back}",

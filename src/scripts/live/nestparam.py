@@ -113,8 +113,9 @@ def make_generator(app, group, kind, at_ticks):
         win["y"] + int(b["bottom"]) - 10,
     )
     app.click_probe("gen.new", "item “Create a generator”")
-    app.hover_probe(f"gen.new.group.{group}", f"group “{group}”")
-    app.click_probe(f"gen.new.{kind}", f"kind “{kind}” in the submenu")
+    app.expect(app.until(lambda: app.has_probe("genw.kind.pick", tries=2)), "the generator's window opened")
+    if kind != "solid":
+        app.pick_generator_kind(kind, f"kind “{kind}” of “{group}” in its window")
     # a created generator opens its own effects window — we close it, otherwise
     # it overlaps the bin and the timeline
     app.key("Escape")
@@ -330,6 +331,7 @@ def main(out):
         width = g["timeline"]["right"] - g["timeline"]["left"]
         past = geometry()["x"] + int(g["timeline"]["left"] + max(width / 8.0, 40.0)) + 8
         app.double_click(max(app.x_at(inner[0][0] + inner[0][1] // 2), past), y)
+        app.expect(app.until(lambda: app.has_probe("titlew.text", tries=2)), "the template title's window opened")
         app.click_probe("titlew.text", "template title text field")
         for ch in ["z", "z"]:
             app.key(ch)

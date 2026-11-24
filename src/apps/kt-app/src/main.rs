@@ -10,6 +10,7 @@
 mod analysis;
 mod app;
 mod audio_out;
+mod listen;
 mod automation;
 mod centerctl;
 mod clicks;
@@ -83,6 +84,8 @@ mod vhs_tape_tests;
 mod node_editor_tests;
 #[cfg(test)]
 mod pitch_tail_tests;
+#[cfg(test)]
+mod form_width_tests;
 mod reel_preview;
 mod render_dialog;
 mod settings_window;

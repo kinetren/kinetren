@@ -146,6 +146,7 @@ fn t784_formula_time_counts_from_material_start_everywhere() {
         fx_auto: vec![vec![curve.clone()]],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     let step = 3000;
     let out = resolve_derived(std::slice::from_ref(&clip), step);

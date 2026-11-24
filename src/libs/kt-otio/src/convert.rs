@@ -449,8 +449,11 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                 });
             // v14 (shape-masks): masks on an event, a slot or a track
             let has_v14 = p.has_masks();
+            // v18 (fx-graph-dag D7): a chain branches or holds a Merge
+            if p.has_fx_graph() {
+                crate::meta::KT_META_V18
             // v17 (track-device-sound): a video track names its sound track
-            if p.has_track_sound() {
+            } else if p.has_track_sound() {
                 crate::meta::KT_META_V17
             // v16 (sim-audio-pairs): a simulated device's sound rows are set
             } else if p.has_device_sound() {
@@ -681,6 +684,7 @@ fn clip_effects(c: &ClipEvent, foreign: &[(usize, EffectNode)]) -> Vec<EffectNod
                 serde_json::to_value(curves).expect("curves are serializable"),
             );
         }
+        put_in(&mut md, &c.fx_in, i);
         effects.push(EffectNode::Effect(Effect {
             name: String::new(),
             effect_name: format!("kt:{}", fx_tag(fx)),
@@ -788,6 +792,7 @@ fn chain_effects(
     fx: &[kt_model::FxInstance],
     bypass: &[bool],
     auto: &[Vec<kt_model::ParamCurve>],
+    fx_in: &[kt_model::SlotInputs],
 ) -> Vec<EffectNode> {
     let mut out = Vec::new();
     for (i, f) in fx.iter().enumerate() {
@@ -799,6 +804,7 @@ fn chain_effects(
                 serde_json::to_value(curves).expect("curves are serializable"),
             );
         }
+        put_in(&mut md, fx_in, i);
         out.push(EffectNode::Effect(Effect {
             name: String::new(),
             effect_name: format!("kt:{}", fx_tag(f)),
@@ -810,11 +816,36 @@ fn chain_effects(
     out
 }
 
+/// A slot's inputs into its effect's `kt` envelope (fx-graph-dag D7): only when they are not the line,
+/// so a line's file does not move.
+fn put_in(md: &mut Map<String, Value>, fx_in: &[kt_model::SlotInputs], i: usize) {
+    let s = kt_model::fx_graph::inputs(fx_in, i);
+    if !s.is_line() {
+        crate::meta::kt_entry_mut(md).insert("in".into(), serde_json::to_value(s).expect("inputs are serializable"));
+    }
+}
+
+/// A slot's inputs from its effect's `kt` envelope; absent — the line.
+fn get_in(md: &Map<String, Value>) -> kt_model::SlotInputs {
+    md.get(crate::meta::KT_NS)
+        .and_then(|kt| kt.get("in"))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default()
+}
+
 /// Parse the track’s `Effect.1`: our `kt:` effects into the chain, foreign ones —
 /// back to the caller (they return to the file untouched, item 358).
+#[allow(clippy::type_complexity)]
 fn read_chain_effects(
     effects: &[EffectNode],
-) -> (Vec<kt_model::FxInstance>, Vec<bool>, Vec<Vec<kt_model::ParamCurve>>, Vec<EffectNode>) {
+) -> (
+    Vec<kt_model::FxInstance>,
+    Vec<bool>,
+    Vec<Vec<kt_model::ParamCurve>>,
+    Vec<kt_model::SlotInputs>,
+    Vec<EffectNode>,
+) {
+    let mut fx_in: Vec<kt_model::SlotInputs> = Vec::new();
     let mut fx: Vec<kt_model::FxInstance> = Vec::new();
     let mut bypass: Vec<bool> = Vec::new();
     let mut auto: Vec<Vec<kt_model::ParamCurve>> = Vec::new();
@@ -824,6 +855,7 @@ fn read_chain_effects(
             EffectNode::Effect(eff) if eff.effect_name.starts_with("kt:") => {
                 match kt_get::<kt_model::FxInstance>(&eff.metadata) {
                     Some(inst) => {
+                        fx_in.push(get_in(&eff.metadata));
                         fx.push(inst);
                         bypass.push(!eff.enabled);
                         auto.push(
@@ -846,7 +878,8 @@ fn read_chain_effects(
     while auto.last().is_some_and(|v| v.is_empty()) {
         auto.pop();
     }
-    (fx, bypass, auto, rest)
+    kt_model::fx_graph::canonical(&mut fx_in, fx.len());
+    (fx, bypass, auto, fx_in, rest)
 }
 
 /// The envelope of a reel’s tracks (R.62). Empty — nothing to write: the order
@@ -1149,7 +1182,7 @@ fn reel_children(
         if layer == 0
             && let Some(t) = t
         {
-            effects.extend(chain_effects(&t.fx, &t.fx_bypass, &t.fx_auto));
+            effects.extend(chain_effects(&t.fx, &t.fx_bypass, &t.fx_auto, &t.fx_in));
         }
         children.push(Composable::Track(Track {
             name: if layer > 0 {
@@ -2082,12 +2115,12 @@ fn read_reel(
         // R.62: `enabled: false` is the track’s MUTE, not “we cannot do this”; the track chain is
         // read by the same code as for a clip, and
         // foreign effects stay in `Retained` and return to the file.
-        let (fx, bypass, auto, foreign_fx) = read_chain_effects(&track.effects);
+        let (fx, bypass, auto, fx_in, foreign_fx) = read_chain_effects(&track.effects);
         tx.effects = foreign_fx;
         out.track_facts.push((
             kt_model::lane_key_of(kind),
             lane,
-            TrackFacts { name: track.name.clone(), enabled: track.enabled, fx, bypass, auto },
+            TrackFacts { name: track.name.clone(), enabled: track.enabled, fx, bypass, auto, fx_in },
         ));
         let mut cursor = Tick::ZERO;
         let mut gap_ordinal = 0usize;
@@ -2439,6 +2472,7 @@ fn read_foreign_nest(
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     if both {
         let other = match kind {
@@ -2498,10 +2532,12 @@ pub(crate) fn migrate_pan_effect(
 /// The attachment’s effects: the same layout as for a clip, but we have no foreign ones
 /// here — we write attachments ourselves. The curves are read in the v3+ domain (material
 /// ticks): a file with an attachment cannot be older than v6.
+#[allow(clippy::type_complexity)]
 fn nest_effects(
     st: &Stack,
     cx: &mut ReadCtx<'_>,
-) -> (Vec<kt_model::FxInstance>, Vec<bool>, Vec<Vec<kt_model::ParamCurve>>, bool) {
+) -> (Vec<kt_model::FxInstance>, Vec<bool>, Vec<Vec<kt_model::ParamCurve>>, Vec<kt_model::SlotInputs>, bool) {
+    let mut fx_in: Vec<kt_model::SlotInputs> = Vec::new();
     let mut fx = Vec::new();
     let mut bypass = Vec::new();
     let mut auto: Vec<Vec<kt_model::ParamCurve>> = Vec::new();
@@ -2510,6 +2546,7 @@ fn nest_effects(
         match e {
             EffectNode::Effect(eff) if eff.effect_name == "kt:pan" => {
                 if let Some((inst, curves)) = migrate_pan_effect(&eff.metadata) {
+                    fx_in.push(Default::default());
                     fx.push(inst);
                     bypass.push(!eff.enabled);
                     auto.push(curves);
@@ -2518,6 +2555,7 @@ fn nest_effects(
             EffectNode::Effect(eff) if eff.effect_name.starts_with("kt:") => {
                 match kt_get::<kt_model::FxInstance>(&eff.metadata) {
                     Some(inst) => {
+                        fx_in.push(get_in(&eff.metadata));
                         fx.push(inst);
                         bypass.push(!eff.enabled);
                         auto.push(
@@ -2551,7 +2589,8 @@ fn nest_effects(
     while auto.last().is_some_and(|v| v.is_empty()) {
         auto.pop();
     }
-    (fx, bypass, auto, reversed)
+    kt_model::fx_graph::canonical(&mut fx_in, fx.len());
+    (fx, bypass, auto, fx_in, reversed)
 }
 
 /// TRACKS of a reel from the envelope and from the file’s own tracks (R.62).
@@ -2617,6 +2656,7 @@ fn build_tracks(
                 t.fx = facts.fx.clone();
                 t.fx_bypass = facts.bypass.clone();
                 t.fx_auto = facts.auto.clone();
+                t.fx_in = facts.fx_in.clone();
                 break;
             }
             rank += 1;
@@ -2661,6 +2701,7 @@ struct TrackFacts {
     fx: Vec<kt_model::FxInstance>,
     bypass: Vec<bool>,
     auto: Vec<Vec<kt_model::ParamCurve>>,
+    fx_in: Vec<kt_model::SlotInputs>,
 }
 
 /// The reel’s own raster and fps from the `kt` envelope (R.62); no keys — the project.
@@ -2758,7 +2799,7 @@ fn read_nest(
         }
     };
     *cx.next_clip_id = (*cx.next_clip_id).max(id.0 + 1);
-    let (fx, fx_bypass, fx_auto, reversed) = nest_effects(st, cx);
+    let (fx, fx_bypass, fx_auto, fx_in, reversed) = nest_effects(st, cx);
     // the true time — from the envelope, if the track could not express it (R.58)
     let start = meta.as_ref().and_then(|m| m.start).map(Tick).unwrap_or(start);
     Ok(ClipEvent {
@@ -2786,6 +2827,7 @@ fn read_nest(
         geometry_pos: meta.as_ref().map(|m| m.geometry_pos).unwrap_or(0),
         geometry_auto: meta.as_ref().map(|m| m.geometry_auto.clone()).unwrap_or_default(),
         masks: meta.as_ref().map(|m| m.masks.clone()).unwrap_or_default(),
+        fx_in,
     })
 }
 
@@ -2874,6 +2916,7 @@ fn clip_from_otio(
 
     // effects: kt:* → chain, LTW ±1 → reversed/no-op, other → foreign
     let mut fx = Vec::new();
+    let mut fx_in: Vec<kt_model::SlotInputs> = Vec::new();
     let mut fx_auto: Vec<Option<serde_json::Value>> = Vec::new();
     let mut bypass = Vec::new();
     let mut reversed = false;
@@ -2896,6 +2939,7 @@ fn clip_from_otio(
             EffectNode::Effect(eff) if eff.effect_name == "kt:pan" => {
                 // the former Pan (R.62) — a “Geometry” node on the same slot
                 if let Some((inst, curves)) = migrate_pan_effect(&eff.metadata) {
+                    fx_in.push(Default::default());
                     fx.push(inst);
                     fx_auto.push(serde_json::to_value(curves).ok());
                     bypass.push(!eff.enabled);
@@ -2908,6 +2952,7 @@ fn clip_from_otio(
                         // We parse AFTER the loop: the key domain for files before
                         // v3 depends on source_in and reversed, and the reverse
                         // arrives as a separate effect below
+                        fx_in.push(get_in(&eff.metadata));
                         fx.push(inst);
                         fx_auto.push(
                             eff.metadata
@@ -3016,6 +3061,11 @@ fn clip_from_otio(
         fx,
         fx_auto,
         fx_bypass: bypass,
+        fx_in: {
+            let n = fx_in.len();
+            kt_model::fx_graph::canonical(&mut fx_in, n);
+            fx_in
+        },
     };
     // slowed&reverb keyframes of the old pattern — into the shared mechanism (R.33):
     // they no longer have their own domain

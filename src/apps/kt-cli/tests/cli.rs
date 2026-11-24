@@ -308,6 +308,7 @@ fn t307_relative_media_paths_resolve_once() {
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     std::fs::write(sub.join("p.kt"), kt_model::project_file::to_text(&p, None)).unwrap();
@@ -1019,6 +1020,7 @@ fn t940_probe_conform_line_is_the_render_s() {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
     }
     p.ensure_tracks(LaneKind::Video, 2);
@@ -1108,6 +1110,7 @@ fn owner_grid_case() -> kt_model::Project {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.ensure_tracks(LaneKind::Morph, 1);
     p.morphers.push(MorpherEvent {
@@ -1566,5 +1569,100 @@ fn t2808_kt_cli_export_writes_what_its_flags_ask() {
     assert!(!ok, "a bad setting is an error");
     assert!(all.contains("speed:"), "the key is named: {all}");
     assert!(!out.exists(), "nothing was written");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A cut mosh on two fixture videos in `src` (stream-picture-stays): shot 1 for a second, then shot 2
+/// on the same track with Datamosh, the stream starting twelve frames into shot 1.
+fn mosh_case(src: &std::path::Path) -> kt_model::Project {
+    use kt_model::*;
+    use kt_time::Tick;
+    const SEC: i64 = 90_000;
+    let clip = |id: u64, media: u64, start: i64, fx: Vec<kt_model::FxInstance>| ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
+        overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
+        masks: Default::default(),
+        id: ClipId(id),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(start),
+        duration: Tick(SEC),
+        source_in: Tick(0),
+        media: MediaId(media),
+        gain_db: 0.0,
+        reversed: false,
+        fx,
+        fx_bypass: vec![],
+        fx_in: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    };
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 320,
+        height: 180,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+        default_shape: Default::default(),
+        conform: Default::default(),
+        settings_explicit: false,
+    });
+    p.media.push(MediaRef::new(MediaId(1), src.join("testsrc_12s.mp4").to_str().unwrap()));
+    p.media.push(MediaRef::new(MediaId(2), src.join("testsrc_h264.mp4").to_str().unwrap()));
+    let mut mosh = kt_model::FxInstance::plugin("datamosh").expect("built in");
+    for (name, v) in [("lines", 0.0), ("before", 12.0), ("mosh", 1.0), ("gop", 12.0), ("qp", 14.0)] {
+        assert!(mosh.set_param(name, v), "{name}");
+    }
+    p.clips.push(clip(1, 1, 0, vec![]));
+    p.clips.push(clip(2, 2, SEC, vec![mosh]));
+    p.validate().unwrap();
+    p
+}
+
+/// Test t3821 (stream-picture-stays D2, D1): `kt-cli preview --one-device` shares the display's device
+/// with the compute host, and a Datamosh loop on it crosses nothing: on two devices every mosh frame the
+/// preview renders is a `stream_cross` record, on one device none is. The relation, not a count: how many
+/// frames a loop renders is the machine's (t3814, t3820 and t3823 hold the paths without a clock).
+#[test]
+fn t3821_one_device_crosses_nothing_over_a_loop() {
+    kt_plugins_builtin::install();
+    let dir = showcase_sources("t3821");
+    let path = dir.join("mosh.kt");
+    std::fs::write(&path, kt_model::project_file::to_text(&mosh_case(&dir.join("sources")), None)).unwrap();
+    // (mosh frames rendered, stream pictures crossed)
+    let run = |one: bool| -> Option<(usize, usize)> {
+        let trace = dir.join(if one { "one" } else { "two" });
+        let mut c = cli();
+        c.args(["preview", path.to_str().unwrap(), "1.2", "1.8", "--loop", "4", "--size", "160x90", "--trace", trace.to_str().unwrap()]);
+        if one {
+            c.arg("--one-device");
+        }
+        let out = c.output().unwrap();
+        let err = String::from_utf8_lossy(&out.stderr).to_string();
+        if err.contains("no video device") {
+            eprintln!("skipped: no video device");
+            return None;
+        }
+        assert!(out.status.success(), "{err}");
+        if one && !err.contains("compute on the display's device: yes") {
+            eprintln!("skipped: {err}");
+            return None;
+        }
+        let dump = String::from_utf8_lossy(&cli().args(["trace", trace.to_str().unwrap(), "dump"]).output().unwrap().stdout).to_string();
+        let rendered = dump.lines().filter(|l| l.contains("\"ev\":\"stream_run\"") && (l.contains("\"aux\":1,") || l.contains("\"aux\":1}"))).count();
+        let crossed = dump.lines().filter(|l| l.contains("\"ev\":\"stream_cross\"")).count();
+        Some((rendered, crossed))
+    };
+    let Some((rendered, crossed)) = run(false) else { return };
+    assert_eq!(crossed, rendered, "two devices: every mosh frame rendered crosses the bus");
+    let Some((rendered_one, crossed_one)) = run(true) else { return };
+    assert_eq!(crossed_one, 0, "one device crosses nothing (frames rendered: {rendered_one})");
+    eprintln!("t3821: two devices rendered {rendered}, crossed {crossed}; one device rendered {rendered_one}, crossed 0");
     let _ = std::fs::remove_dir_all(&dir);
 }

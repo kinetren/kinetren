@@ -92,7 +92,7 @@ pub enum Node {
     /// The host's premultiplication of `Prev` (R.53, item 418).
     Premul,
     Unpremul,
-    /// The host's bilinear resample of `Prev` to `w×h` (the mirror of `RasterHost::resample`).
+    /// The host's bilinear resample of `Prev` to `w×h`.
     Resample { w: u32, h: u32 },
     /// The plugin's fragment pass `shaders()[shader]` at the frame size, reading up to three slots
     /// as `T0..T2`; `u`/`f` are the pass's `P.u0..u1`/`P.f0..f1`.
@@ -130,7 +130,8 @@ pub trait BarrierKernel: Send + Sync {
     }
     /// The GPU graph for this frame; an empty graph is a passthrough (drop_shadow on an opaque frame).
     fn gpu(&self, _k: &Cooked, _g: &GpuCtx, _out: &mut Vec<Node>) {}
-    /// The GPU graph from the passport values; the default cooks them (as `frame_values`).
+    /// The GPU graph from the passport values; the default cooks them ([`BarrierKernel::cook`]) and asks
+    /// [`BarrierKernel::gpu`].
     fn gpu_values(&self, values: &[f64], g: &GpuCtx, out: &mut Vec<Node>) {
         self.gpu(&self.cook(values), g, out)
     }

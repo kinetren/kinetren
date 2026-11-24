@@ -35,6 +35,7 @@ fn clip(id: u64, kind: ClipKind, lane: u32, start: Tick, dur: Tick) -> ClipEvent
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     }
 }
 
@@ -824,6 +825,7 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.ensure_tracks(LaneKind::Morph, 1);
     p.set_lane_order(&[(LaneKind::Morph, 0), (LaneKind::Video, 0), (LaneKind::Audio, 0)]);
@@ -927,6 +929,7 @@ fn warped(rate: f64, keys: Vec<AutoKey>, reversed: bool) -> ClipEvent {
         },
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     }
 }
 

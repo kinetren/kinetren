@@ -1253,6 +1253,7 @@ impl KtApp {
                         slots: vec![],
                         src_in: kt_time::Tick(0),
                         fx_off: false,
+                        fx_in: Vec::new(),
                     },
                     name: old.clone(),
                     rename_of: Some(old),
@@ -1374,12 +1375,8 @@ impl KtApp {
             // itself re-dresses the event values (`fit_gen_to_media`), so the command is one.
             if let Some(kind) = e.switch_kind {
                 let Some(media) = self.model.clip(e.clip).map(|c| c.media) else { continue };
-                self.gesture_counter += 1;
-                let g = self.gesture_counter;
-                self.apply_coalesced(
-                    Command::SetMediaPath { id: media, path: kt_model::gen_kind_path(&kind) },
-                    g,
-                );
+                let cmds = self.gen_kind_switch_cmds(media, &kind);
+                self.apply_batch(cmds);
                 continue;
             }
             // A preset sets EVERYTHING (values and curves) — also its own history step: pressed it,
@@ -1602,6 +1599,8 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Geometry { lead: true, .. } => "• Geometry",
         FxInstance::Geometry { .. } => "Geometry",
         FxInstance::CamMotion { .. } => "CamMotion",
+        // routing of the graph (fx-graph-dag D1); its caption joins the catalogues with the editor (v2d)
+        FxInstance::Merge { .. } => "Merge",
         // a plugin names itself in its manifest (plugin-api-stage1, D7)
         FxInstance::Plugin(p) => p.manifest().ui.name,
         // a plugin this build lacks: the id from the file, said as such

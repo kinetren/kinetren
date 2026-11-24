@@ -52,6 +52,7 @@ fn stack(layers: u64) -> Project {
             fx_auto: vec![],
             opacity: 0.5,
             fx_off: false,
+            fx_in: Vec::new(),
         });
     }
     p.ensure_tracks(LaneKind::Video, layers as u32);

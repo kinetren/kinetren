@@ -35,6 +35,8 @@ fn layer<'a>(f: &Arc<VideoFrame>, fx: &'a [FxInstance], id: u64) -> LayerSrc<'a>
         blend_mode: kt_model::BlendMode::Normal,
         lead: None,
         masks: Vec::new(),
+        fx_in: &[],
+        reads: Vec::new(),
     }
 }
 
