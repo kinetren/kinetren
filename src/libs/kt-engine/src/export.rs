@@ -78,8 +78,12 @@ pub enum ExportPhase {
 
 #[derive(Debug, Clone, Default)]
 pub struct ExportStats {
+    /// Frames and samples WRITTEN, counted where the sink takes them.
     pub video_frames: u64,
     pub audio_frames: u64,
+    /// What the export announced (the progress totals); 0 — it announced nothing (render_raw_*).
+    pub announced_video: u64,
+    pub announced_audio: u64,
     pub underruns: u64,
     /// Which video encoder was chosen (for the UI); empty for render_raw_*.
     pub encoder: String,
@@ -103,6 +107,23 @@ pub struct ExportStats {
     /// Where the export's time went, one line (render-speed D2, `ExportProfile::summary`): the render
     /// window writes it into the telemetry journal. Empty for render_raw_*.
     pub stages: String,
+}
+
+impl ExportStats {
+    /// The pairs that differ: (frames written, announced) and (samples written, announced)
+    /// (render-result-check D2).
+    pub fn short(&self) -> (Option<(u64, u64)>, Option<(u64, u64)>) {
+        let pair = |w: u64, n: u64| (n > 0 && w != n).then_some((w, n));
+        (pair(self.video_frames, self.announced_video), pair(self.audio_frames, self.announced_audio))
+    }
+
+    /// Both pairs in one line, for the journal.
+    pub fn totals(&self) -> String {
+        format!(
+            "frames {}/{}, sound {}/{} samples",
+            self.video_frames, self.announced_video, self.audio_frames, self.announced_audio
+        )
+    }
 }
 
 /// Export video cache budget.
@@ -937,6 +958,8 @@ pub fn export_mp4_with_backends(
     Ok(ExportStats {
         video_frames: vstats.video_frames,
         audio_frames: astats.audio_frames,
+        announced_video: total_video,
+        announced_audio: total_audio,
         underruns: astats.underruns,
         missing_video_layers: vstats.missing_video_layers,
         encoder,
@@ -1015,6 +1038,8 @@ pub fn render_pipelined_budget<S: ExportSink>(
         video_frames: v.video_frames,
         missing_video_layers: v.missing_video_layers,
         audio_frames: a.audio_frames,
+        announced_video: v.announced_video,
+        announced_audio: a.announced_audio,
         underruns: a.underruns,
         loudness: a.loudness,
         encoder: String::new(),

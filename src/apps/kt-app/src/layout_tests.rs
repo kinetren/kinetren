@@ -19968,6 +19968,33 @@ fn t1604_a_failed_render_says_what_failed() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Test 3998b (render-result-check D2): a finished render whose written numbers fell short of the
+/// announced ones says both numbers of each pair; one that ended at its totals says neither.
+#[test]
+fn t3998b_a_short_render_says_both_numbers() {
+    let texts = |stats: kt_engine::export::ExportStats| -> Vec<String> {
+        let mut h = harness_lang(Lang::En);
+        scripted_render(h.state_mut());
+        h.state_mut().render_job.as_mut().unwrap().on_result(Ok(stats));
+        for _ in 0..3 {
+            h.step();
+        }
+        shown_texts(&h)
+    };
+    let full = kt_engine::export::ExportStats {
+        video_frames: 517,
+        announced_video: 517,
+        audio_frames: 413_364,
+        announced_audio: 413_364,
+        ..Default::default()
+    };
+    let said = texts(kt_engine::export::ExportStats { video_frames: 516, audio_frames: 412_672, ..full.clone() });
+    assert!(said.iter().any(|t| t == "frames written: 516 of 517"), "{said:?}");
+    assert!(said.iter().any(|t| t == "sound written: 412672 of 413364 samples"), "{said:?}");
+    let said = texts(full);
+    assert!(!said.iter().any(|t| t.contains(" written: ")), "a full render says a difference: {said:?}");
+}
+
 /// Test 965 (hw-encode-context D6): the encoder list offers a device encoder only with its device,
 /// and the progress row names the device.
 ///

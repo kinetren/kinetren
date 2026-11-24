@@ -2135,9 +2135,10 @@ fn run(args: &[String]) -> i32 {
             ) {
                 Ok(stats) => {
                     eprintln!(
-                        "ok: {} video frames, {} audio frames, underruns {}, missing layers {}, encoder {}",
+                        "ok: {} video frames, {} audio frames, {}, underruns {}, missing layers {}, encoder {}",
                         stats.video_frames,
                         stats.audio_frames,
+                        stats.totals(),
                         stats.underruns,
                         stats.missing_video_layers,
                         stats.encoder
