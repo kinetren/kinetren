@@ -5453,6 +5453,43 @@ fn t920_esc_closes_the_top_window_first() {
     assert!(app.model.project().loop_enabled, "the loop stays armed (item 3 of round 11)");
 }
 
+/// Test t3291 (shared-window-shell, found-defects 905): two presses of Esc read in ONE frame close two
+/// windows, the top one and the one under it. Both were taken off the stack, only the second was told,
+/// so the window ON TOP stayed and the next Esc went past it (live `node_graph`, finish-23c).
+#[test]
+fn t3291_two_esc_in_one_frame_close_two_windows() {
+    let mut h = crate::layout_tests::harness_sized(1600.0, 900.0);
+    crate::layout_tests::owner_morpher_scene(&mut h);
+    if let Some(ed) = h.state_mut().morph_editors.first_mut() {
+        ed.open = false;
+    }
+    h.step();
+    h.state_mut().open_fx_editor(kt_model::ClipId(1));
+    h.step();
+    h.step();
+    h.state_mut().open_morph_editor(kt_model::MorphId(1));
+    h.step();
+    h.step();
+    let open = |h: &egui_kittest::Harness<'static, crate::app::KtApp>| {
+        (h.state().fx_editors.iter().any(|e| e.open), h.state().morph_editors.iter().any(|e| e.open))
+    };
+    assert_eq!(open(&h), (true, true), "scene: the FX window and the morpher window over it");
+    // a slow frame reads both presses at once
+    for pressed in [true, false, true, false] {
+        // into the frame's own input: `Harness::event` gives every event a frame of its own
+        h.input_mut().events.push(egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+    h.step();
+    assert_eq!(open(&h), (false, false), "two Esc in one frame did not close both windows");
+}
+
 /// `f32` steps over a range (only for the probe above).
 trait StepF32 {
     fn step_by_f32(self, step: f32) -> Box<dyn Iterator<Item = f32>>;
