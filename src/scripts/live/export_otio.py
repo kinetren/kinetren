@@ -57,6 +57,7 @@ def main(out):
                 break
             poll_step(0.25)
         app.expect(ok, "exchange file appeared on disk")
+        app.until(lambda: any(dst in n for n in app.geom().get("notices", [])))
         app.settle()
         app.step("exported", "“exported” notification, edit in place")
         if ok:
@@ -71,10 +72,10 @@ def main(out):
         # STEP 3: the project and the asterisk are untouched — export is not a save
         app.expect(open(app.project, "rb").read() == before, "the project file is untouched by the export")
         app.expect(bool(app.geom().get("dirty")) == dirty0, "the asterisk is as it was: export is not a save")
-        notes = app.geom().get("notices", [])
+        # the file appears at its rename, the notice after the folder's fsync (found-defects 840)
         app.expect(
-            any(dst in n for n in notes),
-            f"the notification names where the exchange file was written: {notes}",
+            app.until(lambda: any(dst in n for n in app.geom().get("notices", []))),
+            f"the notification names where the exchange file was written: {app.geom().get('notices')}",
         )
     return app.done()
 

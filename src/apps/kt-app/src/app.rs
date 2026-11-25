@@ -477,6 +477,8 @@ pub struct KtApp {
     /// Lock on the project file (item 352). `None` — the project is unnamed or
     /// busy with another copy: then `lock_holder` carries its process number.
     pub project_lock: Option<crate::project_lock::ProjectLock>,
+    /// Disk calls on their way (`disk.rs`).
+    pub(crate) disk_asks: Vec<crate::disk::DiskAsk>,
     /// Process number of the holder, if the project is busy not by us.
     pub lock_holder: Option<Option<u32>>,
     /// The question “the project is busy — save anyway?” is asked ONCE per
@@ -1113,6 +1115,7 @@ impl KtApp {
             saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             recovery_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             project_lock: None,
+            disk_asks: Vec::new(),
             lock_holder: None,
             lock_override: false,
             ask: None,
@@ -1464,6 +1467,7 @@ impl KtApp {
             saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             recovery_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             project_lock: None,
+            disk_asks: Vec::new(),
             lock_holder: None,
             lock_override: false,
             ask: None,
@@ -2233,6 +2237,7 @@ impl KtApp {
         self.take_camera();
         self.take_saved(std::time::Duration::ZERO);
         self.take_media(std::time::Duration::ZERO);
+        self.take_disk(std::time::Duration::ZERO);
         self.take_opening(std::time::Duration::ZERO);
         if let Some((snap_rev, rx)) = &self.autosave_rx
             && let Ok(res) = rx.try_recv()
@@ -6344,6 +6349,7 @@ impl KtApp {
     pub(crate) fn replace_with(&mut self, mut app: KtApp) {
         self.queue_poster();
         std::mem::swap(&mut app.start, &mut self.start);
+        app.disk_asks.append(&mut self.disk_asks);
         // the switch came with the store: the load above had none yet
         if !cfg!(test) && app.cache_mode() != Default::default() {
             app.set_persistent_cache();
@@ -11654,6 +11660,12 @@ impl eframe::App for KtApp {
             let ended = rx.recv_timeout(std::time::Duration::from_secs(5)).is_ok();
             record("autosave", since, ended);
         }
+        // what a gesture asked of the disk just before (an export) is waited for, within a bound
+        if !self.disk_asks.is_empty() {
+            let since = std::time::Instant::now();
+            self.take_disk(CLOSE_RECOVERY_WAIT);
+            record("disk", since, self.disk_asks.is_empty());
+        }
         // a Ctrl+S still writing finishes first: its outcome decides the asterisk below. What
         // waited for it (an open, a lesson) has no window to happen in any more
         self.after_save = None;
@@ -12254,10 +12266,15 @@ impl KtApp {
     /// The export body by path — for the menu item and for the live scenario.
     pub(crate) fn export_otio_to(&mut self, dst: &Path) {
         let out = kt_otio::save_project(&self.model.document(), &self.retained, dst.parent());
-        match write_project_atomic(dst, &out) {
-            Ok(()) => self.note(crate::tf!(k::msg::EXPORTED, dst.display().to_string())),
-            Err(e) => self.warn(crate::tf!(k::msg::SAVE_FAILED, e)),
-        }
+        // two fsyncs: off the UI thread, the notice when it is done (found-defects 840)
+        let dst = dst.to_path_buf();
+        self.disk(
+            move || write_project_atomic(&dst, &out).map(|()| dst.display().to_string()),
+            |app, done| match done {
+                Ok(p) => app.note(crate::tf!(k::msg::EXPORTED, p)),
+                Err(e) => app.warn(crate::tf!(k::msg::SAVE_FAILED, e)),
+            },
+        );
     }
 
 }

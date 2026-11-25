@@ -1288,7 +1288,7 @@ impl KtApp {
             "{{\"frame\":{},\"meter_db\":[{:.1},{:.1}],\"input\":{},\"bench_done\":{},\"windows\":{},\"project\":\"{}\",\
              \"playhead\":{},\"playing\":{},\"base_rate\":{:.3},\"fields\":[{}],\"clips\":[{}],\"markers\":[{}],\
              \"nest\":{},\"clipboard\":{},\"status\":\"{}\",\
-             \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"keys_gated\":{},\"double_click_s\":{:.3},\"rest_wakes\":\"{}\",\"sound_paused\":{},\"sound_callbacks\":{},\"posters_busy\":{},\"rc_settled\":{},\"rest_clock_ms\":{},\"analysis\":{},\"morphers\":{},\
+             \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"keys_gated\":{},\"double_click_s\":{:.3},\"rest_wakes\":\"{}\",\"sound_paused\":{},\"sound_callbacks\":{},\"posters_busy\":{},\"small_files\":{},\"rc_settled\":{},\"rest_clock_ms\":{},\"analysis\":{},\"morphers\":{},\
              \"compose\":{{\"ms\":{:.2},\"avg\":{:.2},\"gpu\":{},\"subsamples\":{},\
              \"on_display\":{},\"ui_only\":{},\"picture\":{},\"complete_taken\":{},\"shown\":{},\"skipped\":{},\"last_ms\":[{:.2},{:.2},{:.2},{:.2},{:.2}]}},\
              \"notices\":[{}],\
@@ -1338,6 +1338,9 @@ impl KtApp {
             self.audio.as_ref().map_or(0, |a| a.ctl().callbacks.load(ord)),
             // a poster queued by Ctrl+S or a close renders in the background (found-defects 767)
             crate::welcome::posters_busy(),
+            // the program's own small files asked and not written yet (found-defects 841): a scenario that
+            // reads one reads it when there are none
+            crate::later::waiting(),
             // the disk prerender has nothing left to do (found-defects 950): a live check waits for the
             // program's own word, not for its processor share — starved, it read as quiet mid-work
             self.player.render_cache().settled(),

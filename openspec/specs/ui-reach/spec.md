@@ -492,6 +492,12 @@ item "Import .ktproj…" was an extra door with the same meaning.
 - **PATH** File → Export → OpenTimelineIO… → save dialog → file name → notification "exported: …", the asterisk in the title as it was
 - **TEST** t820 (`src/apps/kt-app/src/reach_tests.rs`), live scenario `src/scripts/live/export_otio.py`
 
+#### Scenario: An export waits for no disk
+- **WHEN** an export is asked on a disk that stands, another project is opened meanwhile, the disk answers; then an export onto a name that is a folder, and one right before the program is closed
+- **THEN** no frame makes a blocking call; the notice comes after the file is there; the second warns; the close waits for the third, whose file is there
+- **PATH** File → Export → OpenTimelineIO… on a disk that stands → the menu closes, the window goes on drawing → the disk answers → "exported: <path>"
+- **TEST** t3736 (`src/apps/kt-app/src/disk_tests.rs`)
+
 #### Scenario: Three files on the window — three outcomes
 - **WHEN** `film.kt`, `film.otio`, `film.ktproj` are dropped onto the window in turn
 - **THEN** the first gives the question "open or insert as a composition", the edit is untouched; the second — a notification with the kind of file (OpenTimelineIO) and the name of the import item, without a question; the third — a notification about the legacy format with the same item; the texts of the second and third differ
