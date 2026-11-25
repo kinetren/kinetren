@@ -8628,3 +8628,63 @@ fn t3447_a_heavy_range_survives_an_edit_beside_it_and_the_store_says_so() {
     drop(h);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// t3737 (found-defects 844, as t1671 holds the clock): a test does not count frames for something to
+/// become true. A counted loop that steps the harness and leaves when its condition holds is a limit
+/// nobody named: what another thread makes true is waited for by `layout_tests::step_until`. The list is
+/// the loops whose steps are gestures the test makes itself (a wheel turn, a pointer row) or egui's own
+/// animation.
+#[test]
+fn t3737_a_test_does_not_count_frames_for_a_condition() {
+    const STEPS_ARE_THE_GESTURE: &[(&str, &str)] = &[
+        // the pointer goes down the media bin's cards, row by row, until it leaves the panel
+        ("layout_tests.rs", "let p = egui::pos2(g.left() + 30.0, g.top() + 20.0 + y as f32 * 12.0);"),
+        // turns of the wheel until the row stands in the window (two helpers)
+        ("layout_tests.rs", "if r.bottom() < 470.0 {"),
+        ("layout_tests.rs", "let w = win(h)?;"),
+        ("layout_tests.rs", "let texts = crate::reach_tests::painted_texts(h);"),
+        ("reach_tests.rs", "if win(&h).shrink(24.0).contains_rect(h.get_by_label(wb).rect()) {"),
+        // egui's smooth scroll comes to rest by the harness's own frame time
+        ("layout_tests.rs", "&& (a.min - b.min).length() < 0.5"),
+    ];
+    let root = workspace_root();
+    let mut files = Vec::new();
+    collect_rs(&root.join("apps/kt-app/src"), &mut files);
+    assert!(files.len() > 30, "the sources are not where they were: {}", files.len());
+    let (mut bad, mut seen) = (Vec::new(), Vec::new());
+    for f in files {
+        let text = std::fs::read_to_string(root.join(&f)).unwrap();
+        let text: String = text.lines().filter(|l| !l.trim_start().starts_with("//")).flat_map(|l| [l, "\n"]).collect();
+        let name = std::path::Path::new(&f).file_name().unwrap().to_string_lossy().into_owned();
+        let mut at = 0;
+        while let Some(i) = text[at..].find("for ") {
+            let from = at + i;
+            at = from + 4;
+            let Some(open) = text[from..].find('{').map(|o| from + o) else { break };
+            let head = &text[from..open];
+            if !head.contains(" in ") || !head.contains("..") || head.contains('\n') || head.contains(';') {
+                continue;
+            }
+            let (mut depth, mut end) = (0usize, open);
+            for (k, c) in text[open..].char_indices() {
+                depth = if c == '{' { depth + 1 } else if c == '}' { depth.saturating_sub(1) } else { depth };
+                if depth == 0 {
+                    end = open + k;
+                    break;
+                }
+            }
+            let body = &text[open..end];
+            if !body.contains(".step()") || !["break;", "return"].iter().any(|w| body.contains(w)) {
+                continue;
+            }
+            match STEPS_ARE_THE_GESTURE.iter().find(|(n, w)| *n == name && body.contains(w)) {
+                Some(e) => seen.push(*e),
+                None => bad.push(format!("{name}: {} {}", head.trim(), body.split_whitespace().take(24).collect::<Vec<_>>().join(" "))),
+            }
+        }
+    }
+    assert!(bad.is_empty(), "frames are counted for a condition, use layout_tests::step_until:\n{}", bad.join("\n"));
+    for e in STEPS_ARE_THE_GESTURE {
+        assert!(seen.contains(e), "the list names a loop that is gone: {e:?}");
+    }
+}

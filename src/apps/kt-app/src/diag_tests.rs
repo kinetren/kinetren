@@ -236,8 +236,10 @@ fn t1147_graphs_grow_with_the_window() {
         app.perf.decode.push(&[v, v, v, v, v]);
         app.perf.churn.push(&[v, v, v]);
     }
-    h.step();
-    h.step();
+    // it opens at its floors in the frame after the sizing pass's next (found-defects 1005)
+    for _ in 0..4 {
+        h.step();
+    }
     let before = diag_rect(&h).unwrap();
     let tops = graph_tops(&h);
     let gaps = [tops[1] - tops[0], tops[2] - tops[1]];

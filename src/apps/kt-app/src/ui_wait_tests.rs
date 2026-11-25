@@ -3,6 +3,7 @@
 //! a clock: a frame that waited for the picture could never return.
 
 use crate::app::KtApp;
+use crate::layout_tests::step_until;
 use eframe::egui;
 use egui_kittest::Harness;
 use kt_model::{ClipId, Command};
@@ -565,16 +566,6 @@ fn t2308_a_failed_write_drops_what_waited_for_it() {
         assert!(st.dirty_content, "the asterisk went out on a failed write");
         assert!(st.after_save.is_none(), "the action still waits after the write failed");
         assert!(warns(&h) > w0, "the failed write said nothing");
-    }
-}
-
-/// Step frames until `done` holds (the test's bound; a frame takes what landed).
-fn step_until(h: &mut Harness<'static, KtApp>, what: &str, done: impl Fn(&KtApp) -> bool) {
-    let deadline = kt_time::test_deadline();
-    while !done(h.state()) {
-        assert!(std::time::Instant::now() < deadline, "{what} never happened");
-        h.step();
-        std::thread::sleep(Duration::from_millis(5));
     }
 }
 

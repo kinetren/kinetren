@@ -67,14 +67,9 @@ fn shown(probe: &str) -> bool {
     crate::widgets::field_probe::rect_of(probe).is_some()
 }
 
-/// Until `ok`, frame after frame.
+/// Until `ok`, and the frame that shows it.
 fn until(h: &mut Harness<'static, KtApp>, what: &str, ok: impl Fn(&KtApp) -> bool) {
-    let deadline = kt_time::test_deadline();
-    while !ok(h.state()) {
-        assert!(std::time::Instant::now() < deadline, "{what}");
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        h.step();
-    }
+    crate::layout_tests::step_until(h, what, ok);
     h.step();
 }
 
