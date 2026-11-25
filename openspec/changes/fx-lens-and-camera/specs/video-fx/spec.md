@@ -7,9 +7,8 @@ The built-in plugin `lens_housing` SHALL darken the frame outside a rounded hous
 softness and corner roundness are fractions of ITS OWN stage's short semi-axis (the `vignette`
 rule), so a `geometry` zoom placed before it does not move the housing out of the corners, and one
 placed after it scales the housing with the picture. At amount 0 the output SHALL equal the input
-byte for byte. It is a point-wise plugin with a positioned tap (the coordinate of its stage, a
-contract of `plugin-api-stage1`), and it falls under the golden cycle (t328) and the CPU↔GPU
-conformance (t329) without a copy of those checks.
+byte for byte. It is a point-wise plugin with a positioned tap (the coordinate of its stage) and it
+falls under the stored-frame cycle (t328) and the registry parity cycle (t329) without a copy of those checks.
 Why: the owner's FX item 1 — "the lens corners" of a fisheye; a housing in frame pixels would slide
 off the corners the moment the shot is zoomed, which is exactly the vignette lesson.
 
@@ -19,15 +18,14 @@ off the corners the moment the shot is zoomed, which is exactly the vignette les
 - **THEN** in the first chain the four corner pixels of the output are dark and the centre is the
   zoomed input; in the second the dark region is the first chain's housing scaled by 1.5 about the
   centre; amount 0 gives the input bytes
-- **TEST** t1010 (`src/plugins/fx-video-color/tests/lens_housing.rs`)
+- **TEST** t1010 (`src/libs/kt-gpu/tests/lens_housing.rs`)
 
 ### Requirement: Lens dirt shows only where the frame has highlights
 The built-in plugin `lens_dirt` SHALL take the frame's highlights with the threshold of `glow` (a
 blurred-luma soft knee), multiply them by a procedural dirt pattern (a counter-based hash of the
 stage grid cell and a seed, pinned to the stage like `noise`'s grain) and add the product back. A
 frame whose blurred luma stays below the threshold SHALL come out byte-identical; the pattern SHALL
-be resolution-invariant under the K× barrier rule. It is a barrier plugin with a GPU pass (a
-contract of `plugin-api-stage1`); no media file ships with it.
+be resolution-invariant under the K× barrier rule. It is a barrier plugin; no media file ships with it.
 Why: real dirt scatters existing light and adds none (Unity's Dirtiness on the bloom, F-FX-008
 trick 1); an overlay plate shows dirt on a black frame and stays put when the shot pans.
 
@@ -37,26 +35,20 @@ trick 1); an overlay plate shows dirt on a black frame and stays put when the sh
 - **THEN** the dark frame is unchanged byte for byte; with the disc, pixels change only within the
   blur radius of the disc and the change is the dirt pattern of that seed (another seed gives another
   pattern); the 2× render reduced to 1× is within `FrameTol` of the 1× render
-- **TEST** t1011 (`src/plugins/fx-video-stylize/tests/lens_dirt.rs`)
+- **TEST** t1011 (`src/libs/kt-gpu/tests/lens_dirt.rs`)
 
-### Requirement: Lens drops are a Warp mode, edited as a pair
-`lens_drops` SHALL be a geometry plugin whose map is a new `drops` mode of the Warp primitive:
-drop cells on the normalised stage grid, each drop's centre and radius a counter-based hash of the
-cell and the seed, inside a drop the source coordinate displaced toward (or, with negative
-refraction, away from) its centre. The CPU map in `src/libs/kt-fx/src/geom.rs` and its WGSL mirror in
-`src/libs/kt-gpu/src/shaders/geom_fused.wgsl` SHALL change in one commit; the mode SHALL fuse with a
-neighbouring `lens_distort` in one pass; refraction 0 SHALL give the input bytes of a lone step.
-Why: a drop is a displacement of the source coordinate (F-FX-008 trick 2), i.e. an inverse map — the
-geometry family's own form, without a new pass; the fused map stays closed to plugins
-(`plugin-api-stage1` D5), so the mode is the one core edit of the wave.
+### Requirement: Lens drops are a warp plugin
+`lens_drops` SHALL be a warp plugin whose inverse map is drop cells on the normalised stage: each drop's centre and radius
+a counter-based hash of the cell and the seed, inside a drop the source coordinate displaced toward (or, with negative
+refraction, away from) its centre. The plugin's f64 map (the planner's probe) and its WGSL arm SHALL agree; it SHALL fuse
+with a neighbouring `lens_distort` in one pass; refraction 0 SHALL add no step.
+Why: a drop is a displacement of the source coordinate (F-FX-008 trick 2), i.e. an inverse map; a warp plugin brings its
+own arm, so no core mode is needed.
 
-#### Scenario: Drops are deterministic, fused and mirrored
-- **WHEN** `lens_distort` → `lens_drops` (seed 7) is rendered on the CPU twice and on the GPU, then
-  with seed 8, then with refraction 0
-- **THEN** the two CPU renders are byte-identical; the GPU render is within `FrameTol::WARP` of the
-  CPU (the pair `geom.rs` ↔ `geom_fused.wgsl`); the plan holds ONE geo run for both steps; seed 8
-  moves the drops; refraction 0 equals the `lens_distort`-only render byte for byte
-- **TEST** t1012 (`src/libs/kt-fx/tests/lens_drops.rs`)
+#### Scenario: Drops are deterministic, fused and measured
+- **WHEN** `lens_distort` → `lens_drops` (seed 7) is rendered twice, then with seed 8, then with refraction 0, then at 30× minification
+- **THEN** the two renders are byte-identical; the plan holds ONE geometry run for both steps; seed 8 moves the drops; refraction 0 equals the `lens_distort`-only render byte for byte; the probe's zoom equals the shader's within `FrameTol::WARP` and the minified frame is supersampled
+- **TEST** t1012 (`src/libs/kt-gpu/tests/lens_drops.rs`)
 
 ### Requirement: The lens flare is placed, not detected
 The built-in plugin `lens_flare` SHALL draw a core glow and ghosts along the line from its `x`/`y`
@@ -72,7 +64,7 @@ a detector would make the flare jump between frames and break "a pure function o
 - **THEN** the difference output − input is the same on both frames (up to the clamp at 255); on the
   curve the ghosts move along the line through the centre and stay drawn when the position leaves the
   frame; brightness 0 gives the input bytes
-- **TEST** t1013 (`src/plugins/fx-video-stylize/tests/lens_flare.rs`)
+- **TEST** t1013 (`src/libs/kt-gpu/tests/lens_flare.rs`)
 
 ### Requirement: Camera looks are chain presets, not kinds
 "Fisheye lens" (`lens_distort` + `lens_housing`), "Zoom Shake" and "Handheld" (a `geometry` curve with
