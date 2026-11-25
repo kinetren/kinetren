@@ -1354,20 +1354,23 @@ pub fn uninstall() {
 /// How long [`flush`] waits at most: a panic hook must not hold a dying process longer.
 pub const FLUSH_LIMIT: Duration = Duration::from_secs(2);
 
-/// Wait until everything recorded so far is in the file (a panic hook, a test), at most
-/// [`FLUSH_LIMIT`].
-pub fn flush() {
+/// Wait until everything recorded so far is in the file (a panic hook, a close), at most
+/// [`FLUSH_LIMIT`]. `false` — the writer stands (a busy disk) and the tail is not there yet.
+pub fn flush() -> bool {
+    flush_until(Instant::now() + FLUSH_LIMIT)
+}
+
+fn flush_until(until: Instant) -> bool {
     if WRITER.get().is_none() {
-        return;
+        return true;
     }
     let target = (HEAD.load(Ordering::Acquire), TEXTS_PUSHED.load(Ordering::Acquire));
-    let until = Instant::now() + FLUSH_LIMIT;
     while Instant::now() < until {
         if TAIL.load(Ordering::Acquire) >= target.0.min(HEAD.load(Ordering::Acquire))
             && TEXTS_DONE.load(Ordering::Acquire) >= target.1
             && DRAINED.load(Ordering::Acquire) >= target.0
         {
-            return;
+            return true;
         }
         if let Some(w) = WRITER.get() {
             PARKED.store(false, Ordering::Release);
@@ -1375,6 +1378,7 @@ pub fn flush() {
         }
         std::thread::sleep(Duration::from_millis(1));
     }
+    false
 }
 
 /// The writer thread's kernel id (Linux), for the at-rest test.
@@ -1684,15 +1688,21 @@ pub mod testing {
         if !on() {
             install(Config::new(None, "test"));
         }
-        flush();
+        self::flush();
         *CAPTURE.lock().unwrap() = Some(Vec::new());
         f();
-        flush();
+        self::flush();
         let got = CAPTURE.lock().unwrap().take().unwrap_or_default();
         if was.is_none() {
             ON.store(false, Ordering::Release);
         }
         got
+    }
+
+    /// Everything recorded so far is in the file or the capture. [`super::flush`] gives up after
+    /// [`FLUSH_LIMIT`]: on a busy disk a test then read what the writer had not written (found-defects 918).
+    pub fn flush() {
+        assert!(super::flush_until(crate::test_deadline()), "the trace's writer stands");
     }
 
     /// The records of a capture.

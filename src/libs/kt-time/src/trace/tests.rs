@@ -43,7 +43,7 @@ fn t2140_records_come_back_from_the_files() {
         h.join().unwrap();
     }
     journal(5, "ACT window opened: Effects");
-    flush();
+    testing::flush();
     let runs = load(&dir).unwrap();
     let run = runs.iter().find(|r| r.label.starts_with("t2140")).expect("our run");
     let reqs: Vec<&Rec> = run.recs.iter().filter(|r| r.kind() == Some(Ev::DecReq) && r.cause == frame).collect();
@@ -75,10 +75,10 @@ fn t2141_ring_files_are_bounded() {
     for k in 1..=last {
         ev(Ev::Job).aux(n).id(k).emit();
         if k % 2000 == 0 {
-            flush();
+            testing::flush();
         }
     }
-    flush();
+    testing::flush();
     let segs = segments(&dir);
     let total: u64 = segs.iter().map(|p| std::fs::metadata(p).unwrap().len()).sum();
     assert!(segs.len() >= 3, "{} segments", segs.len());
@@ -100,7 +100,7 @@ fn t2142_at_rest_the_writer_sleeps() {
     let _g = testing::lock();
     let dir = tmp("t2142");
     install(Config::new(Some(dir.clone()), "t2142"));
-    flush();
+    testing::flush();
     let tid = writer_tid();
     assert!(tid > 0);
     // at rest means PARKED (found-defects 961, row 141's class): a fixed sleep let a writer preempted on
@@ -125,7 +125,7 @@ fn t2142_at_rest_the_writer_sleeps() {
     assert_eq!(before, after, "the writer woke at rest");
     let id = next_id();
     ev(Ev::Edit).id(id).emit();
-    flush();
+    testing::flush();
     let runs = load(&dir).unwrap();
     assert!(runs.iter().flat_map(|r| &r.recs).any(|r| r.id == id));
     let _ = std::fs::remove_dir_all(&dir);
@@ -136,7 +136,7 @@ fn t2142_at_rest_the_writer_sleeps() {
 fn t2143_a_full_ring_drops_and_says_so() {
     let _g = testing::lock();
     install(Config::new(None, "t2143"));
-    flush();
+    testing::flush();
     let lost0 = dropped();
     let items = {
         let _cap = CAPTURE.lock().unwrap().replace(Vec::new());
@@ -148,7 +148,7 @@ fn t2143_a_full_ring_drops_and_says_so() {
         let spent = t0.elapsed();
         assert!(spent < Duration::from_secs(5), "recording waited: {spent:?}");
         drop(p);
-        flush();
+        testing::flush();
         CAPTURE.lock().unwrap().take().unwrap_or_default()
     };
     assert!(dropped() - lost0 >= 5000);

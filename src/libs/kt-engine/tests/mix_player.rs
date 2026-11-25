@@ -145,7 +145,7 @@ fn t1935_covered_loop_replays_and_edits_do_not_stop_the_sound() {
         // renders does not
         assert!(kept as i64 >= lap, "the loop plays from the kept mix: {live} live, {kept} kept");
         assert!(build > std::time::Duration::from_millis(400), "scene guard: a rebuild must outlast the ring, took {build:?}");
-        kt_time::trace::flush();
+        kt_time::trace::testing::flush();
         assert_eq!(r.callback_underruns, 0, "the sound stopped (a rebuild took {build:?})");
         assert_eq!(r.underruns, 0);
         // the bars learn what the store holds
