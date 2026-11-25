@@ -713,8 +713,9 @@ pub(crate) fn run<S: ExportSink>(
         facts.observe(*m, s.info());
     }
     // the chunks being composed and the ones decoded ahead (see the module doc)
-    let cache = BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: pipe_cache_bytes(hooks.budget) });
+    let cache = Arc::new(BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: pipe_cache_bytes(hooks.budget) }));
     let mut video = VideoRenderer::new_with_facts(project, &facts);
+    crate::export::adopt_sources(&cache, &mut video, src.iter().map(|(m, s)| (*m, s.as_ref())));
     video.set_stream_memo(Arc::new(kt_plugin_api::stream::StreamMemo::new(crate::export::EXPORT_STREAM_MEMO_BYTES)));
     let video = video;
     let (t_first, end) = match range {
@@ -810,7 +811,7 @@ pub(crate) fn run<S: ExportSink>(
 
         // --- decode: a chunk ahead, a thread per source within the chunk ---
         let video_ref = &video;
-        let cache_ref = &cache;
+        let cache_ref: &BurstCache = &cache;
         let gate_ref = &gate;
         let chunks_ref = &chunks;
         let decode = scope.spawn(move || -> std::io::Result<()> {

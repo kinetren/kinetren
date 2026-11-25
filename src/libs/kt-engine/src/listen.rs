@@ -48,6 +48,13 @@ pub fn get(path: &str) -> Option<Arc<AudioSeries>> {
     reg().read().unwrap().by_path.get(path).cloned()
 }
 
+/// Forget what `path` sounded like: another file lies there now, or it came back (found-defects 976).
+pub fn forget(path: &str) {
+    let mut r = reg().write().unwrap();
+    r.by_path.remove(path);
+    r.order.retain(|p| p != path);
+}
+
 /// Forget every series (another project opened).
 pub fn clear() {
     let mut r = reg().write().unwrap();

@@ -787,12 +787,18 @@ fn probe_video_cost(project: &Project, path: &str, t0: Tick, t1: Tick) -> Result
             facts.observe(*a, s.info());
         }
     }
-    let video = kt_engine::VideoRenderer::new_with_facts(project, &facts);
+    let mut video = kt_engine::VideoRenderer::new_with_facts(project, &facts);
     let q = kt_media::Quality { width: project.settings.width, height: project.settings.height };
-    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig {
+    let cache = std::sync::Arc::new(kt_cache::BurstCache::new(kt_cache::CacheConfig {
         max_audio_bytes: 1,
         max_video_bytes: 2 << 30,
-    });
+    }));
+    for a in &addrs {
+        if let Some(s) = fetcher.source_mut(*a) {
+            kt_engine::export::adopt_source(&cache, *a, s.as_ref());
+        }
+    }
+    video.set_source_idents(cache.ident_reader());
     let start = video.grid.align_floor(t0);
     let mut per: std::collections::BTreeMap<(kt_model::MediaId, kt_media::Quality), Vec<Tick>> =
         Default::default();

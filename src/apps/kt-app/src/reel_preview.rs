@@ -596,11 +596,12 @@ pub fn render_reel_preview(
         facts.observe(addr, s.info());
         src.insert(addr, s);
     }
-    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig {
+    let cache = Arc::new(kt_cache::BurstCache::new(kt_cache::CacheConfig {
         max_audio_bytes: 1,
         max_video_bytes: 64 << 20,
-    });
+    }));
     let mut video = offline_renderer(p, &facts);
+    kt_engine::export::adopt_sources(&cache, &mut video, src.iter().map(|(m, s)| (*m, s.as_ref())));
     let n = ((end.0 + step - 1) / step).max(1) as usize;
     let mut frames: Vec<Option<Arc<egui::ColorImage>>> = vec![None; n.min(MAX_FRAMES_PER_REEL)];
     let mut jpegs: Vec<Option<Vec<u8>>> = vec![None; frames.len()];
@@ -821,11 +822,12 @@ pub fn render_poster(
     if ctl.should_stop() {
         return None;
     }
-    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig {
+    let cache = Arc::new(kt_cache::BurstCache::new(kt_cache::CacheConfig {
         max_audio_bytes: 1,
         max_video_bytes: 16 << 20,
-    });
+    }));
     let mut video = offline_renderer(p, &facts);
+    kt_engine::export::adopt_sources(&cache, &mut video, src.iter().map(|(m, s)| (*m, s.as_ref())));
     let q = Quality { width: POSTER_W, height: POSTER_H };
     let t = video.grid.align_floor(at);
     let mut buf = Vec::new();

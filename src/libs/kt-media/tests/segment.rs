@@ -65,7 +65,7 @@ fn t2986_a_segment_is_written_by_the_hardware_encoder_or_refused() {
     let bytes = w.finish().unwrap();
     eprintln!("t2986: libx264 {W}×{H}: {:.1} ms a frame written, {} bytes a frame", t0.elapsed().as_secs_f64() * 1e3 / 6.0, bytes / 6);
     assert!(bytes > 0 && bytes < 6 * (W * H * 4) as u64 / 4, "{bytes} bytes for six frames");
-    let mut r = codec.reader(&path).unwrap();
+    let mut r = codec.reader(&path, 25).unwrap();
     let mut out = Vec::new();
     let t0 = std::time::Instant::now();
     for i in [3u32, 0, 5, 1, 4, 2] {
@@ -77,6 +77,43 @@ fn t2986_a_segment_is_written_by_the_hardware_encoder_or_refused() {
         assert!(mean < 3.0, "frame {i}: mean difference {mean:.2}");
     }
     eprintln!("t2986: {:.1} ms a frame read back out of order", t0.elapsed().as_secs_f64() * 1e3 / 6.0);
+}
+
+/// Test t3615 (found-defects 981): a segment of any of the project's rates reads back each frame as the frame
+/// of that number, the last of two hundred as the first. Matroska's whole milliseconds made 30 fps a
+/// 30.3: each moment past the second came back as the one before it, and one earlier still every hundred.
+#[test]
+fn t3615_a_segment_reads_back_its_own_frames_at_every_rate() {
+    if kt_ffmpeg::rescan().is_err() {
+        eprintln!("t3615: no FFmpeg: skipped");
+        return;
+    }
+    const N: u32 = 200;
+    let dir = tempfile::tempdir().unwrap();
+    let codec = FfmpegSegments { forced: Some("libx264".into()) };
+    // flat pictures, each far from its neighbours
+    let level = |i: u32| (30 + (i * 37) % 200) as u8;
+    for fps in [24u32, 25, 30, 48, 50, 60] {
+        let path = dir.path().join(format!("{fps}.mkv"));
+        let Ok(mut w) = codec.writer(&path, 64, 36, fps) else {
+            eprintln!("t3615: this FFmpeg has no libx264: skipped");
+            return;
+        };
+        for i in 0..N {
+            w.push(&[level(i), level(i), level(i), 255].repeat(64 * 36)).unwrap();
+        }
+        w.finish().unwrap();
+        let mut r = codec.reader(&path, fps).unwrap();
+        let mut out = Vec::new();
+        for i in (0..6).chain([50, 99, 100, 101, 150, N - 3, N - 2, N - 1, 7, 2]) {
+            r.frame(i, 64, 36, &mut out).unwrap();
+            assert!(out[0].abs_diff(level(i)) <= 4, "{fps} fps, frame {i}: {} for {}", out[0], level(i));
+        }
+        // and the file says its rate to every other reader
+        let src = kt_media::ffmpeg::FfmpegSource::open(&path.to_string_lossy()).unwrap();
+        use kt_media::MediaSource;
+        assert_eq!(src.info().fps, Some((fps, 1)), "{fps} fps: the rate in the file");
+    }
 }
 
 /// The frames of a segment as the processor decodes them: the reference of t3129.
@@ -119,7 +156,7 @@ fn t3129_segments_decode_on_the_device_the_processor_only_without_one() {
             w.push(&frame(i)).unwrap();
         }
         w.finish().unwrap();
-        let mut r = codec.reader(&path).unwrap();
+        let mut r = codec.reader(&path, 25).unwrap();
         let want = software_frames(&path, 4);
         match r.decoder() {
             Ok(d) => eprintln!("t3129: this machine decodes on {d}"),
@@ -211,7 +248,7 @@ fn t3129_child() {
     }
     w.finish().unwrap();
     let want = software_frames(&path, 4);
-    let mut r = codec.reader(&path).unwrap();
+    let mut r = codec.reader(&path, 25).unwrap();
     let on = r.decoder().unwrap_or_else(|why| panic!("the segment decodes on the processor: {why}"));
     assert!(on.starts_with("vaapi "), "{on}");
     let mut out = Vec::new();

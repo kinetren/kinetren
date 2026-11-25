@@ -797,7 +797,7 @@ pub(crate) struct SceneCtx {
     src: HashMap<MediaId, Box<dyn kt_media::MediaSource>>,
     tried: HashSet<MediaId>,
     facts: kt_engine::SourceFacts,
-    cache: kt_cache::BurstCache,
+    cache: Arc<kt_cache::BurstCache>,
     memo: Arc<kt_plugin_api::stream::StreamMemo>,
     builds: kt_engine::incremental::BuildMemo,
 }
@@ -810,7 +810,7 @@ impl SceneCtx {
             src: HashMap::new(),
             tried: HashSet::new(),
             facts: kt_engine::SourceFacts::default(),
-            cache: kt_cache::BurstCache::new(kt_cache::CacheConfig { max_audio_bytes: 1, max_video_bytes: 64 << 20 }),
+            cache: Arc::new(kt_cache::BurstCache::new(kt_cache::CacheConfig { max_audio_bytes: 1, max_video_bytes: 64 << 20 })),
             memo: Arc::new(kt_plugin_api::stream::StreamMemo::new(kt_engine::export::EXPORT_STREAM_MEMO_BYTES)),
             builds: Default::default(),
         }
@@ -820,6 +820,7 @@ impl SceneCtx {
         let facts = &self.facts;
         let mut video = kt_engine::incremental::with_memo(&mut self.builds, || kt_engine::VideoRenderer::new_with_facts(p, facts));
         video.set_stream_memo(self.memo.clone());
+        video.set_source_idents(self.cache.ident_reader());
         video
     }
 
@@ -841,6 +842,7 @@ impl SceneCtx {
                 continue;
             };
             self.facts.observe(m, s.info());
+            kt_engine::export::adopt_source(&self.cache, m, s.as_ref());
             self.src.insert(m, s);
             opened = true;
         }

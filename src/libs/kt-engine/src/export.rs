@@ -343,6 +343,26 @@ pub fn render_raw_video_range_with(
     render_raw_video_planes(project, sources, quality, range, backends, cancel, None, None, &|_, _| {}, progress, emit)
 }
 
+/// What every offline job does with its cache before it decodes (found-defects 1068): its sources' names
+/// are adopted, as a player's workers do, and the renderer reads them. The front memo of a stream stage is
+/// the process's: without names its entry is a media id and a time, and another project's file, or the one
+/// before a replacement, answers for this one.
+pub fn adopt_sources<'a>(
+    cache: &std::sync::Arc<BurstCache>,
+    video: &mut VideoRenderer,
+    sources: impl IntoIterator<Item = (MediaId, &'a dyn MediaSource)>,
+) {
+    for (m, s) in sources {
+        adopt_source(cache, m, s);
+    }
+    video.set_source_idents(cache.ident_reader());
+}
+
+/// One source's name, as it is opened.
+pub fn adopt_source(cache: &BurstCache, m: MediaId, s: &dyn MediaSource) {
+    cache.adopt(crate::source_id(m), s.identity().unwrap_or_else(kt_cache::SourceIdent::once));
+}
+
 /// The serial video pass with its stage times (export-throughput D6): `profile` only receives
 /// clock readings, the render does not see them. Each frame's RGBA, or with `layout` the encoder's
 /// packed planes made on the composing device (export-host-copy D3), to `emit`.
@@ -379,11 +399,12 @@ fn render_raw_video_planes(
     }
     // A cache of a pair of frames: the composite reads from the cache (the same code as the preview),
     // export only fills it with a blocking decode.
-    let cache = BurstCache::new(CacheConfig {
+    let cache = std::sync::Arc::new(BurstCache::new(CacheConfig {
         max_audio_bytes: 1,
         max_video_bytes: EXPORT_VIDEO_CACHE_BYTES,
-    });
+    }));
     let mut video = VideoRenderer::new_with_facts(project, &facts);
+    adopt_sources(&cache, &mut video, src.iter().map(|(m, s)| (*m, s.as_ref())));
     // an export owns its stream memo (datamosh-codec-path, D3): a preview on another thread cannot
     // evict what this export is about to read
     video.set_stream_memo(std::sync::Arc::new(kt_plugin_api::stream::StreamMemo::new(EXPORT_STREAM_MEMO_BYTES)));

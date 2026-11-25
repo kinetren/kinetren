@@ -1719,6 +1719,11 @@ so one heavy project no longer evicts another's loop (project-cache-folder D3).
 - **THEN** the default opens a hardware encoder or refuses naming why, leaving no file; the forced segment names its encoder and every frame reads back alone within the codec's tolerance
 - **TEST** t2986 (`src/libs/kt-media/tests/segment.rs`)
 
+#### Scenario: A segment reads back its own frames at every rate
+- **WHEN** two hundred flat pictures, each far from its neighbours, are written as a segment at 24, 25, 30, 48, 50 and 60 frames a second, and the first, the hundredth and the last of them are read out of order
+- **THEN** each read is the picture of that number, and the file names its own rate to any other reader
+- **TEST** t3615 (`src/libs/kt-media/tests/segment.rs`)
+
 #### Scenario: A segment is read by the hardware decoder, the processor only without one
 - **WHEN** a segment is read on this machine (no render node here), and in a child process on the fake VA driver of `fixtures/fake_va` (its encoder writes I_PCM macroblocks, its VLD entry point reads them back) a segment its encoder wrote is read out of order and twice
 - **THEN** on this machine the reader names the processor and why (no VAAPI device) and reads every frame as the processor's decoder does; on the fake device every decoder of the file decodes on it (`vaapi <node>`, also the ones a later read adds), each frame is within the RGB → 4:2:0 → RGB round trip of the frame written (mean ≤ 3) and within swscale's rounding of NV12 against yuv420p of the processor's decode (mean ≤ 2), and the driver counts at least the pictures read; the disk tier's reader records which decoder reads (`render_cache` aux `READER`). Windows asks D3D11VA the same way (found-defects 775)
@@ -1759,6 +1764,12 @@ so one heavy project no longer evicts another's loop (project-cache-folder D3).
 - **WHEN** the store holds a prerendered loop and a new player opens the project with the loop region set; then an effect of the event is edited
 - **THEN** after the scan at rest the bars draw the loop as playing without work, with no device work and no decode; after the edit they do not
 - **TEST** t2985 (`src/libs/kt-engine/tests/render_cache.rs`)
+
+#### Scenario: A late read does not dim the moment
+- **PATH** play a prepared range on a disk that stands → on the pause change the opacity of an event elsewhere → the bars over the range are bright again → the disk answers → they stay bright
+- **WHEN** the disk answers a displayed frame after an edit elsewhere, the new state's moments looked up in between
+- **THEN** the moments stay bright: the answer is kept under its key and writes nothing over the newer state
+- **TEST** t3614 (`src/libs/kt-engine/tests/render_cache.rs`)
 
 #### Scenario: The editor prerenders a slow loop by itself and plays it from disk after a restart
 - **PATH** open the heavy project with a one-second loop → Play: the loop plays slowly → Pause and leave the mouse: the program writes the loop's moments to its render cache, then rests → close and open the project again, Play → the loop plays from the disk from its first lap
@@ -1827,6 +1838,12 @@ decoded, so a kept composite was found only while its sources were decoded too; 
 - **WHEN** a Datamosh moment is composed, its event's media is replaced by another file under the same media id with the same timing, and the moment is composed again, also through a slot in front of the stage and through a second input
 - **THEN** each time the stage reads the new file, its compiled schedule included (the renderer is not rebuilt): the picture equals a fresh renderer's over a fresh memo
 - **TEST** t4116 (`src/libs/kt-engine/tests/moment_key.rs`)
+
+#### Scenario: A render never shows another render's file
+- **WHEN** two projects whose media has the same id are rendered one after the other in one process, a Datamosh with a slot in front of it in both, on the serial and the pipelined path
+- **THEN** every frame of the second is what it is alone; every offline job with a frame cache of its own (exports, reel strips, posters, effect cells, the command line's measures) adopts its sources' names before it decodes
+- **TEST** t4138 (`src/libs/kt-engine/tests/moment_key.rs`)
+- **TEST** t3613 (`src/apps/kt-cli/tests/dist_guard.rs`)
 
 ### Requirement: The persistent cache keeps the final preview frame only
 The persistent cache SHALL keep on disk two kinds of entry only: whole composites of moments as the preview shows

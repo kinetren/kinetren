@@ -809,6 +809,8 @@ pub struct KtApp {
     /// The start, the Guide and the tour (welcome-window-and-tour): the state that lives
     /// BETWEEN projects. `replace_with` carries it across the in-place rebuild of File → New/Open.
     pub start: crate::welcome::Start,
+    /// Files that came back under a media with no edit of the model (`scene_rev`).
+    media_swaps: u64,
     /// The persistent cache of the preview on the interface's side.
     pub(crate) copies_ui: crate::copies_ui::CopiesUi,
 }
@@ -1240,6 +1242,7 @@ impl KtApp {
             complete_composites: 0,
             reel_hash_cache: (None, Arc::new(HashMap::new())),
             start: Default::default(),
+            media_swaps: 0,
             copies_ui: Default::default(),
         };
         // failure to open a file at startup is an ERROR, not a line for five
@@ -1590,6 +1593,7 @@ impl KtApp {
             complete_composites: 0,
             reel_hash_cache: (None, Arc::new(HashMap::new())),
             start: Default::default(),
+            media_swaps: 0,
             copies_ui: Default::default(),
         };
         // loop region of a loaded project — into the player at once (previously
@@ -3344,7 +3348,14 @@ impl KtApp {
     /// revision and the place being edited.
     pub(crate) fn scene_rev(&self) -> u64 {
         let place = self.model.editing().map_or(0, |m| m.0.wrapping_add(1));
-        self.model.revision().wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ place
+        (self.model.revision().wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ place).wrapping_add(self.media_swaps.rotate_left(17))
+    }
+
+    /// A media's file came back with no edit: the effect cells' scene is another one, and its sources
+    /// are opened again.
+    fn media_swapped(&mut self) {
+        self.media_swaps += 1;
+        self.fx_thumbs.forget_scene();
     }
 
     /// The cache folder of the current project: beside it, an untitled one's under the user's data
@@ -7229,6 +7240,15 @@ impl KtApp {
                         index.push((id, path));
                         self.note(crate::tf!(k::msg::MEDIA_ONLINE, label));
                     }
+                    // what an audio-reactive generator hears of it, and the effect cells that show it
+                    // (found-defects 976, 977)
+                    for (id, _) in &index {
+                        if let Some(m) = self.model.doc().media.iter().find(|m| m.id == *id) {
+                            crate::listen::service().forget(&m.path);
+                        }
+                    }
+                    self.ask_listened();
+                    self.media_swapped();
                     self.index.enqueue(self.cache_folder(), index);
                 }
                 _ => {}

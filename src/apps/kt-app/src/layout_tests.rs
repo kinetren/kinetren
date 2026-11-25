@@ -4158,7 +4158,8 @@ fn t211_returned_source_replaces_its_placeholder() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Test t2541 (t211's class): a file that comes back to disk gets its waveform. The index asks
+/// Test t2541 (t211's class; found-defects 976, 977): a file that comes back to disk gets its waveform, the
+/// generators that hear it hear it anew, and the effect cells of a window are asked again. The index asks
 /// every media once, at opening: an absent file errs and gets no peaks, and the return swapped the
 /// player's decoder alone — the returned file's waveform stayed empty for the rest of the session.
 #[test]
@@ -4219,6 +4220,10 @@ fn t2541_a_returned_file_gets_its_waveform() {
     h.step();
     h.step();
     assert!(!h.state().peaks.lock().unwrap().contains_key(&MediaId(1)), "scene guard: the absent file has a waveform");
+    // what was heard of it before, and what the effect cells show of it, go with it (found-defects 976, 977)
+    let key = file.to_string_lossy().into_owned();
+    kt_engine::listen::put(&key, std::sync::Arc::new(kt_plugin_api::audio_series::AudioSeries::from_bytes(Vec::new()).unwrap()));
+    let scene = h.state().scene_rev();
     // the file comes back where it was
     std::fs::copy(crate::util::tests::fixture("sine48k_stereo.flac"), &file).unwrap();
     h.state_mut().offline.lock().unwrap().clear();
@@ -4235,6 +4240,8 @@ fn t2541_a_returned_file_gets_its_waveform() {
         h.state().peaks.lock().unwrap().contains_key(&MediaId(1)),
         "the returned file's waveform was never built"
     );
+    assert!(kt_engine::listen::get(&key).is_none(), "the generators hear the file as it was before it came back");
+    assert_ne!(h.state().scene_rev(), scene, "the effect cells show the placeholder still");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

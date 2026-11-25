@@ -138,7 +138,8 @@ fn one_mode(
             // an offline job keeps its history in a memo of its own, as a reel strip's and an export's
             // do (stream-memo-budget, found-defects 519)
             video.set_stream_memo(Arc::new(kt_plugin_api::stream::StreamMemo::new(kt_engine::export::EXPORT_STREAM_MEMO_BYTES)));
-            let cache = BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: 1 << 30 });
+            let cache = Arc::new(BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: 1 << 30 }));
+            kt_engine::export::adopt_sources(&cache, &mut video, src.iter().map(|(m, s)| (*m, s.as_ref())));
             decode_range(&video, &mut src, &cache, at.1, 1, q);
             let mut buf = Vec::new();
             while !stop.load(Ordering::Acquire) {
@@ -157,7 +158,8 @@ fn one_mode(
             let mut video = VideoRenderer::new_with_facts(&p, &facts(&src));
             // a memo of its own each mode: the history is computed anew
             video.set_stream_memo(Arc::new(kt_plugin_api::stream::StreamMemo::new(256 << 20)));
-            let cache = BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: 256 << 20 });
+            let cache = Arc::new(BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: 256 << 20 }));
+            kt_engine::export::adopt_sources(&cache, &mut video, src.iter().map(|(m, s)| (*m, s.as_ref())));
             let mut t = at.2;
             while !stop.load(Ordering::Acquire) && video.has_stream_stages() {
                 kt_engine::stream_preroll(&video, &cache, &mut src, t, q);
@@ -168,8 +170,9 @@ fn one_mode(
     };
     let _class = with_class(Class::Now);
     let mut src = sources(project);
-    let video = VideoRenderer::new_with_facts(project, &facts(&src));
-    let cache = BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: 1 << 30 });
+    let mut video = VideoRenderer::new_with_facts(project, &facts(&src));
+    let cache = Arc::new(BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: 1 << 30 }));
+    kt_engine::export::adopt_sources(&cache, &mut video, src.iter().map(|(m, s)| (*m, s.as_ref())));
     let step = video.grid.frame_step();
     let frames = 50;
     let t = Instant::now();
