@@ -28,6 +28,18 @@ pub(crate) fn no_device() -> bool {
     none
 }
 
+/// Step frames until `done` holds: what another thread makes true (a decode, a composite, a build, a
+/// job) is waited for as long as it takes, never for a number of frames (found-defects 844; the bound is
+/// `test_deadline`, a guard against a hang).
+pub(crate) fn step_until(h: &mut Harness<'_, KtApp>, what: &str, done: impl Fn(&KtApp) -> bool) {
+    let deadline = kt_time::test_deadline();
+    while !done(h.state()) {
+        assert!(std::time::Instant::now() < deadline, "{what} never happened");
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
 pub fn harness() -> Harness<'static, KtApp> {
     harness_lang(crate::i18n::Lang::Ru)
 }
@@ -1398,6 +1410,8 @@ fn t120_space_hold_boosts_playback() {
     }
     h.step();
 
+    // gestures are judged by the clock here: a frame does not stand for a composite (found-defects 844)
+    h.state_mut().compose_grace = std::time::Duration::ZERO;
     // --- a single press still toggles the transport
     let before = h.state().player.transport.is_playing();
     h.key_press(egui::Key::Space);
@@ -10669,12 +10683,8 @@ fn t541_param_edit_repaints_the_preview_without_moving_the_playhead() {
     let gesture = h.state().fx_editors[0].gesture;
 
     // let the preview settle: the key is computed, the composite is full
-    for _ in 0..40 {
-        if h.state().preview_key.is_some_and(|k| k.2) {
-            break;
-        }
-        h.step();
-    }
+    let whole = !no_device();
+    step_until(&mut h, "the preview's picture", |a| a.preview_key.is_some_and(|k| k.2 || !whole));
     let before = h.state().preview_key;
     let content_before = h.state().preview_content;
     assert!(before.is_some(), "the preview never got computed");
@@ -10692,18 +10702,9 @@ fn t541_param_edit_repaints_the_preview_without_moving_the_playhead() {
     }
     // ...and the program MUST rebuild the preview: the version of the content of the
     // sources went into the key
-    let mut repainted = false;
-    for _ in 0..60 {
-        h.step();
-        if h.state().preview_content != content_before {
-            repainted = true;
-            break;
-        }
-    }
-    assert!(
-        repainted,
-        "the parameter edit did not move the preview key — the old frame would have stayed on screen"
-    );
+    step_until(&mut h, "the rebuilt preview after the parameter edit (the old frame stays on screen)", |a| {
+        a.preview_content != content_before
+    });
     assert_eq!(
         h.state().preview_key.map(|k| k.0),
         before.map(|k| k.0),
@@ -14238,13 +14239,7 @@ fn t722b_project_rule_change_repaints_the_paused_preview() {
         app.player.set_preview_quality(kt_media::Quality { width: 36, height: 64 });
         app.player.seek(Tick(30_000));
     }
-    for _ in 0..120 {
-        h.step();
-        if h.state().preview_key.is_some_and(|k| k.2) {
-            break;
-        }
-    }
-    assert!(h.state().preview_key.is_some_and(|k| k.2), "the preview never got computed");
+    step_until(&mut h, "the preview's picture", |a| a.preview_key.is_some_and(|k| k.2));
     let top_dark = |app: &KtApp| -> bool {
         let (_, (w, hgt), _) = app.preview_key.unwrap();
         assert!(hgt > 4 && app.preview_buf.len() >= (w * hgt * 4) as usize);
@@ -14257,15 +14252,9 @@ fn t722b_project_rule_change_repaints_the_paused_preview() {
     st.conform = ConformRule::Fill;
     st.settings_explicit = true;
     assert!(h.state_mut().apply(Command::SetSettings { settings: st }));
-    let mut repainted = false;
-    for _ in 0..120 {
-        h.step();
-        if h.state().preview_key.is_some_and(|k| k.2) && !top_dark(h.state()) {
-            repainted = true;
-            break;
-        }
-    }
-    assert!(repainted, "the “fill” rule was applied, but the preview stayed with margins while paused");
+    step_until(&mut h, "the “fill” rule on the paused preview (it stays with margins)", |a| {
+        a.preview_key.is_some_and(|k| k.2) && !top_dark(a)
+    });
 }
 
 /// Test 740 (R.62, change B): the render window LISTS the muted
@@ -16530,6 +16519,8 @@ fn t764_controls_hide_while_playing_and_cost_nothing_idle() {
     }
     let (mut h, _clip) = harness_geom_ctl();
     assert!(h.state().geom_ctl_drawn, "scene: during pause the controls are drawn");
+    // the playhead runs by the clock: a frame that stood for a composite played past the event (found-defects 844)
+    h.state_mut().compose_grace = std::time::Duration::ZERO;
 
     // --- PLAYBACK: no controls ---------------------------------------------
     h.state_mut().geom_ctl_drawn = false;
@@ -18941,6 +18932,10 @@ fn t918_no_window_grows_by_itself() {
         for ppp in [1.0f32, 1.1, 1.2, 1.25, 1.5] {
             let mut h = harness_scaled(1600.0, 900.0, ppp);
             let layers = opened_layers(&mut h, open);
+            // Diagnostics opens at its floors a frame late (found-defects 1005): what is judged is the
+            // size it opened to, however slow the frame that opened it
+            h.step();
+            h.step();
             let rect = |h: &Harness<'static, KtApp>| -> Vec<egui::Rect> {
                 layers
                     .iter()
@@ -20160,6 +20155,8 @@ pub(crate) fn r72_transport_scene() -> Harness<'static, KtApp> {
     let mut h = harness();
     {
         let app = h.state_mut();
+        // gestures are judged by the clock here: a frame does not stand for a composite (found-defects 844)
+        app.compose_grace = std::time::Duration::ZERO;
         let mut p = app.model.project().clone();
         p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         let mut c = sample_clip(ClipId(1));
