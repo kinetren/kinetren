@@ -1,7 +1,7 @@
 # Proposal: wasm-plugin-host
 
 > IMPLEMENTATION-READY (spec-engine, revision 2, 2026-11-25, orch `fc60a5d9`; written 2026-11-20). Registry `v26.10-index.md` P1–P6 (no). Note F-EXT-003 (refreshed). Stage 2
-> of `plugin-api-stage1` (its D10: built-in → wasm → dlopen/OpenFX). Tests: t3957–t3963, t4151, t4152.
+> of `plugin-api-stage1` (its D10: built-in → wasm → dlopen/OpenFX). Tests: t3957–t3961, t4151, t4152, t4157, t4158.
 
 ## Why
 

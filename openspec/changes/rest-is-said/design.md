@@ -108,6 +108,8 @@ t3833 took 239 s in a full run and 19 s in a small one. Nothing in the test is s
 "for this state". Nine seconds a moment, for a source that answers late, and then the moment is never prepared until an edit, a quality or a replaced source. 239 − 19 s is twenty-four such moments. **Read, not proved that it was this**: the
 trace of that run is gone; the proof asks no load (task 4.0): a source held ten seconds behind its gate gives an `ABANDON`/`INCOMPLETE` record and a moment that is never written, today.
 
+The fix of row 980 read the same 239 s otherwise: the first player walks on to the project's end while the test lets it (it now rests the prerender before the drop). 4.0 tells the two apart; this decision does not hang on it.
+
 It is M2 in the PRODUCT: a loaded machine, a NAS, a disk asleep answer late, not never, and the tier quietly keeps nothing of what they hold. The three seconds stand for "the source will not answer", which the worker knows:
 1. `one()` asks the moment's keys ONCE, then waits while any of them is queued or in flight (`MediaWorker::outstanding(keys)`, over the queue and `in_flight`): no clock ends that wait; the check (input, Play, an export, the close) does.
    It parks on `on_next_insert("prerender")` and on `rc.wake` (`note_input` notifies while `busy` is up; at rest it stays the atomic it is), with a bound of 250 ms only as the check's own step: 4 a second while a request is out, where today's 4 ms sleep makes 250.

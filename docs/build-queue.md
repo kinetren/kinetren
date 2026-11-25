@@ -44,6 +44,32 @@ merge. These changes are marked **v+**.
 | row 1067 (`track-stream-stage` 1.0), then ★ `shared-events` | fx-graph | MODEL (all of it), `video.rs`, `audio.rs`, `worker.rs`, `player.rs` signatures | sections 1.2 on; nothing holds section 3 any more |
 | rows 1002, 911, 837, then 907, then `chroma-key-upgrade` | features-slow | `user_store.rs`, `kt-media/generator.rs`, live scripts; then COLOR-FX | all |
 
+## Small fixes between features (2026-11-25, from the open engine rows of `found-defects.md`)
+
+One branch each, ordered by what a person suffers; each is half a day to a day and takes a free slot whose areas allow it. The cause
+and the proof plan stand in the row. A red first: the proof is committed red with today's code in the report, then the fix.
+
+| # | Branch | Rows | What a person has from it | Areas | Not beside | Tests |
+|---|---|---|---|---|---|---|
+| 1 | `listen-path` | 978 | a render's sound-reactive generator hears the project's own file, not another project's of the same relative path | `kt-engine/listen.rs`, kt-app `listen.rs` | — | t4171 |
+| 2 | `sound-starts-right` | 421, 5, 48 | the first Play and the first note after an edit sound as every other: a track's effects start at their values, the pitch vocoder's first lap is as loud as the next, Datamosh's sound breaks where its picture does | `kt-fx/audio`, `fx-audio-modulation`, `fx-video-codec/sound.rs` (frozen sounds of 5 renewed) | `track-stream-stage` 2 (`sound.rs`), so before it | t4160, t4161, t4166 |
+| 3 | `cache-serials` | 335, then read again 250, 334 | a kept moment of a loop is not composed again after the cache turned over | `kt-cache` (one struct) | — | t4162 |
+| 4 | `odd-width-tail` | 4 | the last columns of a video whose width is not a multiple of 8 are not transparent | `kt-ffmpeg/source_impl.rs` `sws_to_rgba` | `device-decode-sources`, `hdr-sources-to-sdr` (the same function), so before either | t4159 |
+| 5 | `render-says-what-it-lost` | 95 with 76 (the owner decided 2026-11-07), 77, 572 | the render window says before the start that a file is shorter than its header or an event longer than its file | EXPORT, DIALOG | `export-into-surface`; after it | t4163, t4164, t4168 |
+| 6 | `not-available-cells` | 462, 581 | an effect cell or a reel strip cell that can never be drawn says so instead of Loading for ever | `reel_preview.rs`, `fx_thumbs.rs` | `scopes` (`fx_thumbs.rs`) | t4167 |
+| 7 | `pass-time-by-work` | 292, 493, 494, 670 | the first frames after a change of preview quality or of a chain do not stutter by a wrong prediction; a compute job refused for memory fails as a job | `kt-gpu/pass_time.rs`, `compute.rs` | — (`scopes` writes `engine.rs` only) | t4165, t4170 |
+| 8 | `tests-by-cause` | 919, 912, 726 with 146, 725, 650, 374, 424 with 293 | nobody; the finish stops losing hours to these | TESTS, `kt-gpu/arbiter.rs` (a test seam) | `rest-is-said` (the same test files); best as its last session | the rows' own tests |
+| 9 | `bench-is-the-app` | 175, 571, 686, 440 | nobody; what `kt-cli preview` and `probe` measure is what the program does | `preview_bench.rs`, kt-cli | — | t4172 |
+| 10 | `second-vectors` | 580, 582 after it | Datamosh's "vectors from another track" follows that track | STREAM | `track-stream-stage`, `temporal-barrier-3dnr` | t4169 |
+| 11 | `generator-crossing-measured` | 909 | a number, then a decision: hold an animated generator on the card or leave it | trace, kt-cli | — | — |
+| 12 | `notes-true` | 1055, 1058, 1060, 1100, 1102, 1103, 1104 | nobody; agents read true notes | text only, no build | — | — |
+
+**Already in a change, not a fix of its own**: 118 and 420 (`track-stage-preroll`), 771 (`durable-history-and-mix`), 773 (`cached-final-render`), 741 (`export-into-surface`), 724
+(`hdr-sources-to-sdr`), 839, 918, 958, 960, 772, 684 (`rest-is-said`), 1064 (`device-decode-sources`), 820 and 1067 (`track-stream-stage`), 641 and 192 (`shared-events`), 837 (running).
+**Closed by this reading**: 46, 331, 373, 375, 623, 722, 902. **Waits for his trace, a card or a decision, nothing to build**: 10, 52–55, 72, 96, 133, 134, 142, 144, 161, 164, 171, 291, 294, 330, 332, 400, 406,
+422, 425, 492, 561, 600, 671, 672, 680–682, 692, 694, 752 with 900 (the sound library's own thread; `rest-is-said` D1 names it), 816, 973, 1069. **Measure before anything**: 642, 643, 720 (a feature note first: proxies
+or a tier of lead-in pictures), 721.
+
 ## Built: to archive, not to build
 
 | Change | State |
@@ -136,7 +162,7 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
 | `pro-keyer` | L | `chroma-key-upgrade` | COLOR-FX, GPU, `BarrierKernel::held`, `video.rs` (`held_keys`) | answered A22; implementation-ready 2026-11-25 | t3585–t3590, t4254 |
 | `temporal-barrier-3dnr` **v+** | L | — for events (not beside `track-stream-stage`: STREAM); a track's camera after it | STREAM, GPU (a held RGBA), `plugins/fx-video-camera` | answered A21; implementation-ready 2026-11-25 | t3545–t3551, t4253 |
 | `download-library` **v+** (stage 4) | L | — (own-data-dir is merged) | a new crate `kt-library`, `kt-ffmpeg/search.rs`, `kt-text`, `kt-media/generator.rs`, SHELL | answered B3; **Q4 of its proposal holds stage 5 only**; implementation-ready 2026-11-24 | t3850–t3869 |
-| `wasm-plugin-host` | L | nothing | new `kt-plugin-wasm`, `kt-plugin-sdk`; kt-plugin-api (`Decl`), the mains, kt-cli, SHELL, FX-UI (a mark) | answered B11; implementation-ready 2026-11-25 | t3957–t3963, t4151, t4152 |
+| `wasm-plugin-host` | L | nothing | new `kt-plugin-wasm`, `kt-plugin-sdk`; kt-plugin-api (`Decl`), the mains, kt-cli, SHELL, FX-UI (a mark) | answered B11; implementation-ready 2026-11-25 | t3957–t3961, t4151, t4152, t4157, t4158 |
 | `openfx-host` | L | `wasm-plugin-host` (the trial, the faulted kind); not beside `export-into-surface` 3, `track-stream-stage` 2 | new `kt-plugin-ofx`, GPU (`context.rs`, a foreign op), `kt-fx/plan.rs`, the mains, SHELL, FX-UI | answered D4; implementation-ready 2026-11-25 | t3974–t3979, t4153, t4154 |
 | `arm-build` | M | — | the Dockerfile, release scripts, CI | answered D5 | t3980–t3982 |
 | `fx-lens-and-camera` | M | `plugin-api-stage1` 4.1 (a positioned tap, geometry primitives in the API, a GPU barrier); its presets (1.x) may go with anything | COLOR-FX, GEOM | — | t1010–t1015 |
@@ -151,12 +177,14 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
   device twin to write.
 - The five changes whose questions had not been put to him are Q66–Q74 now (and flatpak Q75).
 - **Stale heads**: none left (the last four were re-read on 2026-11-25).
-- t3947 is `motion-driven-params`' alone (`title-word-effects` took t4246). No number is reserved twice.
+- t3947 is `motion-driven-params`' alone (`title-word-effects` took t4246). No number is reserved twice (checked by a script over the `TEST` lines of the open deltas, 2026-11-25).
+- **A guard worth one loop in `specs-user-path.py --check`**: over `openspec/changes/*/specs/**`, a `tNNNN` of a `**TEST**` line that has no `fn tNNNN_` in `src` and stands in two open changes is red.
+  (It would have caught wasm-plugin-host's t3962 and t3963; the numbers in prose stay unread, they are ranges and "spare" notes.)
 
 ## Tests of spec-engine
 
 Third block t4100–t4199: device-decode-sources t4100–t4102, track-stage-preroll t4103–t4104, (t4105 freed by D6),
 persistent-cache t4106, simulated-elements t4107, durable-moment-key t4108–t4116, rest-is-said t4117–t4124,
 export-into-surface t4125–t4136, track-stream-stage t4137, cached-final-render t4138–t4141, hdr-sources-to-sdr t4142–t4143, t4155–t4156,
-rest-is-said t4144, durable-history-and-mix t4145, motion-driven-params t4146–t4147, real-3d-groups t4148–t4150, wasm-plugin-host t4151–t4152,
-openfx-host t4153–t4154. The next free is t4157.
+rest-is-said t4144, durable-history-and-mix t4145, motion-driven-params t4146–t4147, real-3d-groups t4148–t4150, wasm-plugin-host t4151–t4152, t4157–t4158,
+openfx-host t4153–t4154. the small fixes t4159–t4172. The next free is t4173.
