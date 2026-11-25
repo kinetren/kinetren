@@ -879,15 +879,20 @@ impl crate::app::KtApp {
         if let Some((n, fresh)) = go {
             // "Next lesson" leaves the program's OWN copy: its edits are kept without a question
             // (the live walk met "Unsaved work" about the sandbox there). "Start over" still
-            // asks — it discards them (t988). The next lesson opens when the copy's write LANDS
-            // (save-then-act): the write is on the save lane, and opening right after posting it
-            // met the flags still up and asked anyway (t2305)
+            // asks — it discards them (t988). Nothing waits for the copy's disk (found-defects 842,
+            // t3266): only a Ctrl+S of it still writing is waited out, or it would land over the newer text
             let go = crate::welcome::StartGo::Lesson { lesson: n, fresh };
-            if !fresh && self.project_path.as_deref().is_some_and(is_sandbox) && (self.dirty_content || self.dirty_ui) {
-                self.start.pending = Some(go);
-                self.save_then(crate::app::Pending::Start);
-            } else {
-                self.start_go(go);
+            let dirty = self.dirty_content || self.dirty_ui;
+            match self.project_path.clone().filter(|p| !fresh && dirty && is_sandbox(p)) {
+                Some(_) if self.saving.is_some() => {
+                    self.start.pending = Some(go);
+                    self.save_then(crate::app::Pending::Start);
+                }
+                Some(p) => {
+                    self.keep_sandbox(&p);
+                    self.start_go(go);
+                }
+                None => self.start_go(go),
             }
         }
     }

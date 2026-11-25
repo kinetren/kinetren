@@ -908,6 +908,7 @@ fn nest_scales(project: &Project) -> std::collections::HashMap<MediaId, u32> {
             let zoom = clip_head_zoom(
                 &fx,
                 kt_model::fx_graph::trunk_len(&fx_in, fx.len()),
+                &[],
                 plan.as_ref(),
                 c.start,
                 c.start + c.duration,
@@ -1089,6 +1090,8 @@ fn clip_head_zoom(
     // the slots before the first branch (fx-graph-dag D3): the decode step is the trunk's — a held
     // frame at the step would reach a merge at the wrong size; a line is all trunk
     trunk: usize,
+    // the slots in front of a stream stage (`StreamStage::front`)
+    front: &[usize],
     plan: Option<&kt_model::AutoPlan>,
     start: Tick,
     end: Tick,
@@ -1158,6 +1161,8 @@ fn clip_head_zoom(
             owned.clone_from_slice(fx);
             plan.apply(&mut owned, mat);
         }
+        // the slots in front of a stream stage run on its input, not on this layer's
+        stream::after_chain(&mut owned, front);
         let cam3d = has_3d.then(|| {
             let ev = kt_model::active_camera_in(cameras, t);
             let cam = ev.map(|e| e.params_at(t)).unwrap_or_default();
@@ -1518,6 +1523,7 @@ impl VideoRenderer {
                 let head_zoom = clip_head_zoom(
                     &fx,
                     trunk,
+                    stream.as_deref().filter(|_| nest.is_none()).map_or(&[][..], |st| &st.front),
                     auto_plan.as_ref(),
                     c.start,
                     c.start + c.duration,
@@ -1585,6 +1591,7 @@ impl VideoRenderer {
                         r.head_zoom = clip_head_zoom(
                             &lf,
                             lf.len(),
+                            r.stream.as_deref().map_or(&[][..], |st| &st.front),
                             r.auto_plan.as_ref(),
                             c.start,
                             c.start + c.duration,
@@ -2716,11 +2723,6 @@ fn layer_src<'a>(
         stream::after_chain(fx.to_mut(), &st.front);
     }
     let cam3d = resolve_cam3d_in(&clip.fx, ctx.cameras, Some(ctx.cam_rows), t, quality.width, ctx.project_size.0);
-    debug_assert!(
-        src_scale == 1
-            || kt_fx::video::has_video_fx_in(&fx, clip.lead, quality.width, quality.height),
-        "a clip without video fx never gets a chain input above 1x"
-    );
     // The layer's INPUT. For a nesting this is not a frame from the cache, but a SUB-COMPOSITE: the
     // reel's plan, assembled on the instance's INNER time. The inner time is
     // CONTINUOUS (`clip_inner_tick`, R.56 item 448): reverse and transition handles

@@ -4406,19 +4406,17 @@ impl KtApp {
         let p = path.clone();
         let (answer, reply) = kt_time::sched::Answer::new();
         media_lane().post(move |_| {
-            if let Some((fresh, text)) = write
-                && (fresh || !p.exists())
-            {
-                if let Some(d) = p.parent() {
-                    let _ = std::fs::create_dir_all(d);
+            // a lesson's copy is the program's own: its text is on its way to the disk and nobody waits
+            // for it there (found-defects 842: an fsync of one stood 31.8 s on a busy disk)
+            let text = match write {
+                Some((fresh, text)) if fresh || !crate::later::exists(&p) => {
+                    crate::later::write(&p, text.clone());
+                    Ok(text)
                 }
-                if let Err(e) = write_project_atomic(&p, &text) {
-                    reply.send(Err(ReadFail::Write(e.to_string())));
-                    crate::wake::now();
-                    return;
-                }
-            }
-            reply.send(read_project_text(&p).map_err(ReadFail::Read));
+                Some(_) => crate::later::read(&p).map_err(|e| e.to_string()),
+                None => read_project_text(&p),
+            };
+            reply.send(text);
             crate::wake::now();
         });
         self.opening = Some(Opening { path, then, answer });
@@ -4437,8 +4435,7 @@ impl KtApp {
         let Some(Opening { path, then, .. }) = self.opening.take() else { return };
         let text = match done {
             Ok(t) => t,
-            Err(ReadFail::Write(e)) => return self.warn(crate::tf!(k::msg::SAVE_FAILED, e)),
-            Err(ReadFail::Read(e)) => {
+            Err(e) => {
                 return match then {
                     OpenThen::Insert(_) => self.warn(format!("{}: {e}", path.display())),
                     OpenThen::Recovery(c) => self.warn(crate::tf!(k::msg::RECOVERY_FAILED, c.path.display(), e)),
@@ -4625,6 +4622,16 @@ impl KtApp {
                 ))
             }
         }
+    }
+
+    /// Leave the program's own lesson copy (found-defects 842): its edits are kept, with no fsync and no
+    /// wait; a re-read of the copy sees them on their way (`later`).
+    pub(crate) fn keep_sandbox(&mut self, path: &Path) {
+        let ui = self.ui_state();
+        self.model.set_ui_state(Some(ui));
+        crate::later::write(path, project_text_of(&self.model.document(), &self.retained, path.parent()));
+        (self.dirty_content, self.dirty_ui) = (false, false);
+        self.drop_own_recovery();
     }
 
     /// Remove the recovery file written by THIS copy.
@@ -10736,7 +10743,7 @@ enum MediaDone {
 pub struct Opening {
     path: PathBuf,
     then: OpenThen,
-    answer: kt_time::sched::Answer<Result<String, ReadFail>>,
+    answer: kt_time::sched::Answer<Result<String, String>>,
 }
 
 /// What a read project file becomes.
@@ -10755,13 +10762,6 @@ pub(crate) enum OpenThen {
     Insert(Option<(Tick, (ClipKind, u32))>),
     /// A recovery file restored into the editor.
     Recovery(RecoveryCandidate),
-}
-
-/// Why a project file did not come.
-pub(crate) enum ReadFail {
-    /// The lesson's copy could not be written.
-    Write(String),
-    Read(String),
 }
 
 /// Release a closed project off the UI thread (scheduler-followups D4, row 270): its player joins
@@ -10856,7 +10856,7 @@ pub(crate) fn set_save_grace(d: Option<std::time::Duration>) {
 }
 
 /// Ctrl+S's lane: class `Answer`, so it never waits behind background work or for playback.
-fn save_lane() -> &'static kt_time::sched::LaneRef {
+pub(crate) fn save_lane() -> &'static kt_time::sched::LaneRef {
     static L: std::sync::OnceLock<kt_time::sched::LaneRef> = std::sync::OnceLock::new();
     L.get_or_init(|| kt_time::sched::Lane::open("save", kt_time::sched::Class::Answer))
 }

@@ -120,6 +120,12 @@ pub struct BgJob<P, R> {
     pub done: Option<R>,
 }
 
+/// One item of a service's queue: a panic in it is that item's failure (`None`), not the end of the run
+/// and of what waits behind it (found-defects 843). The panic's own line is in the log already.
+pub fn caught<T>(item: impl FnOnce() -> T) -> Option<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(item)).ok()
+}
+
 fn job_kind(name: &str) -> u32 {
     match name {
         "reel-preview" => kt_time::trace::job::REEL_PREVIEW,

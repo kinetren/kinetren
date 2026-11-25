@@ -60,7 +60,8 @@ impl ListenService {
                 let stop = || ctx.checkpoint();
                 let store = db.as_mut().map(|(_, d)| d as &mut dyn kt_media::listen::SeriesStore);
                 let open = || crate::util::open_source(&file).ok();
-                if let Some(s) = kt_media::listen::series_for(std::path::Path::new(&file), store, open, &stop) {
+                let series = crate::bg::caught(|| kt_media::listen::series_for(std::path::Path::new(&file), store, open, &stop));
+                if let Some(s) = series.flatten() {
                     kt_engine::listen::put(&key, Arc::new(s));
                     f.store(true, Ordering::Release);
                     crate::wake::now();

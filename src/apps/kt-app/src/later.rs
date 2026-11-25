@@ -1,5 +1,5 @@
 //! Small files of the program's own written off the UI thread (found-defects 833): the workspace, the
-//! recent list, the tour's progress, the start choice. A save, an open or a lesson wrote them in its
+//! recent list, the tour's progress, the start choice, a lesson's copy. A save, an open or a lesson wrote them in its
 //! frame, and one write on a busy disk stands for seconds. The newest text of a path replaces one still
 //! waiting; `read` answers with what is on its way, so a re-read sees what was just saved.
 
@@ -114,6 +114,11 @@ pub(crate) fn read(path: &Path) -> std::io::Result<String> {
 /// What is not written yet, for the live dump.
 pub(crate) fn waiting() -> usize {
     if cfg!(test) { 0 } else { the().waiting() }
+}
+
+/// `path` is there, or on its way.
+pub(crate) fn exists(path: &Path) -> bool {
+    (!cfg!(test) && the().pending(path).is_some()) || path.exists()
 }
 
 pub(crate) fn flush(bound: Duration) -> bool {

@@ -1047,3 +1047,32 @@ fn t3228_datamosh_in_an_arm_keeps_its_own_history() {
     both.validate().unwrap();
     assert_eq!(renderer(&both).stream_want(from, to, Q).positions, 2 * wl.positions, "two stages of one event count as one");
 }
+
+/// Test t3263 (found-defects 843): the slots in front of a stream stage run on its input, so their zoom asks
+/// nothing of this layer's decode step — a Datamosh after a zooming Geometry got its picture at the step's
+/// size with nothing left in the chain to bring it back: a panic in a debug build, in a release one a layer
+/// that never came. The frame composes; a zoom AFTER the stage asks its step as before.
+#[test]
+fn t3263_a_zoom_in_front_of_a_stream_asks_no_decode_step() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) || no_device() {
+        return;
+    }
+    let zoomed = |front: bool| {
+        let mut p = project(true);
+        let b = p.clips.iter_mut().find(|c| c.id == ClipId(2)).unwrap();
+        let at = if front { 0 } else { b.fx.len() };
+        b.fx.insert(at, FxInstance::geometry_zoom(2.0));
+        p.validate().unwrap();
+        let big = [MediaId(1), MediaId(2)].map(|m| (m, (Q.width * 4, Q.height * 4)));
+        let mut vr = VideoRenderer::new_with_natives(&p, &std::collections::HashMap::from(big));
+        vr.set_stream_memo(Arc::new(StreamMemo::new(256 << 20)));
+        vr
+    };
+    let t = Tick(38 * STEP);
+    for front in [true, false] {
+        let (vr, c) = (zoomed(front), big_cache());
+        warm_from(&vr, &c, t, &mut Tex::new(1, 0), &mut Tex::new(2, 2));
+        let (_, complete) = kt_gpu::testkit::compose(&vr, &c, t, Q);
+        assert!(complete, "front {front}: the moshed layer has no picture");
+    }
+}
