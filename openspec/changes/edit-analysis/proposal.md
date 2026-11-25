@@ -1,6 +1,6 @@
 # Proposal: edit-analysis
 
-> DESIGN ONLY (spec session, 2026-11-24). Registry `v26.10-index.md` N5. Note F-MED-011. Tests: t4211–t4228. Takes
+> DESIGN, revision 2 (2026-11-25), checked at `fc60a5d9`: implementation-ready by stages (design D10). Registry `v26.10-index.md` N5. Note F-MED-011. Tests: t4211–t4228. Takes
 > candidate 3 of `kkt-26.11.01-candidates.md` (the cut detector) with it.
 
 ## Why

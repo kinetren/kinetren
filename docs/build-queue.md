@@ -109,17 +109,17 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
 | `fx-preset-change` | M | — (v2d is merged) | FX-UI (`node_editor.rs`, `fx_registry.rs`); no kt-model | answered A4; implementation-ready 2026-11-24 | t3595–t3596, t3932–t3934, t4243–t4244 |
 | `preview-canvas-and-gizmos` | M | — | PREVIEW-UI, `controls.rs` (a command), kt-plugin-api `UiDecl.handles` | answered A26; implementation-ready 2026-11-24 | t3597–t3599, t4229–t4231 |
 | `frame-format-variants` **v+** | L | `shared-events`; `preview-canvas-and-gizmos` (PREVIEW-UI) | MODEL (`Project::in_format`), `kt-text` (`wrap_lines`), one field of `moment_key.rs`, PREVIEW-UI, DIALOG (the render queue) | answered A17; implementation-ready 2026-11-24 | t3485–t3492, t4235–t4238 |
-| `multicam` **v+** | L | `shared-events` | MODEL, TIMELINE-UI, the preview area | answered A18 | t3505–t3514 |
+| `multicam` **v+** | L | `shared-events` | MODEL, TIMELINE-UI, `kt-engine` `fxstore.rs` (a stream handed on), kt-ffmpeg (timecode), the preview area | answered A18; implementation-ready 2026-11-25 | t3505–t3514, t4247–t4249 |
 | `motion-driven-params` **v+** | M | `shared-events`; not beside `track-stream-stage` 1.2–2.2 | MODEL (`CurveSource`, `autoplan.rs`, `outer.rs`), `video.rs`, `video_stream.rs`, AUDIO, FX-UI (`automation.rs`) | answered B7; implementation-ready 2026-11-25 | t3947–t3951, t3967, t4146, t4147 |
 | `real-3d-groups` **v+** | L | `shared-events`; not beside `track-stream-stage` 1.2–2.2, `scopes` (`engine.rs`) | MODEL, the plan, GPU (`mesh.rs`), GEOM (`pan3d.rs`), PREVIEW-UI, TIMELINE-UI | answered B10; implementation-ready 2026-11-25 | t3952–t3956, t4148–t4150 |
 | `auto-ducking-by-role` **v+** | M | `shared-events` | MODEL (`AudioRole`), AUDIO, `track_window.rs` | **open: Q74** | t3911–t3918 |
 | `project-scale` **v+** | M | `shared-events` | MODEL (`project_file.rs`) | **open: Q1, Q2** | t3924–t3931 |
 | `magic-wand-mask` **v+** | M | — | MASKS, PREVIEW-UI (`maskctl.rs`: not beside `preview-canvas-and-gizmos`) | answered A20; implementation-ready 2026-11-24 | t3535–t3543 |
-| `title-word-effects` **v+** | M | `magic-wand-mask` | MASKS, `kt-text` | answered B8 | t3942–t3946, t4246 |
-| `point-tracker` **v+** | L | `magic-wand-mask`, `shared-events` | MASKS, MODEL, automation links, PREVIEW-UI | answered A20 | t3520–t3531 |
+| `title-word-effects` **v+** | M | `shared-events`; not beside `magic-wand-mask` (MASKS) | MASKS, `kt-text` | answered B8; implementation-ready 2026-11-25. **May start now:** `kt_text::id_map`, `Isolate` with an ordinary shape | t3942–t3946, t4246 |
+| `point-tracker` **v+** | L | `shared-events`, `preview-canvas-and-gizmos`, row 838; not beside `magic-wand-mask` | MASKS, MODEL, `links.rs`, `kt-fx/geom.rs` → `kt_model::placement`, PREVIEW-UI | answered A20; implementation-ready 2026-11-25. **May start now:** the matchers (`kt_media::tracker`, 2.1, 2.3) and the placement move (1.2a) | t3520–t3531, t4255 |
 | `geometry-fx-flex` **v+** | M | `preview-canvas-and-gizmos` | GEOM, kt-plugin-api (`HandleDecl::Rect`), PREVIEW-UI | answered A24; implementation-ready 2026-11-24 | t3570–t3576, t4245 |
 | `ripple-and-trim-modes` | L | `multicam` (TIMELINE-UI) | MODEL (`ops::ripple_plan`), TIMELINE-UI | answered A9 (owner check C9); **two questions, Q2 and Q3 of its proposal (defaults only, they hold nothing)**; implementation-ready 2026-11-24 | t3415–t3432, t4239–t4242 |
-| `subtitles-and-text-editing` **v+** | XL | `download-library` stage 1, `ripple-and-trim-modes` | MODEL, `kt-media` transcribe, `kt-text`, SHELL | answered A11 | t3460–t3474 |
+| `subtitles-and-text-editing` **v+** | XL | stage A: `shared-events`; stage B: `download-library` 2 and 4; Delete by text: `ripple-and-trim-modes` | MODEL (`Track.sub`), `kt-media`, a new crate `kt-speech`, `kt-text`, SHELL | answered A11; implementation-ready 2026-11-25. **May start now:** SRT/VTT (1.2) | t3460–t3474, t4210, t4250–t4252 |
 | `presets-everywhere` | M | `fx-preset-change` | MODEL `ops.rs`, FX-UI, the user store | **open: Q1, Q2** | t3904–t3907 |
 | `detached-windows` | M | — | SHELL | **open: Q1, Q2** | t3901–t3903 |
 | `scopes` | M | — (v2d is merged); not beside `export-into-surface` | GPU (`engine.rs`, `display.wgsl`), `compose_queue.rs`, `fx_thumbs.rs`, SHELL | answered A8; implementation-ready 2026-11-24 | t3400–t3405, t3410–t3412 |
@@ -129,12 +129,12 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
 
 | Change | Size | Needs first | Areas | Owner question | Tests |
 |---|---|---|---|---|---|
-| `pause-detection` | M | — (Delete waits for `ripple-and-trim-modes`) | kt-media (`pauses.rs`, the pyramid's tail), a window | none | t3466, t4204–t4209 |
-| `edit-analysis` **v+** | L | A3 `ripple-and-trim-modes`; `speech` `pause-detection`; stage B `download-library` | kt-plugin-api (`measure.rs`), kt-media, TIMELINE overlay and snap, links, a bin tab | none | t4211–t4228 |
+| `pause-detection` | M | — (Delete waits for `ripple-and-trim-modes`) | kt-media (`pauses.rs`, the pyramid's tail), a window | none; implementation-ready 2026-11-25, **all but Delete may start now** | t3466, t4204–t4209 |
+| `edit-analysis` **v+** | L | 1.3 and A4 `shared-events`; A4 the link owner `geo`; "Cut on the beat" `ripple-and-trim-modes`; `speech` `pause-detection`; stage B `download-library`. **May start now:** A1 without 1.3, A2, Find moments | kt-plugin-api (`measure.rs`), kt-media, TIMELINE overlay and snap, links, a bin tab | none | t4211–t4228 |
 | `picture-check` | M | — (`loudness-norms` is in) | EXPORT, MODEL `lint`, DIALOG | **open: Q1, Q2** | t3908–t3910 |
 | `chroma-key-upgrade` **v+** | M | — | COLOR-FX, kt-plugin-api + `kt-fx/geom.rs` (one hook), SHELL (the Viewer's badge) | answered A22; implementation-ready 2026-11-24 | t3558–t3567 |
-| `pro-keyer` | L | `chroma-key-upgrade` | COLOR-FX, GPU, `BarrierKernel::held` | answered A22 | t3585–t3590 |
-| `temporal-barrier-3dnr` **v+** | L | `track-stream-stage` (STREAM) | STREAM, GPU, `plugins/fx-video-camera` | answered A21 | t3545–t3551 |
+| `pro-keyer` | L | `chroma-key-upgrade` | COLOR-FX, GPU, `BarrierKernel::held`, `video.rs` (`held_keys`) | answered A22; implementation-ready 2026-11-25 | t3585–t3590, t4254 |
+| `temporal-barrier-3dnr` **v+** | L | — for events (not beside `track-stream-stage`: STREAM); a track's camera after it | STREAM, GPU (a held RGBA), `plugins/fx-video-camera` | answered A21; implementation-ready 2026-11-25 | t3545–t3551, t4253 |
 | `download-library` **v+** (stage 4) | L | — (own-data-dir is merged) | a new crate `kt-library`, `kt-ffmpeg/search.rs`, `kt-text`, `kt-media/generator.rs`, SHELL | answered B3; **Q4 of its proposal holds stage 5 only**; implementation-ready 2026-11-24 | t3850–t3869 |
 | `wasm-plugin-host` | L | nothing | new `kt-plugin-wasm`, `kt-plugin-sdk`; kt-plugin-api (`Decl`), the mains, kt-cli, SHELL, FX-UI (a mark) | answered B11; implementation-ready 2026-11-25 | t3957–t3963, t4151, t4152 |
 | `openfx-host` | L | `wasm-plugin-host` (the trial, the faulted kind); not beside `export-into-surface` 3, `track-stream-stage` 2 | new `kt-plugin-ofx`, GPU (`context.rs`, a foreign op), `kt-fx/plan.rs`, the mains, SHELL, FX-UI | answered D4; implementation-ready 2026-11-25 | t3974–t3979, t4153, t4154 |
@@ -150,9 +150,7 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
 - **`hdr-sources-to-sdr` never needed `device-decode-sources`**: a device picture is laid out on the host and takes the same conversion, so there is no
   device twin to write.
 - The five changes whose questions had not been put to him are Q66–Q74 now (and flatpak Q75).
-- **Stale heads** left: `multicam`, `subtitles-and-text-editing`, `pro-keyer`, `temporal-barrier-3dnr` still say "until the owner
-  answers"; he did (A11, A18, A21, A22). The six read on 2026-11-24 (scopes, download-library, frame-format-variants,
-  ripple-and-trim-modes, geometry-fx-flex, fx-preset-change) are implementation-ready. Their owner is spec-features.
+- **Stale heads**: none left (the last four were re-read on 2026-11-25).
 - t3947 is `motion-driven-params`' alone (`title-word-effects` took t4246). No number is reserved twice.
 
 ## Tests of spec-engine

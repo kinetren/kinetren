@@ -1,6 +1,6 @@
 # Tasks: picture-check
 
-> DESIGN ONLY until the owner answers Q1–Q2. Tests: t3908–t3910.
+> Waits for Q72, Q73 (markers and the flashing row only; 1.1 and 1.2 without `flash` need neither). `loudness-norms` is merged. Tests: t3908–t3910.
 
 ## 0. Notes
 

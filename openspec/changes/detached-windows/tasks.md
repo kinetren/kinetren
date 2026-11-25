@@ -1,6 +1,6 @@
 # Tasks: detached-windows
 
-> DESIGN ONLY until the owner answers Q1–Q2. Tests: t3901–t3903.
+> Waits for Q66, Q67 (they choose rows of one flag and one platform rule; 1.1 and 1.3 do not depend on them). Tests: t3901–t3903.
 
 ## 0. Notes
 

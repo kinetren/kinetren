@@ -1,6 +1,6 @@
 # Tasks: presets-everywhere
 
-> DESIGN ONLY until the owner answers Q1–Q2. Tests: t3904–t3907. After `fx-preset-change`.
+> Waits for Q68 (the model of "take"), Q69 (content only); re-read 2026-11-25. Tests: t3904–t3907. After `fx-preset-change`.
 
 ## 0. Notes
 

@@ -1,7 +1,7 @@
 # Proposal: subtitles-and-text-editing
 
-> DESIGN ONLY (spec session, 2026-11-20). Code starts on the owner's word after his answers to the
-> questions at the end. Tests reserved: t3460–t3465, t3467–t3484, t4210.
+> DESIGN, revision 2 (2026-11-25), base `fc60a5d9`: implementation-ready (stage A with nothing unmerged but `shared-events`). The owner
+> answered Q1–Q3 (A11). Code starts on the orchestrator's go. Tests: t3460–t3465, t3467–t3474, t4210, t4250–t4252.
 
 ## Why
 
@@ -36,7 +36,7 @@ SRT/VTT, no recognition, no transcript. Note F-TXT-004 rejected bundled model we
   of words cuts it with ripple (change `ripple-and-trim-modes`: one rule); a word can be retyped.
 - **Fillers**: "Mark fillers" (words in a per-language list: "эээ", "uh", "um", …) puts range markers; nothing is cut by
   itself (rule 20). Pauses are the change `pause-detection` (by sound, noisy sound included); the Text panel opens it.
-- **A subtitle track**: a fifth track kind holding caption items (start, duration, text with line
+- **A subtitle track**: a video track that holds caption items (start, duration, text with line
   breaks) in timeline time; "Create captions from text" splits the transcript into items by a maximum
   line length and duration; import and export SRT and WebVTT; a track style (font of the vendored set,
   size, colour, outline, box, position, safe margin) and per-word highlight ("karaoke", CapCut) as the
@@ -62,26 +62,18 @@ SRT/VTT, no recognition, no transcript. Note F-TXT-004 rejected bundled model we
 
 ## Impact
 
-- kt-model: `Transcript { media, lang, words }`, `Word { t0, t1, text, conf }`, `LaneKind::Subtitle`,
-  `Caption { id, start, duration, text }`, `SubStyle` on the track; commands; `normalize`; the format.
-- kt-media: `transcribe` job (decode audio offline → 16 kHz mono → the recognizer), SRT/VTT parse/write,
-  the subtitle procedural source (kt-text frame of the captions active at a tick).
-- kt-engine: the subtitle track as a layer source (`SUB_TAG | track id`), prefetch-free (procedural).
-- kt-text: per-word highlight as an animation input (a cluster range and a colour), no time inside.
-- kt-app: the Text panel, search, the download card (as the FFmpeg download), menus, i18n ×5.
-- kt-otio: `metadata["kt"]` carries transcripts and the subtitle track; the export writes `<name>.srt`.
-- Fonts: CJK/Arabic subtitles need glyphs; kt-text vendors Noto Sans only (Latin/Cyrillic/Greek). Q3.
-- Format: the next free `.kt` version by content (`has_transcripts() || has_subtitle_track()`);
-  rows in "What OTIO export loses".
-- Idle: recognition runs only when asked (background lane, paused while playing); the panel follows the
-  playhead only while it moves; a static panel costs nothing.
+- kt-model: `Project.transcripts`, `Track.sub`, captions and their commands, `GeneratorKind::Captions` (internal), `TlEntity::Caption`.
+- kt-media: `subtitles_io`, the captions' frame; new `kt-speech` (dlopen whisper.cpp). kt-text: `highlight`.
+- kt-engine: `VideoClip.holes`; nothing else. kt-app: the row, the in-place editor, the Text tab, the render window, i18n ×5.
+- kt-otio: `metadata["kt"]`, `<name>.srt`. Format: the next free version by content. Idle: as asked by a person only.
 
 ## Questions to the owner
 
-Decided (2026-11-20, `kkt-26.11.20` A11, his Q14–Q16): Q1–Q3 (a) — whisper.cpp with a model pinned by sha256, the
-Text tab beside the bin, font packs on a click; and "все что у нас качается - надо переносить и делать архитектурно
-в виде некоторой библиотеки, типо как плагины": every download (the recognizer, its models, the font packs) goes
-through one library of downloads, designed in its own change `download-library`.
+Decided (2026-11-20, `kkt-26.11.20.txt` line 19, A11, whole): "Q14–Q16 subtitles: "п.1. и на будущее - все что у нас качается -
+надо переносить и делать архитектурно в виде некоторой библиотеки, типо как плагины чтоли их же тоже можно будет качать. вот и
+сделат библиотеку плагинов."" — Q1–Q3 (a): whisper.cpp pinned by sha256, the Text tab beside the bin, font packs on a click; every download
+through `download-library`. Read again on 2026-11-25 with his v26.10 line 89 ("можно и whisper использовать … учитывая что он есть в ffmpeg"):
+"п.1" chose the pinned library over FFmpeg's own filter (option b), which needs an FFmpeg built with it. No open question.
 
 The questions as asked:
 

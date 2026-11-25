@@ -1,34 +1,32 @@
 # Tasks: subtitles-and-text-editing
 
-> DESIGN ONLY until the owner answers Q1–Q3 (`proposal.md`). Depends on `ripple-and-trim-modes`
-> (`ripple_plan`) for text deletion. Tests reserved: t3460–t3465, t3467–t3484, t4210.
+> Decided 2026-11-20 (A11); revision 2 implementation-ready at `fc60a5d9` (2026-11-25). Stage A may start on the orchestrator's go
+> (after `shared-events`, MODEL); stage B.2 needs `download-library` 2, Delete by text `ripple-and-trim-modes`. Tests: t3460–t3465,
+> t3467–t3474, t4210, t4250–t4252.
 
-## 0. Notes first
+## 0. Notes
 
-- [x] 0.1 F-TXT-004 refreshed: the owner's "downloaded on a click" revises the weights verdict
-- [x] 0.2 proposal, design (D1–D11, class walk), deltas `transcript`, `subtitles`, `project-format`, `ui-reach`; `openspec validate subtitles-and-text-editing --strict`
-- [x] 0.3 planned rows in "What OTIO export loses" (`docs/ktprompts/v26.10-index.md`)
-- [ ] 0.4 the owner's answers Q1–Q3 in `docs/user-feedback.md`, folded into the design
+- [x] 0.1 F-TXT-004; proposal, design (D0–D11), deltas `transcript`, `subtitles`, `project-format`, `ui-reach`; `openspec validate subtitles-and-text-editing --strict`
+- [x] 0.2 his answers Q14–Q16 (kkt-26.11.20 line 19); planned OTIO rows
 
 ## 1. Stage A — captions without recognition
 
-- [ ] 1.1 kt-model: `LaneKind::Subtitle`, `SubTrack`, `Caption`, commands, validate (no overlap), ripple joins captions; t3467
-- [ ] 1.2 kt-media: SRT/VTT parse/write; t3468
-- [ ] 1.3 kt-engine: the subtitle procedural source (`SUB_TAG`), the layer at its row; kt-text highlight input; t3469
-- [ ] 1.4 render window: burn-in, sidecar; t3470
-- [ ] 1.5 format by content, kt-otio metadata and `.srt`; t3471, t3472
+- [ ] 1.1 kt-model: `Track.sub`, `Caption`, `SubStyle`, commands, validation, `TlEntity::Caption`; t3467 (the splitter over a synthetic word list), t4250
+- [ ] 1.2 kt-media `subtitles_io` (SRT, VTT); t3468
+- [ ] 1.3 `GeneratorKind::Captions`, `caption_event`, `holes`, kt-text `highlight`; t3469, t4251
+- [ ] 1.4 the row, its gestures, the in-place editor, the style form (the title form's widgets); File › Import subtitles…; t4252
+- [ ] 1.5 the render window: burn-in (the track's own switch), sidecar; kt-cli `--subtitles`; t3470
+- [ ] 1.6 the next free file version, kt-otio metadata and `.srt`; t3471, t3472
 
-## 2. Stage B — transcript and the Text panel
+## 2. Stage B — the transcript and the Text panel
 
-- [ ] 2.1 kt-model: `Transcript`, `Word`, word visibility through `clip_material_at`; t3460
-- [ ] 2.2 the recognizer component download (the `ffmpeg_setup` card pattern), dlopen loader, the job; t3461, t3462
-- [ ] 2.3 the Text panel (follow, click, search, region, Delete through `ripple_plan`, retype); t3463, t3465
-- [ ] 2.4 fillers from the catalogue; t4210 (pauses: `pause-detection`)
-- [ ] 2.5 menus and the live scenarios `text_panel.py`, `captions.py`; t3464, t3473, t3474
-- [ ] 2.6 font packs on a click (Q3 a), the notice for a missing script
+- [ ] 2.1 `Transcript`, `Word`, visibility, the string form; t3460
+- [ ] 2.2 `kt-speech` (dlopen), the `speech` lane, the Library line; t3461 (runs where `KT_SPEECH_DIR` is, says so where not), t3462
+- [ ] 2.3 the Text tab: follow, click, search, region, retype, Delete; t3463, t3465
+- [ ] 2.4 fillers; t4210. "Create captions"; menus; live `text_panel`, `captions` with a screenshot per step; t3464, t3473, t3474
+- [ ] 2.5 font packs in the style (`download-library` 4.1), the notice of a missing script
 
 ## 3. Close
 
-- [ ] 3.1 What's new; F-TXT-004 verdict → `CAPABILITY: openspec/specs/subtitles/`
-- [ ] 3.2 idle measurement with the panel open on a long transcript
-- [ ] 3.3 `src/scripts/finish.sh` (orchestrator), version in the report
+- [ ] 3.1 What's new (two lines, one per stage); F-TXT-004 verdict; ★14, B5, N4, A11 moved
+- [ ] 3.2 idle with the panel open on 6 000 words; `finish.sh` (orchestrator, per stage)

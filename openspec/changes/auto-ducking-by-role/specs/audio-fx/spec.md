@@ -4,7 +4,7 @@
 An audio track's Auto-ducking SHALL have two rules: during content, the track goes down by the set amount under the sum
 of every event on the ticked key tracks and of every event of the ticked roles (the keyed track excluded), through the
 one compressor; during titles, the track is raised by the set amount, or muted, or left, by a gain envelope computed
-from the title spans (Text generator events and events tagged "Title") with fades, a pure function of the edit; a track
+from the title spans (a title on screen with no content sound under it, and what is tagged "Title") with fades, a pure function of the edit; a track
 set to play only in titles SHALL be unmuted inside title spans and muted outside. The person's own level keys on the
 track's events SHALL add to the automatic gain in dB.
 Why: the owner, v26.10 lines 84–88 — "во время контента звук контента и задний звук, а во время заголовка … либо

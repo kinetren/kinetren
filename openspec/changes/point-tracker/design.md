@@ -1,7 +1,22 @@
 # Design: point-tracker
 
-> DESIGN ONLY, revision 2 (2026-11-20), base `5e7a8ea9`: the owner's A20 — the planar kind (D9) and the defaults
-> (D10). Revision 1 was on `b1b04b6b`. The questions are decided (`proposal.md`).
+> DESIGN ONLY, revision 3 (2026-11-25), base `fc60a5d9`: the owner's A20 read again (`proposal.md`), the design checked against the
+> merged tree. Implementation-ready; what may start before its dependencies is in D11.
+
+## D0. What revision 2 said and the code contradicts
+
+1. **"Its Geometry `pos_x/pos_y` links".** A link has no geometry at either end: `links.rs:46–72` knows `gen`, `clip`, `mask`, `fx`, `fx.mask`; `resolve_derived` never reads
+   `geometry_auto` (found-defects 838). Attach and Stabilize need the owner `geo` on both ends: task 1.2, with row 838's fix or after it.
+2. **"The apply gestures write the mapping as the link's expression".** An expression sees one value; a canvas position under a zoom and a turn needs x and y together. The channels are given in the
+   CANVAS (D2), computed by the placement; the expression keeps a constant offset only.
+3. **The placement is in kt-fx** (`geom.rs:145`), links resolve in kt-model (kt-fx depends on it). The affine placement of the Geometry node (frame, rule, zoom, turn, anchor) moves to
+   `kt_model::placement` (numbers only), kt-fx calls it: one arithmetic (R.64's rule). The source's size at tracking is kept in the tracker (`view`), for the model knows no source sizes.
+4. **"The mask's transform rows link".** A rectangle and an ellipse have `cx, cy, w, h, rot`; a pen mask has vertex rows only, and a homography moves vertices by two numbers each. `Mask.follow` (D5).
+5. **Sample keys by "material frame number (pts / frame period)"**: variable-rate files have none. The key is the material tick on the project's frame grid, the one `clip_source_pts` reads, so a
+   sample stands for exactly the frame the plan shows.
+6. **`BTreeMap` in the file as objects**: serde's pretty form would be a line per number; a second of samples is one string (D6).
+7. **"Head controls"**: the corner row of the preview (`preview-canvas-and-gizmos`).
+8. `clip_slice` copies the event's fields: a split gives both halves the tracker by itself; a pasted event brings it; a link into it is re-hung as links to a copied event are today.
 
 ## Context
 
@@ -31,9 +46,10 @@ transform — F-MSK-005), automatic reframe for formats (a consumer later: `fram
 
 ```text
 ClipEvent.trackers: Vec<Tracker>                      // empty = not written
-Tracker { id: TrackerId(u32), name, points: Vec<TrackPoint>, threshold: u8 /* conf % */ }
+Tracker { id: TrackerId(u32), name, view: (f64, f64) /* the source's view when tracked */, points: Vec<TrackPoint>,
+          threshold: u8 /* conf % */ }
 TrackPoint { id: u8, name, feature: Rect, search: Rect, attach: (f64, f64),
-             samples: BTreeMap<i64 /* material frame */, Sample> }
+             samples: BTreeMap<Tick /* material, on the project grid */, Sample> }
 Sample { x: f64, y: f64, conf: u8, manual: bool }     // x, y in source pixels of the event's media
 ```
 
@@ -45,14 +61,10 @@ search ⊇ feature.
 
 ## D2. The address
 
-`ParamOwner::Tracker { id }`, params `p<k>.x`, `p<k>.y`, `p<k>.conf` per point; with two points also
-`angle` (degrees of p1→p2 relative to the reference frame) and `scale` (|p1p2| / reference); with four
-`c<k>.x/.y` = the points (for Corner Pin). Values are in the event's SOURCE pixels; a consumer on another
-event gets them mapped to the canvas through the tracked event's Geometry at that tick
-(`expr` space: the link reads `src`, the apply gestures write the mapping as the link's expression — no
-hidden transform). Between material frames the value is linear; outside the sampled range the nearest
-sample (the link rule's extreme value). A frame with confidence below the threshold is a gap: the value
-holds the last good sample (AE "extrapolate motion" is an option of the apply gesture, off by default).
+`ParamOwner::Tracker { id }` in a path as `trk<id>`. Channels per point: `p<k>.x`, `p<k>.y` — in the CANVAS (−1..1 of `pos_x/pos_y`'s space, the event's own placement at that tick
+applied), `p<k>.sx`, `p<k>.sy` — source fractions, `p<k>.conf`. With two points `rot` (degrees from the reference frame) and `scale`; with four `c<k>.x/.y` in 0..1 of the canvas (Corner Pin's rows). For Stabilize
+`inv.x`, `inv.y`, `inv.rot`, `inv.zoom`: the geometry rows that hold the feature where it stood at the reference frame, over the event's own base geometry.
+Between samples linear; outside the nearest; below the threshold the last good sample (extrapolation is an option of the gesture, off).
 
 ## D3. The matcher
 
@@ -85,18 +97,18 @@ rule of reading forward), backward runs read GOP-sized spans backward.
 
 | Gesture | Writes |
 |---|---|
-| Attach event… (choose an event) | its Geometry `pos_x/pos_y` (+ `rotation`, `zoom` with two points) links to the tracker with an offset expression that keeps the event where it stands at the current frame |
+| Attach event… (choose an event) | its Geometry `pos_x`, `pos_y` (+ `rot`, `zoom` with two points) linked to the channels, `value + offset` (`value * factor`) keeping it where it stands now |
 | Effect centre (choose a slot) | the slot's `_x`/`_y` pair links, mapped into the slot's coordinate space |
 | Corner pin | adds a Corner Pin slot (or uses the selected) with its four corners linked to c1..c4 |
-| Mask follows (choose a mask) | the mask's transform rows link (translate; rotate/scale with two points) |
-| Stabilize | the tracked event's own Geometry links to the inverse (pos = −(p − p_ref), rotation = −angle) |
+| Mask follows (choose a mask) | `Mask.follow: Option<Follow { event, tracker, ref_tick }>`: its points are carried by the tracker's motion since `ref_tick` (shift; turn and scale with two points; the homography of a plane), over its own curves, when `ClipMaskPlan` evaluates the mask |
+| Stabilize | the tracked event's own Geometry rows linked to `inv.*` |
 
 Each is one undo step; the links are ordinary links (visible in the curve editor, removable).
 
 ## D6. Format and OTIO
 
-`.kt`: the next free version by content (`has_trackers()`); samples are written one line per second of
-material frames (`{"f0":…,"s":[[x,y,c],…]}`), deterministic and git-friendly (R.70's line rule).
+`.kt`: the next free version by content (`has_trackers()`); a second of samples is one string per
+point (`"2700000 3000: 0.41321 0.27710 96, …"`), deterministic and git-friendly (R.70's line rule).
 OTIO: trackers in the clip's `metadata["kt"]`; linked parameters are effect parameters there already; a
 foreign editor sees static values (a row in "What OTIO export loses").
 
@@ -140,8 +152,7 @@ continues from it.
 
 Channels (`ParamOwner::Tracker`): `c1..c4.x/.y` (the quad through H), `x`, `y` (its centre), `angle`, `scale`,
 `h0..h7`, `conf`. Apply gestures: Corner pin (c1..c4), Attach event… (a Corner Pin on the attached event's
-picture fitted to the quad — full perspective), Effect centre (centre), Mask follows (the mask's perspective
-transform linked to `h0..h7`, a new form of the mask transform rows), Stabilize (the inverse homography onto the
+picture fitted to the quad — full perspective), Effect centre (centre), Mask follows (`Mask.follow`, D5), Stabilize (the inverse homography onto the
 tracked event, as a corner pin of its own picture).
 
 ## D10. Defaults — the most convenient and exact (the owner's A20)
@@ -156,6 +167,17 @@ tracked event, as a corner pin of its own picture).
 | sub-pixel | on (parabola for points, LK refinement for the plane) | exact |
 | stop threshold | 60 % points, 70 % plane | a plane's ZNCC over an area is higher for the same quality |
 | template adaptation | at conf ≥ 90, 1/8 per frame | holds through slow light changes, not through occlusions |
+
+## D11. What may start before its dependencies
+
+| Part | Needs | May start |
+|---|---|---|
+| 2.1 and 2.3: `kt_media::tracker` (pyramid, ZNCC, sub-pixel, the plane's fit) over decoded frames, with its fixtures (t3520, t3528) | nothing: a new file, no model | **now** |
+| 1.2a: `kt_model::placement` moved from kt-fx (a pure refactor, t-placement green) | nothing | **now** |
+| 1.2b: the link owner `geo` both ways | row 838's answer | with it (fx-graph) |
+| 1.1, 1.3: the model | `shared-events` | after it |
+| 3, 4: gestures, the preview | `preview-canvas-and-gizmos` (the corner row, handles) | after it |
+| `Mask.follow` | MASKS free (`magic-wand-mask` writes `mask.rs` too) | not beside it; it needs nothing of it |
 
 ## Rejected
 

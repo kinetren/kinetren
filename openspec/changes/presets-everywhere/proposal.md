@@ -46,14 +46,23 @@ transitions, masks, cameras, generator values and morpher patches have neither p
 
 ## Questions to the owner
 
-**Q1. "ссылка" — a copy or a live link?** Your words: "взять кривую/пресет … из другого события(ссылка)". Your
-answer C2c (2026-10-30) chose references only in the FILE, every copy independent in the program. Links (R.61)
-already make one property follow another live.
-- (a) **Take-from copies by default; for a curve the dialog offers "Link instead" (it then follows the source
-  live)** (*recommended*).
-- (b) Take-from always links (live), for every entity — the source's later edits change every taker.
+(Q68, Q69 of `docs/owner-checks.md`; re-read against `fc60a5d9`, 2026-11-25.)
 
-**Q2. Built-in presets for the new kinds** — which first?
-- (a) **Curves (ease in/out, bounce, pulse, ramp up/down) and transitions (each kind's variants as presets);
-  masks, cameras and patches start with "mine" only** (*recommended*).
-- (b) Built-ins for every kind at once.
+**Your items whole** (`docs/ktprompts/v26.10.txt` lines 71–72): "нужно чтобы пользователь мог сохранять свои кривых/пресетов fx-chain/конкретных эффектов, а также - возможность без отдельного сохранения в архив -
+взять кривую/пресет fx-chain/конкретных эффектов из другого события(ссылка)," and "У всех(fx-chain/кривые/переходы и т.д. и т.п.) - у всех есть возможность копирования кривых, выбор дефолтных пресетов, и
+пользовательских пресетов."
+
+**Now**: chains have own presets and a clipboard (Ctrl+C/V on the graph), five built-in chains; single effects have variants in the picker (their menu: `fx-preset-change`, designed); a curve is copied and pasted
+into another effect's curve; one parameter can follow another live (R.61: "Link" in the curve). Transitions, masks, cameras, layers and titles have neither presets nor copying of values. Your answer of
+2026-10-30 (question 4) was about the FILE: an identical chain is written once, in the program every copy stays its own.
+
+**Q68 (Q1). "Взять … из другого события(ссылка)": a copy or something that goes on following?** Example: event A has Blur + Colour with a curve; you point at A from 40 other events.
+- (a) **A copy; for a single curve the dialog also offers "Follow"** (*recommended*): the 40 get their own Blur + Colour. Later you change A's blur: only A changes; to spread it you select the 40 and point at A again (one
+  gesture). Deleting A changes nothing. In the file it is still one chain (`project-scale`).
+- (b) Always follow, whole chains too: changing A's blur changes 41 events at once. Then: an event of the 40 cannot have its own blur value until it is unlinked; deleting or cutting A needs a rule (the first
+  follower becomes the source); a follower inside a composition cannot follow an event outside it (as links today); copying a follower to another project brings a copy.
+- (c) Ask each time: Copy or Follow, for chains as well: (a) plus a shared chain as an object of its own ("chain style") with a name, edited in one place. The widest, and the largest to build.
+
+**Q69 (Q2). "Выбор дефолтных пресетов": for which kinds first?** Built in today: five chains, the variants of every effect and transition kind.
+- (a) **Curves (ease in/out, bounce, pulse, ramps; about eight) and the transitions' variants as presets; masks, cameras and layers start with your own only** (*recommended*).
+- (b) Built-in sets for every kind at once (also about six masks, eight camera moves, a few layers): nothing of what you ask waits, and the kinds whose looks must be invented make it about twice as long.

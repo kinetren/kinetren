@@ -1,19 +1,27 @@
 # Design: pro-keyer
 
-> DESIGN ONLY, revision 1 (2026-11-20), base `70169e22`. Q1–Q2 in `proposal.md`; the defaults follow the
-> recommended options. Builds on `chroma-key-upgrade` (its difference model and Viewer views).
+> DESIGN ONLY, revision 2 (2026-11-25), base `fc60a5d9`. Q1 a, Q2 a decided (A22, its Q46–Q47). Implementation-ready after `chroma-key-upgrade`
+> (revision 3: its difference model, `matte_view`, `AnalysisKind::Key`).
+
+## D0. What revision 1 said and the code contradicts
+
+1. **`clip_frame_keys` "adds `(media, held_pts, quality)`".** It returns the frame and its blend partner; a held frame is of another moment and must not be blended. It is a second question,
+   `held_keys(clip, quality)`, asked wherever the leaf's keys are asked (`leaf_keys`, `layers_at`, `wanted_frames`, `max_concurrent_layers`), and read in `layer_src` into `LayerSrc.held` (D7).
+2. **"The input frame".** A barrier reads the output of the slots before it; the plate is a frame of the SOURCE. A crop or a geometry before the keyer would misplace it. The held frame goes through the slots
+   before the keyer as the source does (D7), rows at the HELD moment.
+3. **The key on a track, on a composition's instance, on a layer**: there is no one source to hold there. The held plate is refused with its reason, the generated plate works (D2).
+4. **Word passes "where precision matters"**: a target is `R32Uint` per pass, one word (`word_passes`); three 16-bit linear channels do not fit. Packing is 10:11:11 bits in linear light with a dither-free rounding; the arithmetic is f32 in
+   one pass from the 8-bit input (D1). Passes that need only alpha keep 8 bits.
+5. **`cook` gives eight numbers**: the keyer has thirty rows; the graph is built by `gpu_values`.
+6. **"A pyramid to ~8×8", fills and chokes by long loops**: a loop past 32 iterations costs ten times its body on llvmpipe (kt-gpu's rule). Chokes are the growing three-tap passes of `chroma-key-upgrade`
+   D4; the pyramid is `PassAt` halves.
+7. **Views by the Viewer's chips** are `matte_view` modes over the OUTPUT's alpha; Core, Edge, Plate, Shadow and Spill are inside the graph: the copy's slot carries an internal row `show` (D6).
+8. Tests: t3595–t3599 belong to other changes now; the keyer's are t3585–t3590, t4254.
 
 ## Context
 
-Read on `70169e22`:
-
-- Barrier plugins (`src/libs/kt-plugin-api/src/barrier.rs`, plugins spec "A barrier kind is a plugin with a
-  GPU pass graph", "may render at its own size", word passes): one input frame; host nodes `Resample`,
-  `Premul`, `Save`; the K× rule is the planner's.
-- Frame blending: two source frames per layer decided by ONE function `clip_frame_keys` for the order and
-  the read (kt-engine CLAUDE.md) — the precedent for a held frame.
-- The ISP's device-like panel (`src/apps/kt-app/src/isp_panel.rs`): stages in a row, each viewable.
-- `chroma-key-upgrade`: the colour-difference model, Status view, Analyze.
+`barrier.rs` (`BarrierKernel::{gpu_values, word_passes}`, `Node::{Pass, PassAt, Resample, Save}`, `Slot`, `GpuCtx { res_scale, … }`), the executor's loop (`engine.rs:3968`), `LayerSrc`
+(`video_plan.rs:57`), `clip_frame_keys` (`video.rs:784`), frame blending, `moment_key::put_src`, `isp_panel.rs`, `chroma-key-upgrade` D2–D7.
 
 ## Goals / Non-Goals
 
@@ -26,9 +34,9 @@ more simply.
 
 ## D1. Linear light
 
-Code values → linear by the sRGB-ish EOTF (a 256-entry table, exact), processing in 16-bit fixed point (word
-passes), back at the end. Keying in linear light makes the shadow ratio a physical light ratio and the despill
-restore preserve emitted brightness.
+Every pass that mixes colours decodes 8 bits to linear by the sRGB curve (a closed f32 form by `pow`-free polynomial, the same text on the CPU oracle), works in f32 and either ends in 8 bits (the last pass, alpha passes) or packs linear RGB into one word
+(10:11:11). The rounding of a pack is the stored frames' tolerance class (`FrameTol` measured at landing). Keying in linear light makes the shadow ratio a light ratio and the restore preserve light.
+`hdr-sources-to-sdr` stage 5 gives these passes their 16-bit input later; nothing here assumes SDR white but the 8-bit decode.
 
 ## D2. The clean plate
 
@@ -36,9 +44,9 @@ restore preserve emitted brightness.
   key rows); weights w = s0⁴ (only clearly-screen pixels vote); a pyramid down of (Σ w·c, Σ w) by 2× box to
   ~8×8, then up: at each level, where the level's weight is low, the coarser level's colour fills in
   (push-pull). The result is a smooth screen colour everywhere, the subject erased.
-- **Held frame**: `held(p)` returns the material tick of the chosen moment; the plan fetches that frame of
-  the layer's own source (the layer's decode size), the plate = that frame lightly blurred (3×3) to drop
-  noise. A held frame from a moving camera gives a wrong plate: the panel says so (the plate view shows it).
+- **Held frame**: the row `plate_at` (material tick, −1 = generated, the default; Q1 a); the plan fetches that frame of
+  the event's own source, through the slots before the keyer at that moment, the plate = that frame lightly blurred (3×3).
+  Only on an event with a file or a generator as its source; on a track, a layer or a composition's instance the row is disabled with its reason. A held frame from a moving camera gives a wrong plate: the panel says so (the plate view shows it).
 
 ## D3. Mattes
 
@@ -52,7 +60,8 @@ alpha  = core outside the band; max(core, edge) inside it
 ```
 
 Holes are filled by a coarse closing (dilate then erode at the band's scale) restricted to the core;
-dilate/erode separable min/max (integer). Defaults from Analyze.
+dilate/erode separable min/max by the growing three-tap passes (radii in thousandths of the frame's height × `res_scale`, so preview and export agree). Defaults from Analyze
+(`AnalysisKind::Key` with the keyer's rows: colour, balance, clips, five frames, one undo step).
 
 ## D4. Shadows
 
@@ -67,18 +76,23 @@ restored to the original's (the upgrade's restore); the removed light replaced b
 of the same luma, a chosen colour, or `subject hue` — the mean hue of the pixel's neighbourhood where excess
 is near zero (a 9×9 weighted mean at quarter size), so a green-lit shoulder returns to the shirt's colour.
 
-## D6. Outputs and Viewer
+## D6. Outputs and the Viewer
 
-Rows `view` are not rows: the Viewer (fx-graph v1) on a Pro Keyer node offers Composite, Matte, Status, Core,
-Edge, Plate, Shadow, Spill — preview only, never rendered (as in `chroma-key-upgrade` D4).
+The Viewer's chips on a Pro Keyer node: Composite, Matte, Status (by `matte_view`) and Core, Edge, Plate, Shadow, Spill. The last five set, in the copy the player holds (`Viewer::cut_event`), the internal row `show` of the slot
+(not in the passport a person sees, refused in a file): the graph ends at that stage. Never in the model, never rendered.
 
-## D7. The held frame contract
+## D7. The held frame
 
-`BarrierKernel::held(&self, p) -> Option<HeldFrame>`; the plan's `clip_frame_keys` (ONE function for
-`layers_at`/`wanted_frames` and the read) adds `(media, held_pts, quality)`; `max_concurrent_layers` counts it
-(the export chunk budget, like a blending pair); the layer's content key includes the held frame's serial; the
-pass graph sees it as input `Held`. Without a held frame nothing changes (bytes of every other barrier
-unchanged).
+```text
+BarrierKernel::held(&self, values: &[f64]) -> Option<Tick>      // material tick; default None
+Slot::Held                                                       // the held frame after the slots before this one
+```
+- The engine: `VideoClip.held: Option<HeldAt { tick, slot }>` from the first slot that asks (a second one is refused by the chain check, named). `held_keys` gives `(source, floor(tick), the layer's decode size)`; the order,
+  the prefetch window, the coverage, the export chunk (`max_concurrent_layers` + 1) and the copies ask it; a missing one makes the frame incomplete.
+- `LayerSrc.held: Option<Box<LayerSrc>>`: a layer of the same event over the slots before the keyer with rows at `tick` (the machinery of a graph read, `reads`): the executor resolves it as a read and gives the graph `Slot::Held`.
+  A stream stage or a time kind in those slots refuses the held plate (a history of another moment), named.
+- `put_src` hashes it (its leaf included); a chain without one keeps its key.
+- In an arm of the graph the same; on a reel instance and a track: no `held` (D0.3).
 
 ## D8. The panel
 

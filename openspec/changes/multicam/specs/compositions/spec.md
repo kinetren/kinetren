@@ -9,16 +9,17 @@ Why: the owner's M1 "не нужно было страдать при сведе
 
 #### Scenario: Three cameras and a recorder become one instance
 - **WHEN** three camera clips with sound offset by 1.2 s, 0.4 s and 0 s and a recorder clip are selected and grouped by sound
-- **THEN** a composition with three angles and the recorder track is created, the offsets match the known ones within one audio granule, one instance replaces the four clips in one undo step; a camera without sound in the selection refuses the grouping by sound naming it
-- **TEST** t3505 (`src/libs/kt-model/tests/multicam.rs`)
+- **THEN** a composition with three angles and the recorder track is created, the offsets match the known ones within one audio granule, one instance replaces the four clips in one undo step; a camera whose sound is not found is listed and may be left at its place; by timecode the files stand by their own timecodes, drop-frame understood, and a file without one disables the choice naming it
+- **TEST** t3505 (`src/libs/kt-model/tests/multicam.rs`), t4248 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`)
 
 ### Requirement: An instance plays one angle and its chosen sound
-An instance of a multicam composition SHALL compose only its active angle's video track and play the
-sound its audio choice names (a fixed angle's sound, a non-angle track, or the active angle's sound when
+An instance of a multicam composition SHALL carry its angle and its sound as values of two handles of the
+composition, SHALL compose only its active angle's video track and play the
+sound its sound handle names (a fixed angle's sound, a non-angle track, or the active angle's sound when
 following); the other angles SHALL cause no decode, prefetch or coverage. Cut-and-switch SHALL split the
 instance at the displayed frame and set the right piece's angle; switch-only SHALL set the angle of the
 piece under the playhead; switching SHALL work while playing, and one pass from Play to Stop SHALL be one
-undo step. With a fixed sound, a cut SHALL leave the sound byte-identical to the uncut instance.
+undo step. With a fixed sound, a cut SHALL leave the sound byte-identical to the uncut instance, whatever effects ring inside the angles.
 Why: invariant 4 (no work for what is not shown); F-TL-005 trick 2 (the sound must not jump); UI rule 2.
 
 #### Scenario: Only the active angle is decoded
@@ -28,8 +29,13 @@ Why: invariant 4 (no work for what is not shown); F-TL-005 trick 2 (the sound mu
 
 #### Scenario: A live pass is one undo step and keeps the sound
 - **WHEN** during playback digits 2, 1, 3 are pressed at three moments, Stop, then Undo once; and the audio of the cut instance is rendered against the uncut one with the fixed sound
-- **THEN** three cuts with angles 2, 1, 3 appear at the displayed frames; one Undo removes all three; the audio is byte-equal to the uncut instance's
+- **THEN** three cuts with angles 2, 1, 3 appear at the displayed frames; one Undo removes all three; the audio is byte-equal to the uncut instance's with an equaliser, a compressor and a reverb inside the angle, played through and after a seek
 - **TEST** t3507 (`src/libs/kt-model/tests/multicam.rs`), t3509 (`src/libs/kt-engine/tests/multicam.rs`)
+
+#### Scenario: The angle travels as a composition parameter
+- **WHEN** a piece with angle 2 is copied, split, pasted into another project with the composition, saved, read, and its instance form is opened; a title inside another angle is edited
+- **THEN** every copy plays angle 2 and the form shows it; the edit of the hidden title changes no key of the piece; the two handles cannot be unpublished or published twice
+- **TEST** t4247 (`src/libs/kt-model/tests/multicam.rs`)
 
 #### Scenario: Expand keeps what plays
 - **WHEN** a piece with angle 2 and a graded angle track is expanded

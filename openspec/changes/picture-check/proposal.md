@@ -43,12 +43,22 @@ The owner, `v26.10` line 57: "а для видео такой же оценки 
 
 ## Questions to the owner
 
-**Q1. Findings as markers?**
-- (a) **The report is a list with jumps; a "Mark all" button turns the findings into range markers named by
-  kind** (*recommended*: nothing appears on the timeline by itself; rule 20).
-- (b) Findings become markers automatically after every check.
+(Q72, Q73 of `docs/owner-checks.md`; re-read against `fc60a5d9`, 2026-11-25: `loudness-norms` has built the sound's half of this: findings at their times under the result's table, a click moves the playhead. The picture's findings
+join that list.)
 
-**Q2. The flashing check (photosensitive epilepsy).** It is the one picture rule with a legal weight for
-broadcast; for social video it is a warning.
-- (a) **Include it as a warning with its spans** (*recommended*).
-- (b) Leave it out.
+**Your items whole** (`docs/ktprompts/v26.10.txt` lines 56–57): "14. в окне рендера нет акцента у loudless и второй строки to если я например прорендерю отрывок с сильным неприятным gain на одном канале или например на тишине у другого
+или всё вместе..., на цифры вообще внимание не обратишь такие. а еще не понятно что является нормой у каждого параметра.. ну и оформить это получше надо, а не просто текстом насрать на отъебись" and "15. а для видео такой же
+оценки нет? ну типо что-то про картинку я не знаю... то что помогает от частых ошибок или что-то такое".
+
+**Now**: after a render the window shows the sound against its norm and the sound's findings with times. Of the picture: nothing. A gap renders black, a one-frame leftover stays, and nobody says.
+
+**Q72 (Q1). Where do the picture's findings go besides that list?** Example: a 20-minute edit with 3 gaps, 11 leftovers of one frame and 2 frozen places.
+- (a) **The list with clicks; a button "Mark all" puts 16 range markers on the timeline when you want them** (*recommended*): nothing appears by itself.
+- (b) Markers after every check by themselves: 16 markers come, and must be removed or re-made at the next check; your own markers stand among them.
+- (c) The list only, no markers at all.
+
+**Q73 (Q2). The check of flashing** (more than three large flashes within a second: broadcasters refuse such files, some people get seizures). It is the only check with a rule of law behind it; on music videos and fast cuts with flash transitions it
+will often find places you made on purpose.
+- (a) **A warning with its places, like the others** (*recommended*): on a typical clip with flash transitions it may list several intended places; it blocks nothing.
+- (b) Off by default, a tick in the render settings turns it on: nobody is told who did not ask.
+- (c) Not made.

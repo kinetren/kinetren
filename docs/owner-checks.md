@@ -42,15 +42,15 @@ Asked in chat together, his items quoted whole. Numbers start at Q66: the branch
 
 | # | Since | Question (the options and what each changes are in the proposal) | Change |
 |---|---|---|---|
-| Q66 | 2026-11-24 | `detached-windows` Q1: which windows detach ("окна fx и прочие окна") | `openspec/changes/detached-windows/proposal.md` |
+| Q66 | 2026-11-24 | `detached-windows` Q1: which windows stand outside (three options, counted) | `openspec/changes/detached-windows/proposal.md` |
 | Q67 | 2026-11-24 | `detached-windows` Q2: Wayland places windows itself | the same |
 | Q68 | 2026-11-24 | `presets-everywhere` Q1: "взять кривую/пресет … из другого события(ссылка)": a copy or a live link | `openspec/changes/presets-everywhere/proposal.md` |
 | Q69 | 2026-11-24 | `presets-everywhere` Q2: which built-in presets first | the same |
-| Q70 | 2026-11-24 | `project-scale` Q1: what "не должен вешать систему" means at a million events | `openspec/changes/project-scale/proposal.md` |
+| Q70 | 2026-11-24 | `project-scale` Q1: the budget at a million events (sizes computed) | `openspec/changes/project-scale/proposal.md` |
 | Q71 | 2026-11-24 | `project-scale` Q2: references for chains, or for whole events too | the same |
 | Q72 | 2026-11-24 | `picture-check` Q1: findings as markers | `openspec/changes/picture-check/proposal.md` |
 | Q73 | 2026-11-24 | `picture-check` Q2: the flashing check | the same |
-| Q74 | 2026-11-24 | `auto-ducking-by-role` Q1: what counts as a title section | `openspec/changes/auto-ducking-by-role/proposal.md` |
+| Q74 | 2026-11-24 | `auto-ducking-by-role` Q1: what counts as a title section (four options, an example counted; the recommended one changed on 2026-11-25) | `openspec/changes/auto-ducking-by-role/proposal.md` |
 | Q75 | 2026-11-24 | `flatpak-flathub` Open Questions 1–6 | `openspec/changes/flatpak-flathub/` |
 | Q76 | 2026-11-24 | `claude/youtube-channel-specs` (five designs of 2026-11-20, Q55–Q65 inside): merge it? Its `loudness-target` keeps the norm in the render settings, against his B6 | spec-features' report of 2026-11-24 |
 | Q77 | 2026-11-25 | `download-library` Q4: where the signed list of downloads lives and who keeps its key (holds stage 5 only) | `openspec/changes/download-library/proposal.md` |

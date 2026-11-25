@@ -1,6 +1,6 @@
 # Proposal: pause-detection
 
-> DESIGN ONLY (spec session, 2026-11-24). Registry `v26.10-index.md` N4, the part `subtitles-and-text-editing` left out.
+> DESIGN, revision 2 (2026-11-25), checked at `fc60a5d9`: implementation-ready. Registry `v26.10-index.md` N4, the part `subtitles-and-text-editing` left out.
 > Note F-AUD-008. Tests: t4204–t4209; t3466 moves here from `subtitles-and-text-editing`.
 
 ## Why

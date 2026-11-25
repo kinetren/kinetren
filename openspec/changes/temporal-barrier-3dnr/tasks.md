@@ -1,30 +1,27 @@
 # Tasks: temporal-barrier-3dnr
 
-> DESIGN ONLY until the owner answers Q1–Q2 (`proposal.md`). Tests reserved: t3545–t3557.
+> Decided 2026-11-20 (A21); revision 2 implementation-ready at `fc60a5d9` (2026-11-25). Events need nothing unmerged; a track's camera waits for
+> `track-stream-stage`. Tests: t3545–t3551, t4253.
 
-## 0. Notes first
+## 0. Notes
 
-- [x] 0.1 note F-FX-017 (`docs/features/fx/simulate/camera-temporal-nr.md`)
-- [x] 0.2 proposal, design (D1–D9, physics first, class walk), deltas `plugins`, `video-plan`, `video-fx`; `openspec validate temporal-barrier-3dnr --strict`
-- [ ] 0.3 the owner's answers in `docs/user-feedback.md`, folded into the design
+- [x] 0.1 F-FX-017; proposal, design (D0–D8), deltas `plugins`, `video-plan`, `video-fx`; `openspec validate temporal-barrier-3dnr --strict`
+- [x] 0.2 his answers Q36–Q37 (kkt-26.11.20 line 32)
 
-## 1. The contract (kt-plugin-api)
+## 1. The hooks (kt-plugin-api, kt-model, kt-engine)
 
-- [ ] 1.1 `VideoClass::Temporal`, `TemporalKernel` (warm, grid, pre, step, post, key), registry refusals; t3545
+- [ ] 1.1 `StreamKernel::{active, split}`, `StreamLayout::continues`, `HeldStreamOut::Rgba` and its pass in kt-gpu; `is_stream` asks `active`; t3545; Datamosh's tests unchanged
+- [ ] 1.2 `StreamStage` with a split slot: the front part joins `front`, the back part takes the place in `after_chain` (masks, bypass, graph arms); t3546, t4253
 
-## 2. The host (kt-engine, kt-gpu)
+## 2. The camera (`plugins/fx-video-camera`)
 
-- [ ] 2.1 `StreamStage::Temporal`: anchors, warm-up, checkpoints in the pinned tier, `needs`, front memo reuse; t3546, t3547
-- [ ] 2.2 kt-gpu state textures (`R32Uint` words), the step graph on the compute host; ledger rows
+- [ ] 2.1 `camera_isp_front`/`_back`/`_scene` from today's `gpu_values` by pass ranges: with everything off the bytes are the barrier's (the stored frames)
+- [ ] 2.2 the recursion's compute job, checkpoints, keys; t3547, t3548, t3549
+- [ ] 2.3 rolling shutter and flicker; t3550
+- [ ] 2.4 rows, presets, the motion map, the panel's blocks; i18n ×5; the next free file version
 
-## 3. The camera (`src/plugins/fx-video-camera`)
+## 3. Close
 
-- [ ] 3.1 the ISP split into pre / step / post when a temporal row is on; rows, preset, motion-map view; t3548, t3549
-- [ ] 3.2 rolling shutter (W = 1) and flicker (row time uniform); t3550
-- [ ] 3.3 the ISP window's TNR block (device-like panel)
-
-## 4. Close
-
-- [ ] 4.1 format by content; idle scene; t3551
-- [ ] 4.2 What's new; F-FX-017 verdict → `CAPABILITY: openspec/specs/video-fx/`; registry row I1 moved
-- [ ] 4.3 `src/scripts/finish.sh` (orchestrator), version in the report
+- [ ] 3.1 t3551 (`idle`); live `camera` gets a TNR step and the panel's
+- [ ] 3.2 What's new ("the camera's temporal denoiser with its trails, rolling shutter and mains flicker"); F-FX-017 verdict; I1, A21 moved; kt-engine and camera `CLAUDE.md`
+- [ ] 3.3 the seek's cost on llvmpipe in the report; `finish.sh` (orchestrator)

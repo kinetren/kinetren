@@ -1,8 +1,7 @@
 # Proposal: point-tracker
 
-> DESIGN ONLY (spec session, 2026-11-20), revision 2 after the owner's answer (`kkt-26.11.20` A20): the planar
-> tracker joins now; the defaults are the most convenient and exact. The change keeps its name. Tests reserved:
-> t3520–t3534.
+> DESIGN, revision 3 (2026-11-25), base `fc60a5d9`: implementation-ready; parts may start before its dependencies (design D11). Decided by A20. Tests:
+> t3520–t3531, t4255.
 
 ## Why
 
@@ -64,8 +63,8 @@ exports"); and a broken track is the normal case, so tracking is a session with 
 
 ## Impact
 
-- kt-model: `ClipEvent.trackers: Vec<Tracker>` (`TrackerKind::Points | Plane`); a mask's transform gains a
-  perspective form (a homography link) for "Mask follows" a plane; `ParamOwner::Tracker { id }`, link resolution reads
+- kt-model: `ClipEvent.trackers: Vec<Tracker>` (`TrackerKind::Points | Plane`); `Mask.follow`; the Geometry placement's numbers (from kt-fx); link owners
+  `trk<id>` and `geo`, link resolution reads
   samples (linear between material frames), validation, `SetTrackers`.
 - kt-media / kt-engine: the tracking job (offline source, luma pyramid, ZNCC; for the plane, feature matches, a
   robust homography and a region refinement), progress, stop rules.
@@ -77,6 +76,7 @@ exports"); and a broken track is the normal case, so tracking is a session with 
 
 ## Questions to the owner
 
-Decided (2026-11-20, A20, his Q32–Q33): the point AND the planar tracker now, the defaults the most convenient and
-exact ("первые два, по умолчанию - самые удобные и точные"); the controls on the preview as the masks are, the
-effects window lists the trackers (Q2 a). No open question.
+Decided (2026-11-20, `kkt-26.11.20.txt` line 31, A20, whole): "Q32–Q35 tracker and wand: "первые два, по умолчанию - самые удобные и точные. позже сеть - нейросеть"": the point AND the
+planar tracker now, a neural one later, the defaults the most convenient and exact. Read again on 2026-11-25: "первые два" are the first two kinds of Q32 (point, planar); where the
+controls stand (Q33) his words do not say, the recommended place was taken. His T1 (line 60, whole above) says a tracker must have somewhere to be applied ("применить то его не
+куда") and calls the property system a story of its own: that system is the links, and it lacks the Geometry node on both ends (design D0.1), which is why that is a task here. No open question.
