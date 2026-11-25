@@ -94,8 +94,20 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
   decoders) after dropping its lock in place. `KtApp::open` stays synchronous for the start and tests.
   `set_media_grace`/`hold_loads_for_tests` are the tests' seams for a load in flight.
 
+## The persistent cache (persistent-cache)
+
+- **One place sets it: `KtApp::set_persistent_cache`** (`copies_ui.rs`): the disk tier of frames and the source copies,
+  by the mode in the start record (`cache_mode`; it outlives File → New, so `replace_with` and `run` set it again after
+  the store comes). "Off" drops the frames' store and gives a playing copy's place back to the original; the files stay.
+- A card's mark is laid out once per `Copies::stamp`, never per frame; its state reaches the interface by
+  `Copies::set_notify` (`wake::soon`), the bars by `RenderCache::set_notify`. No text says "proxy" (t3450).
+
 ## Closing the program (close-while-busy, kkt-26.11.18 T1)
 
+- **A disk call of the close runs through `close_write`** (found-defects 831, 971, t3609): on a thread, bounded, named
+  in the trace. On a saturated disk an fsync or a rename over a file stands for tens of seconds in the kernel: on the
+  UI thread it holds the close, on any thread it holds the end of the PROCESS (`_exit` waits for it too). So a record
+  of conveniences has no fsync and is written at rest rather than at the close.
 - **The close is bounded after its durability.** `on_exit`: pause, the autosave in flight (5 s), a
   Ctrl+S being written (30 s), the recovery file — then `Shutdown DURABLE` and `exit_watch::arm`: the rest
   (poster, offline park, telemetry, the drops, eframe's teardown, the C exit hooks) gets `EXIT_BOUND`
@@ -237,7 +249,7 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 - **Arabic: egui 0.36 shapes the cursive script, but does NOT reorder.** The runs are cut by the font letterform (a space breaks the phrase), harfrust reverses the glyphs inside a run itself, and the runs are laid out in logical order. Therefore the WORDS are rearranged, and the characters inside a word remain logical; a per-character `reorder_line` makes it worse. The analysis — `src/i18n/bidi.rs` and item 126.
 - **The contents of a `TextEdit` are never reordered** — only the catalog strings. Otherwise the cursor and the selection would diverge from what is shown.
 - **The window title ≠ its id.** `Window::new(title)` derives the `Id` from the title, and the window position lives under it: every window must have an explicit `.id()`, otherwise changing the language will reset the position of the dialog (test 129).
-- **A window is made only by the shell; its kind decides Esc, cross, scroll and width** (shared-window-shell). `window_shell::Shell::new(id, title, Kind)` (and `window_shell::modal`) is the only way to a window; the site gives its kind (`Tool` — close and keep edits, `Dialog` — cancel, `Progress { why }` — no cross, Esc does not touch it) and, where the kind allows, its size and place. The cross and Esc come back as one `Closed`, so the site runs one action for both. Esc closes the window ON TOP: `begin_frame` lists the previous frame's windows in layer order, `escape_action` picks the last, `arm_esc` hands it back. There is no window-level scroll — the body scrolls in `widgets::window_body` (the morpher window's `.vscroll(true)` widened it one physical pixel per frame at the owner's zoom 1.1). The guard is t921; the width — t918/t923; Esc — t919/t920/t922.
+- **A window is made only by the shell; its kind decides Esc, cross, scroll and width** (shared-window-shell). `window_shell::Shell::new(id, title, Kind)` (and `window_shell::modal`) is the only way to a window; the site gives its kind (`Tool` — close and keep edits, `Dialog` — cancel, `Progress { why }` — no cross, Esc does not touch it) and, where the kind allows, its size and place. The cross and Esc come back as one `Closed`, so the site runs one action for both. Esc closes the window ON TOP: `begin_frame` lists the previous frame's windows in layer order, `escape_action` picks the last, `arm_esc` hands it back — one window PER PRESS: a slow frame reads several (found-defects 905, t3291). There is no window-level scroll — the body scrolls in `widgets::window_body` (the morpher window's `.vscroll(true)` widened it one physical pixel per frame at the owner's zoom 1.1). The guard is t921; the width — t918/t923; Esc — t919/t920/t922.
 - **Every window is resizable and its body FILLS it** (windows-fill-their-area, kkt-26.11.01 item 12 —
   "a needle's eye … I am tired of reminding"). egui sizes a `Window` by its CONTENT, so only a body
   that fills makes a window taller: every window draws its content through `widgets::window_body`
@@ -485,7 +497,8 @@ The rules above were written down — and did not work: the R.38 mechanism turne
 
 ## Panel order decides (item 1 of R.9 — cost three rounds)
 
-- Anything that is FILLED in during the frame (`hover_hint`) cannot be read in a panel that was drawn before its sources. The status bar is the second panel of the frame, and the buttons are drawn later: the hints were not visible at all, except for the bell (which sits inside the status bar itself). Such lines are drawn at the END of the frame in a separate layer (`Area(Foreground).interactable(false)` — otherwise the layer steals the window drag).
+- Anything that is FILLED in during the frame (`hover_hint`) cannot be read in a panel that was drawn before its sources. The status bar is the second panel of the frame, and the buttons are drawn later: the hints were not visible at all, except for the bell (which sits inside the status bar itself). Such lines are drawn at the END of the frame in a separate layer (a painter layer, not an area — otherwise the layer steals the window drag; the RESTING line is in `under_windows()`, a live one in Foreground).
+- **What the main window draws over its panels goes into `app::under_windows()`** (window-chrome D1): an area of `Order::Background`, over every panel and under every window. A `layer_painter` on `Foreground` shows through the windows (W1, T9), and one on an unregistered `Middle` layer is painted over them too. A maximized window goes back through `restore_window` and every strip drags by `window_drag_from` (T5).
 - The test MUST check what was DRAWN (`status_line_shown`), not an internal field: `hover_hint` is already filled after the frame, and the test turns green with a dead feature.
 - The root `Ui` from eframe is framed by a default 8 px — because of it the whole interface did not reach the edges of the window ("the gap to the right of the meters"). We draw on the full `ctx.content_rect()`.
 
@@ -1174,3 +1187,15 @@ Where to look in the code: `track_window.rs` (the ducking section), `pubparam.rs
   live scenarios press nodes by them). Ctrl+wheel switches detail ↔ chips, the plain wheel is the
   window's. A node's row label is painted: the row's doors live on the form's label. Graph keys wait
   for the key table (`controls.rs`). t2994, t2995, t2999, t3001, t3003, live `node_graph`.
+- **Branches (fx-graph-dag v2d).** Every gesture is an `Op` carried out by `node_editor::perform`: it
+  re-wires `ChainEdit::links` by slot address (`kt_model::fx_strip`), finds the processing order, asks
+  the model's `check_lane` and only then writes; a refusal sets `ChainChanged::refused` and changes
+  nothing. Never push into `edit.fx` yourself. An owner keeps its parallel lists by
+  `ChainChanged::from` (new slot → old slot) and sends slots, wires and slot masks as ONE
+  `apply_batch` when `ChainChanged::wires` is set (a `SetFx` alone is validated against the old
+  wires); a chain that does not branch stays the window session's coalesced step, its wiring the empty
+  list. The layout (`graph_layout`) is kept per wiring in egui's memory: a hover lays nothing out
+  (t3221). A picker cell stands where the click puts it (`Place::After`, `Place::Arm`).
+- **A test that reads or drains what a process has one of starts with `crate::alone::own_process!();`**
+  (one-process-tests): the work counters, the compute host, the posters, the cache notices, frame processor time. `cargo test` runs the crate
+  in one process; the pause mask of the scheduler is every test's — read `Player::holds_background`.

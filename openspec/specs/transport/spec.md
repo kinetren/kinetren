@@ -511,7 +511,7 @@ Why: the owner, kkt-26.11.08 line 14 (registry H8): "а loop-picture-throughput 
 after he selected Datamosh, ~20 000 requests a second (decode-request-storm).
 
 #### Scenario: A cold loop over a cut mosh plays on model decoders
-- **WHEN** an 8-frame loop 3 s into a cut mosh (144 lines, a 103-frame history) plays cold for 10 s through the real player with a 4 MB video cache, on model decoders that take 2 ms a picture and count their seeks
+- **WHEN** an 8-frame loop 3 s into a cut mosh (144 lines, a 103-frame history) plays cold, until it shows a frame and at least 10 s, through the real player with a 4 MB video cache, on model decoders that take 2 ms a picture and count their seeks
 - **THEN** frames are shown, no entry is dropped before its first read, and the pictures decoded are at most four times the history plus eight GOPs
 - **TEST** t2044 (`src/libs/kt-engine/tests/decode_storm.rs`)
 
@@ -544,6 +544,11 @@ decodes the event's history inside the plan, one compute job a frame, each waite
 - **WHEN** a frame is asked and the executor answers
 - **THEN** the wake the UI set is called once and the frame is taken without waiting
 - **TEST** t1840b (`src/libs/kt-engine/tests/compose_queue.rs`)
+
+#### Scenario: A composite that panics
+- **WHEN** the executor panics inside one composite, then the next moment is asked
+- **THEN** the first ask is answered with no picture (incomplete) and the second is composed; the executor's lock does not stay dead
+- **TEST** t3723 (`src/libs/kt-engine/tests/compose_queue.rs`)
 
 #### Scenario: A slow chain stays off the display's device
 - **WHEN** a new project state is composed, then timed fast, then an edit is timed slow twice, then fast

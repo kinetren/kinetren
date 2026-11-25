@@ -14,7 +14,7 @@ round: "R.49"
 point: 370
 tests: [403, 404, 405, 406, 407, 411, 412]
 depends_on: []
-checked: 2026-11-20
+checked: 2026-11-25
 ---
 
 # F-AUD-005 — Loudness normalization to standards — LUFS, EBU R128, true peak
@@ -162,6 +162,11 @@ The live EBU mode of the meter (M/S/I/LRA/dBTP in the panel) is a separate stage
 about the place on the screen. "Normalization in one action" is taken only together with a CHOICE OF TARGET:
 both quotes above are about the fact that a button with a hard-coded −23 LUFS is useless to everyone except
 broadcasters, and pushes the user into another program.
+
+**Done further (`loudness-norms`, 2026-11-25).** The target is the project's (the owner's B6), not a render
+preset's: Project settings → Audio. "Match loudness…" sets the levels of chosen events or of a track by what they are;
+the program stage on the master holds the whole mix at the target with a true-peak limiter whose detector is the
+meter's, and "Match the program" finds its gain on request. Short events of one track and file are measured together.
 
 ## Sources
 

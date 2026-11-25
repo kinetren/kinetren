@@ -1,226 +1,233 @@
 # Design: track-stream-stage
 
-## Context
+> IMPLEMENTATION-READY (spec-engine, revision 2, 2026-11-24), read against orch `229c694b` (fx-graph v2d and
+> durable-moment-key merged). Code is named by function and file; line numbers move. `shared-events` (running) changes the
+> model's event vectors, not what this reads of them.
 
-- **The kernel never sees an event.** `kt_plugin_api::stream`: a `StreamKernel` asks a
-  `StreamLayout`/`StreamInput` for:
-  - positions: `first`, `cut`, `end`;
-  - addresses: `ident(side, k)`, from which every memo key is built without reading a frame;
-  - rows: `rows_at`;
-  - frames: `with_frame`, `on_device`.
+## Context (what exists)
 
-  `SecondFrom` already names a TRACK (`TrackAbove`/`TrackBelow`). The host is the only part that knows
-  what a position reads.
-- **The event host**, `ClipStream` (`kt-engine/src/video_stream.rs`):
-  - Its positions are the project grid. The main stream is the event, plus `before` frames of the event
-    before it on the lane.
-  - `ident` mixes the media, pts, stream size, `src_rev`, the front's key, and the position when the
-    front is curved.
-  - Frames come from the burst cache at the stream's size. The front slots run on the front executor;
-    `on_device` uses `execute_held`.
-- **The track stage** (`track_stage_layer`, `video.rs`): a track is an implicit reel. `build_plan`
-  composes its events (transitions, fades, levels) at the parent's time and raster. The track chain runs
-  over that composite (`LayerChain::Borrowed(&st.fx)`), then the track's masks, alpha × level and the
-  blend mode. The stage carries its own range, index, revision and masks (frame-work-by-edit).
-- **The datamosh sound** (`fx-video-codec/src/sound.rs`): the picture's `mosh::Plan` is compiled over a
-  `Layout` of the audio's event (`first`, `cut`, `end` on the picture's grid), and the audio codec
-  breaks on that schedule. A track's device sounds on its sound track's stage, seated at timeline frame
-  0 (track-device-sound). `track_pairs` keeps Datamosh out.
-- **The refusal**: track-mosh-and-start-wait D1 and t3237.
+- **The kernel never sees an event.** `kt_plugin_api::stream`: a `StreamKernel` asks a `StreamLayout` (positions, addresses, rows) and
+  a `StreamInput` (frames, `on_device`). The host is the only part that knows what a position reads.
+- **The event host** is `ClipStream` (`video_stream.rs`). Positions are project grid frames; `ident` mixes the media, pts, stream
+  size, the source's IDENTITY (`known`, durable-moment-key D3), the front's key and the position when the front is curved. `read`
+  refuses a frame of another identity than the one its position is named by.
+- **The walkers.** Seven per-frame questions go over `streams_of(clip)` (a layer's own stage and its reads', fx-graph-dag D2):
+  `stream_advance`, `stream_advance_run`, `stream_checkpoints`, `stream_stages_at` (`stream_want`), `stream_frame_bytes`, `leaf_keys`
+  (the order), `has_stream_stages`. Each builds a `ClipStream` from a `(&VideoClip, &StreamStage)`.
+- **The track stage**: `VideoTrackStage` (built in `build_reel`) and `track_stage_layer`. The stage's sub-plan is `build_plan` over its
+  events with `stages: &[]`; the layer is `LayerInput::Nest` + the track's chain. A track has NO curves (the window refuses them), no
+  time axis of its own (`u: 0`), no camera (`cam3d: None`).
+- **A track chain's wiring never reaches the plan** (found-defects 1067, this reading): `track_stage_layer` writes `fx_in: &[]` and
+  the stage's `content` hashes `active_fx()` alone. v2d lets a person branch a video track's chain (`SetTrackFxIn`); the sound
+  track's stage runs the graph, the picture's runs the line.
+- **The one key** is `moment_key` (`put_plan`/`put_src`): leaves named by identity, whether or not decoded.
+- **The front executor** (`front_exec`, kt-gpu `stream_front_engine`) is a whole engine on the compute device; `execute_held` runs any
+  `FramePlan` and leaves straight RGBA there. Upload serials are process-wide, so a multi-layer plan of any cache is safe on it.
+- **The sound half** (`fx-video-codec/src/sound.rs`, `MoshSound`): its own `Layout` from `Placement{start, fps}` and the event's length;
+  a track's device is seated at frame 0 (track-device-sound), and the whole track would be ONE segment.
+- **The refusal**: `track_window.rs` after the graph (t3237); `track_pairs` in kt-model.
 
-## D1. A second host: `TrackStream`
+## D1. The track's line runs its wiring first (row 1067)
 
-`TrackStream` implements `StreamLayout` and `StreamInput` for ONE segment of a video track stage
-(D2). It holds:
-- the track stage (`VideoTrackStage`);
-- the track's events and their `LayerIndex`;
-- the `PlanCtx` the stage composes in (cameras, nests, `blend_footage`, the stream memo);
-- the stream's size;
-- the segment's `first`/`cut`/`end`;
-- the plan cell.
+`VideoTrackStage` gains `fx_in = t.active_fx_in()`; `content` hashes it when it is not empty (a line's keys stay); `track_stage_layer`
+hands `fx_in: &st.fx_in`. Arms then render by the lowering every event uses. Time kinds (Slowed, Stretch) in a track's arm stay
+transparent, as on a reel instance: a track has no second moment to read. This is task 1.0: it stands alone and is the smallest
+fix of row 1067 (an executor may take it out earlier as its own commit).
 
-`StreamStage::of` is reused for the track chain. Its `front` is the track chain's picture slots before
-the stream slot (a track chain has no leading Geometry node). `before` and `second` are filled by the
-track linker (D2, D5) instead of the event linker. The kernel, `needs`, `render`, the memo, the
-checkpoints, the device walk and the sharp carrier are unchanged.
+The stream slots of the chain are then found as an event's are (`build_reel`'s rule): the TRUNK's first stream slot is the stage's own
+stage; a stream slot in an ARM is a read of the track (`fx_graph::reads`, keeping only reads whose time kind is a stream). Each is a
+`TrackLine`.
 
-`track_stage_layer` runs the stage where `layer_src` runs an event's. The stage's output becomes the
-sub-composite the track chain's remaining slots run over. The slots in front become the identity
-geometry (`after_chain`), exactly as on an event. The track's masks and level stay after the chain.
+## D2. `TrackLine`: the second host's static part
 
-## D2. The track's layout: segments at its cuts
+```rust
+/// A stream stage of a track's chain: the trunk's (`slot: None`) or an arm's read ending at `slot`.
+struct TrackLine {
+    slot: Option<usize>,
+    fx: Vec<FxInstance>,          // the line from the Source to the stream slot
+    st: StreamStage,              // StreamStage::of(&fx, &[]); `before`/`second` stay empty
+    segs: Arc<[TrackSeg]>,        // D3, shared with the sound
+    second: Option<TrackSide>,    // D7
+    sources: Vec<SourceId>,       // of the whole lane, reads and reels included: what names are asked of
+    composed: ComposedCells,      // D5: the compiled names per stream size
+}
+```
 
-`track_stream_layout(track, events, grid) -> Vec<Segment { first, cut, end }>` is one function in
-kt-engine. The video builder (D1) and the audio builder (D6) both call it.
+`VideoTrackStage.lines: Vec<TrackLine>`, built after the events are sorted (beside `st.events`). `front_curved` is always false
+(no curves). `front_key` hashes the front slots as today. The second input and segments need the lane's neighbours, so they are filled in
+`link_track_lines`, beside `stream::link_stages`.
 
-- **A cut** is the grid position of an event's first frame on the track, where that event was not
-  active at the position before it. Under a transition the incoming event's first frame is in the
-  window (Q1 a). Q1 b would put it at the joint instead.
-- **A segment** runs from one cut to the next cut or to the end of the contiguous run of events.
-- **A gap ends the stream (Q2 a).** The next segment has no history before its cut, as an event with no
-  event before it. Otherwise `first = cut − before(p)`, clamped to the previous segment's cut.
-- **Positions belong to segments by halving** over the cuts (as `second_reach` does). The stage at
-  frame time `t` uses the segment holding `pos(t)`.
+## D3. The layout: segments at the track's cuts
 
-This gives the kernel exactly the shape it already has: a cut, a history that starts in what came
-before, and an end. A dense edit is many short segments, and each walks only from its own `first`.
+`kt-engine/src/track_layout.rs`, pure, called by BOTH builders (the picture's and the sound's):
 
-## D3. The input frame: the track's composite at the moment of k
+```rust
+pub struct TrackSeg { pub prev_cut: Option<i64>, pub cut: i64, pub end: i64 }
+impl TrackSeg { pub fn first(&self, before: u32) -> i64 }   // cut − min(before, cut − prev_cut); no prev_cut → cut
+pub fn track_segments(spans: &[TrackSpan], step: i64) -> Arc<[TrackSeg]>
+pub fn spans_of(resolved: &Resolved, reel: &dyn Reel, lane: u32) -> Vec<TrackSpan>  // (from, to, origin, continues)
+```
 
-The frame at position `k` on the main side is the track's sub-composite at `t_k = k · step`:
+- A span is an event WITH its transition handles: `[start − head_ext, end + tail_ext)`. `head_ext`/`tail_ext` are computed
+  in `build_reel` today; the arithmetic moves into `spans_of`'s helper `handles(t, reel)`, and `build_reel` calls it (one rule, two callers).
+- **A cut** is the grid position (`ceil_div`) of a span's `from` (Q1 a: the first frame of the incoming event, so a dissolve's is the
+  window's start). Not a cut: a piece a morpher layer cut off the SAME event and that continues it (`slice_origin` equal, `from` == the
+  former piece's end, the material contiguous): the person cut nothing there.
+- Two spans starting at one position are one cut. A span inside another (an overlay on the same lane, `overlap_layers`) starts a cut:
+  new content appears.
+- **A segment** runs from its cut to the next cut or to the end of the contiguous run. A position no span covers ends the run (Q2 a).
+  The next segment has `prev_cut: None`.
+- Positions belong to segments by halving (`partition_point` over the cuts).
+- Muted events and muted tracks keep their spans (a mute is not an edit of the timeline); a silent track has no picture stage to run.
 
-- The same `build_plan(events, index, sub_ctx, cache, t_k, q_stream)` the stage uses, with
-  `stages: &[]` as today.
-- Wrapped by `chain_plan_with` with the track chain's front slots (their curves at `t_k`; the track's
-  camera rows for a camera-driven slot), at the stream's size.
-- Executed by the stream front's executor: `execute_held` on the compute device (`on_device`), or
-  `execute_once` for the bytes form (`with_frame`). The result is kept in the front memo by `(ident,
-  form)`.
+A dense edit is many short segments, and each walks only from its own `first`. The event's own stage stays as it is: its `before` is
+the event before.
 
-This is the one composition path (invariant 7): no second compositor, no CPU path. An incomplete
-sub-plan (a starved layer) gives no frame. The kernel's `None` is then starvation, and the order asks
-what was missing (D4).
+## D4. One builder, two ways to look at a source: `Look`
 
-**The stream's size** follows `input_quality` with the track's raster (the project size) as the layer
-size: the codec's `lines` while the kernel is not `carried`; the layer's size when it is carried (sharp)
-or when a front slot would run above it (t2974's rule).
+The plan of a moment is needed in three forms: to run (frames), to key (names, no decode), to order (addresses). The first two must
+come from the SAME `build_plan`, or a name drifts from its picture.
 
-**Event-level stream stages inside the sub-plan** (Q3 a) run in their own `layer_src` with the same
-memo. Their keys enter the track's identity (D4).
+```rust
+enum Look<'a> {
+    Cache(&'a BurstCache),
+    /// Names only: no frame is read, no recency moves. The snapshot of identities taken once per question.
+    Names(&'a HashMap<SourceId, SourceIdent>),
+    /// The cache's frames, but only those of the snapshot's identity (ClipStream::read's rule).
+    Known(&'a BurstCache, &'a HashMap<SourceId, SourceIdent>),
+}
+impl Look<'_> {
+    fn video(&self, s: SourceId, q: Quality, idx: i64) -> (Option<(Arc<VideoFrame>, u64)>, Option<SourceIdent>);
+    fn idents(&self, of: &[SourceId]) -> Vec<Option<SourceIdent>>;
+}
+```
 
-## D4. Order, pacing and keys
+`layer_src`, `track_stage_layer` and `build_plan` take `&Look` where they take `&BurstCache` (three call sites of
+`get_video_leaf`, and `key_only`/`durable` which ask `idents`). `stream::run` is reached only with a cache; with `Names` a stage is keyed by
+`key_only`. In `Names` the content number is the clip's `src_rev`, so a generator's value names its frame where no identity exists (a
+private cache). `frame_plan` and `probe_plan` pass `Look::Cache`: their bytes and keys do not move (t3398 and GOLDEN_VIDEO).
 
-**Order.** For a history position `k` the needs are the layers the track's sub-plan asks at `t_k`:
-`layers_at` over the track's events at the stream's size, including an inner stream stage's own needs.
-`TrackStream::order` emits them position by position, ascending. Each source has its own media worker,
-so every file's keys reach its worker as a forward run whatever the interleaving (the anti-ping-pong
-rule picks the start of the run). The request is the read: the sub-plan asks exactly these keys
-(invariant 4).
+## D5. `TrackStream`: the composite at position `k`
 
-**Pacing and reach** (decode-request-storm, gpu-throughput D3, stream-round-trips D8). `window` cuts the
-needs by BYTES: each position costs the sum of its layers' key bytes at their decode sizes, not one frame
-of the stream's size. `compose_steps`, the near/far walk and `STREAM_WALK_SECS` keep their meaning in
-positions. The render-ahead producer's `Waits` and the Loading count report positions as they do for
-an event.
+`kt-engine/src/track_stream.rs`, `impl StreamLayout + StreamInput for TrackStream<'_>` for the segment holding `pos(t)`.
 
-**Identity** (`ident(Main, k)`): `mix(TRACK_STREAM, track id, k, stream size, front_key, moment(k))`.
+- **The plan at `k`**: `t_k = k·step`; `sub = build_plan(events, &st.index, &sub_ctx, look, t_k, q)` with the stage's own sub-context
+  (`stages: &[]`), `q` the stream's size. No front: `sub` is the plan. A front: one layer, `LayerInput::Nest(sub)`, whose `fx` are the
+  front slots (`u: 0`, `cam3d: None`, no masks, as the track's chain runs them) at `q`.
+- **Its size**: `track_quality(st, quality) = input_quality(quality, lines, carried, !front.is_empty())`: the layer's base size is the canvas.
+- **`ident(Main, k)`** = `mix(mix(TRACK_STREAM, moment_key(plan built by Look::Names)), front_key)`. It already holds `t_k`, the size, every
+  layer's leaf, chain, level, transition, mask, blend mode, reel and inner stream key. Memoized per position in
+  `composed` (`Mutex<HashMap<(Quality, names hash), Vec<u64>>>`, at most two name sets per size, as `plan_cell` keeps): a schedule's compile
+  asks each position once, a frame asks none again. It dies with the build, as `PlanCell` does.
+- **Lock order**: `Plan::ensure` holds its own lock while it asks `ident`; `ident` may reach an INNER event's kernel (`key_only`), which locks
+  its own plan. A track's line is never inside its own sub-plan (`stages: &[]`), so no lock is asked twice.
+- **`on_device(Main, k)`**: the front memo by `ident`; else the plan by `Look::Known`; `starved()` → `Missing`; `execute_held`
+  → kept in the front memo; `Unsupported` → `Host`. The plan is BUILT before the executor's lock is taken: building runs an inner stage,
+  whose own front takes the same lock.
+- **`with_frame(Main, k)`**: the same by `execute_once`.
+- **No device**: `Missing`, as an event's front.
+- **An inner stage short of its history.** `TrackStream` carries the pacing its inner stages run under: the compose thread passes the
+  preview's (an inner history short by more than `compose_steps` is a missing frame, noted as `stream_short`: Loading), the advance
+  (prefetch thread, export, jobs) passes none, so the walk of the outer stage walks the inner one too. Paced in both, the inner history at a
+  past position would be nobody's to walk and the frame would never come.
+- **Edits.** An edit of one event moves `moment_key` only where it is active. Positions before keep their entries; the ones after it
+  change through the codec's own chain of keys.
 
-- `moment(k)` is the serial-free hash of the sub-plan's layers at `t_k`: for each layer, its source
-  address, pts, decode quality, `src_rev`, `fx_hash`, `alpha_k`, fade and transition `k` and mode, blend
-  mode; for a nest, its `content_hash` and inner time; for an inner stream stage, its kernel's `key` at
-  that position. It is the per-moment part of `render_cache::durable_hash`, built by the same walk
-  without decoding. A kernel without `key` salts the position with the track's revision: correct, and
-  coarser.
-- Consequences:
-  - An edit of one event changes `moment(k)` only where that event is active. The history before the
-    edited range keeps its memo entries; positions after it change through the history chain, as they
-    must.
-  - An edit after the stream slot does not touch the identities, as on an event.
+## D6. The layer: the stage's picture with the moment's own coverage
 
-**The layer's key.** The track stage layer's `content` and `fx_hash` mix the stage's output key, as an
-event layer's do (`video.rs`), so no memo or kept composite returns another mosh state.
+`track_stage_layer` with a trunk line: `LayerInput::Held` / `Frame` of the kernel's output at the plan's size, `fx` = the chain with the front
+replaced by the identity (`after_chain`), `leaf = Leaf { key, durable, drawn: false, stream: true }`, `content = key`,
+`fx_hash = mix(st.content, key)`. An arm's line is `reads.push((slot, LayerSrc))`, as an event's read.
 
-**The probe key** (`show_kept`, structured-telemetry). The probe plan keys the track stage by
-`StreamKernel::key` over the `TrackStream` layout without running it. `key_only` gets a track twin.
+**Coverage.** A codec has no alpha: the stage's picture is opaque. An event's stage stands before its Geometry, so what the event does
+not cover stays transparent. A track's stage stands after everything, so an opaque picture would hide the tracks below under a title, a
+picture-in-picture or a fade-out. So the picture takes the alpha of the track's composite AT THE MOMENT SHOWN:
+`LayerSrc.matte: Option<Box<NestSrc>>` (the sub-plan at `t` and the plan's size, what the track composes today). The executor resolves it
+as any sub-composite, takes its alpha by the existing `Pipe::Matte` (`by: alpha`) and cuts the picture by the existing mask-alpha pass,
+both before the chain's remaining slots. Where the composite is opaque both are identities (t3380). `put_src`, `starved`, `durable`, the pass count and the
+prewarm list read it. Consequence, and wanted: a smear past the moment's coverage is cut where nothing lies now.
+Rejected: opaque over black (above); the alpha of the stream's own input at `lines` high (its edges are the codec's size, the picture's are not).
 
-**The disk tier and the durable history.** `probe_durable` notes, as leaves of a moment whose layer is
-a track stream stage, every file the segment's history reads from `first` to the moment: the files of
-the events active over that range, found by the stage's `LayerIndex`. durable-history-and-mix's stage
-salt takes the same set. render-cache-disk's rule "every file for a stream stage" thus holds per
-segment, not per project.
+The codec's input is the executor's straight RGBA: under a fade the colours stay and only alpha moves, so nothing is darkened twice.
 
-## D5. Front, second input and tempo at track level
+## D7. Second input
 
-- **Front:** the track chain's picture slots before the stream slot, run over the composite at every
-  history position, keyed by `front_key` (their slots and curves hashed). The slots after it run over
-  the stage's output, as the track chain does today.
-- **Second input:** `SecondFrom::TrackAbove`/`TrackBelow` names the adjacent VIDEO track in row order.
-  Its frame at `k` is that track's sub-composite at `t_k`: its events and their chains, without that
-  track's own chain (a track chain may carry its own stream slot, and reading through it would make two
-  stages read each other). Its identity is that track's `moment(k)`. No adjacent track, or a gap there,
-  means no second frame, as for an event.
-- **Tempo:** a history position costs one sub-composite of the track. The pacing counts positions. The
-  measured cost per position comes from the existing cost map (the walk's passes are timed like any
-  pass), so render-ahead's depth and the export's pipeline need no new rule. An export pre-rolls the
-  track stage's history like an event's (`stream_preroll` walks every stage of the frame, both hosts).
-  A frame with a track stream stage takes the pipeline's `Planned` route (stream-round-trips D6).
+`SecondFrom::TrackAbove`/`TrackBelow` = video lane − 1 / + 1. `TrackSide { events: Range<usize>, index: LayerIndex, segs }`, the same
+sub-plan of that lane's events with their chains, WITHOUT that track's own chain (two tracks' stages would read each other).
+`second_start(k)` is the cut of that lane's segment holding `k`; none or a gap → `None`. `ident(Second, k)` is that side's moment key.
 
-## D6. The paired sound
+## D8. The order, pacing and every walker
 
-- **kt-model:** `track_pairs` admits `datamosh`. On a linked video track the sound half
-  `datamosh_sound` is mirrored onto the sound track's chain by the existing rule.
-- **The sound half runs in the sound track's stage**, seated at timeline frame 0 with the project grid
-  (track-device-sound). Its `Layout` is built from `track_stream_layout` of the LINKED VIDEO TRACK, the
-  same segments. `sound.rs` compiles the picture's `mosh::Plan` per segment, as it compiles one per
-  event today, so I-frames, deleted keyframes, blooms and freezes fall at the same timeline moments in
-  the picture and in the sound.
-- Between segments (a gap, Q2 a) the codec's predictors reset, as at an event boundary.
-- Invariant 2: the half's state is the audio render thread's, keyed by the track stage, as every track
-  stage's node is.
-- Audio is byte for byte: the layout is a pure function of the model, and the audio builder computes it
-  from the same events the video builder does.
+- `VideoRenderer::streams_at(t) -> Vec<StreamAt>`: the active events' `streams_of`, and for every stage whose lane has an active, not
+  silent event at `t`, its lines. `StreamAt { id: u64, clip: Option<ClipId>, host: Host }`, `Host::{Clip(&VideoClip, &StreamStage), Track(&VideoTrackStage,
+  &TrackLine)}`, `open(quality, look) -> Box<dyn HostStream>`; `HostStream: StreamInput { pos, order, window, kernel, values, frame_bytes, stopped, trace_stop }`.
+  The seven walkers of Context go over it; nothing else builds a stream.
+- **The order** (`layers_at_into`): an event on a lane with a trunk line is NOT ordered as a flat leaf (its frames at `t` are, for the
+  matte, at the plan's size: they stay) and the line's needs are added: for each needed `k`, `order_of(events, index, ctx, t_k, q)` (the body of
+  `layers_at_into` made a function over a list and an index), inner stages included. The request is the read: t3382 compares the keys asked with
+  the keys `Look::Known` was asked for.
+- **The window** cuts positions by the bytes of ALL their keys (each key's own size), at least one position.
+- `frame_bytes` (the walk's reach, `stream_ahead_frames`, `stream_far_frames`) is a position's stream picture, as an event's: the memo keeps that. The frames
+  cache's want (`video_prefetch_pass_sized`) sees the real keys.
+- `stream_preroll` (export, strips, posters) works over `layers_at` and needs nothing but these; `project_may_stream` and
+  `prewarm::has_stream_front` count active stream slots of VIDEO tracks of the root and every reel (a track line always needs the front executor).
+- `max_concurrent_layers`: unchanged (a position's frames are released by the front run; the chunk's bytes come from `layers_at`).
 
-## D7. Class walk: every place that assumes a stream stage belongs to an event
+## D9. The paired sound
 
-| Place | Today | After |
-|---|---|---|
-| `StreamStage::of` and the linker | event chains, morpher patches | + the track chain (D1) |
-| `track_stage_layer` | skips a stream slot | runs the stage (D1) |
-| host `ClipStream` | events only | + `TrackStream` (D1–D4) |
-| `layers_at` / `wanted_frames` / `video_decode_qualities` | an event stage's needs at codec size | + a track stage's needs at the layers' sizes (D4) |
-| `stream_want` (memory ledger, stream-memo-budget) | event stages and reels | + track stages, per position the stream's picture (D4) |
-| `stream_advance_ahead` / `_run`, far walk | event stages of the shown layers | + track stages (D4, D5) |
-| `probe_plan` / `key_only` / `show_kept` | event stages | + the track twin (D4) |
-| `render_cache::probe_durable` leaves | an event stage's files | + the segment's files (D4) |
-| durable-history-and-mix stage salt | the stage's files | the same set (D4) |
-| render-ahead `Waits`, Loading count | positions short | unchanged, positions |
-| export `stream_preroll`, pipeline `Planned`, `project_may_stream` | events, morphers | + tracks (D5) |
-| reels: a track stage inside a reel's sub-renderer | the same `track_stage_layer` | the same host, the reel's time |
-| the trace (`StreamRun`, `StreamStop` id) | the clip id | the track's source id (`track_source_media`) |
-| `kt-cli probe` (stream stages in the order) | events | + tracks |
-| sharp carrier (mosh-sharp) | the layer's size | the track's raster (D3) |
-| kt-model `track_pairs` | Datamosh excluded | admitted (D6) |
-| kt-app track window | refuses Datamosh (t3237) | accepts it (ui-reach delta) |
-| prewarm `effect_ids` | walks tracks already | unchanged |
-| audio track stage seat | frame 0, project grid | unchanged; the layout from D2 |
+- kt-model: `track_pairs` admits every paired kind (the function goes; `paired_halves` is called directly; t3230's third clause changes by this change's delta).
+- `AudioState::segments(&mut self, _segs: &Arc<[StreamSeg]>) {}` (kt-plugin-api, default: nothing), `StreamSeg { prev_cut, cut, end }` there
+  too (kt-engine's `TrackSeg` is it). `TrackProcessor` hands it to its nodes where it hands `place`.
+- `audio.rs` `build_reel`: a `TrackStage` whose chain holds an active sound half of a STREAM device gets `segs` of the video track that names
+  it (`sound == Some(id)`), by `spans_of` + `track_segments` over the same `resolved`. No such video track: empty.
+- `MoshSound::sched(n)` with segments: the segment holding `k0`; its own `Plan` (`Vec<OnceLock<Arc<Plan>>>`, compiled on first use) over
+  `Layout { first: seg.first(before), cut, end }`; `reset` at the first audio frame of a segment with no `prev_cut`; between segments an intact frame
+  (no break, no repeat). Without segments the code is today's byte for byte.
+- **Invariant 3**: a moved cut calls `segments` on the live node: the plans are dropped, the codec's state stays.
+- **The kept mix** must know: `scene_hash` gains, per stage with segments, the segments overlapping `range` widened by `stage_reach` and one segment back,
+  NOT the list in `scene_base` (Debug of `TrackStage` skips the field): an edit far away keeps the kept mix.
+- Two runs of one range: the layout is a pure function of the model.
 
-## D8. Stages and tests
+## D10. Class walk: every place that assumes a stream belongs to an event
 
-1. Layout and host:
-   - D2 `track_stream_layout` (t3379);
-   - `TrackStream` with the composite input (t3380: a track of one event with no transitions moshes
-     byte for byte as the same event's own Datamosh — the law that keeps the two hosts honest; t3381:
-     the history crosses a cut and carries the previous event's picture with its own chain and a title
-     above it);
-   - the order (t3382: the request equals the read across a history position of three layers);
-   - the pacing by bytes (t3383).
-2. Keys:
-   - D4 identity (t3384: an edit of an event in segment 2 keeps segment 1's memo entries and changes
-     segment 2's from its first affected position);
-   - probe key and kept moment (t3385);
-   - disk leaves per segment (t3386).
-3. Second input and front (t3387, t3388).
-4. Export:
-   - pre-roll and pipeline (t3389: a range export equals its part of the whole export byte for byte;
-     two runs equal);
-   - `project_may_stream` (t3390).
-5. Sound:
-   - D6 (t3391: the sound half on the sound track breaks at the same timeline moments as the picture's
-     deleted keyframes; t3392: model pairing and mirroring on a track).
-6. UI:
-   - the track window accepts Datamosh (t3393, replacing t3237's requirement);
-   - planned live scenario `track_mosh` (a dense edit's track moshed, Loading then picture, the sound
-     track's half switched off and on);
-   - the rest check with the track window open on the heavy showcase plus a track mosh (t3394).
+| Place | After |
+|---|---|
+| `track_stage_layer` wiring (row 1067) | D1 |
+| `StreamStage::of`, reads of a chain | + `TrackLine` (trunk, arms) |
+| `streams_of` walkers (7) | `streams_at` (D8) |
+| `layer_src`'s reading of sources | `Look` (D4) |
+| `moment_key` `put_src`, `FramePlan::{starved, durable}` | the matte |
+| kt-gpu: resolve, pass count, prewarm of `Matte`/mask-alpha | D6 |
+| `render_cache` `plugins_of`, `put_rows` | walk the matte and the arm reads (the salt, the rows) |
+| the disk tier | no leaves: the key is `moment_key`; `durable` asks every source of the lane's segment |
+| a retune or a replaced file mid-walk | `Look::Known`: an absent frame, then a new name |
+| render-ahead `Waits`, Loading, `stream_short` | positions, unchanged |
+| the export's pre-roll, `Job::Planned`, `has_stream_stages` | D8 |
+| offline jobs (strip, poster, effect cells) | the same; their caches have no identities (row 1068): the name falls to addresses, so 1068's fix goes first |
+| reels: a track stage inside a reel | the same host on the reel's grid; `stream_view: false` there as for its events |
+| a reel's `nest_scale` (sub-plan at S×) | `quality` is the sub-plan's: the stream's size follows it |
+| `video_decode_qualities`, the coverage bars | an event on such a lane is asked at the plan's size (the matte) and at the stream's: the bars keep the plan's |
+| `read_rows` (the node editor's coverage rows) | events only: a track's arm has no coverage row (there is no track bar) |
+| the trace (`StreamRun`, `StreamStop`, `StreamAdvance` ids) | the track's `track_source_media` id |
+| `kt-cli probe` (arms per event) | prints a track's lines: "Video 1: Datamosh over the track, segment 3 of 12, 40 positions asked" |
+| sharp carrier | `carried` → the canvas size (D5) |
+| kt-model `track_pairs`; kt-app's refusal, `has_device`'s `!is_stream()` | admitted |
+| the pickers' cells on a track chain | they run an event's picture through the candidate; a stream candidate on a track shows the event's own mosh: unchanged, honest for the look |
+| memory ledger `stream_want` | `streams_at` per loop moment |
+| `track-stage-preroll` (the sound's pre-roll) | the half is a node of the stage like any; its look-ahead is already counted |
 
-Spare: t3395–t3398.
+## D11. Stages and tests
+
+1. 1.0 wiring (t3396). 2. Layout and `Look` (t3379, t3398). 3. The host, the layer, the matte (t3380, t3381, t3395). 4. Order and
+pacing (t3382, t3383). 5. Keys and kept moments (t3384, t3385, t3386). 6. Arms, front, second (t3387, t3388, t3397). 7. Export (t3389, t3390).
+8. Sound (t3391, t3392, t4137). 9. UI and rest (t3393, t3394).
+
+**t3380's precondition** (the law between the two hosts): the event's source has the project's aspect and fills the frame (an identity
+lead), so the composite at the stream's size IS the decoded frame. Both renders on one device.
 
 ## Risks
 
-- **Cost:** a history position composes the whole track. On a dense edit a fresh walk after a seek costs
-  `before + (n − cut)` sub-composites. Loading says so, and the far walk computes ahead. The owner's rule
-  "a slow effect costs frames, never the Undo" holds: nothing waits for it.
-- **Memory:** a stream picture per position, as for an event, plus the front memo's sub-composites.
-  The ledger's stream want counts both (D7).
-- **Recursion:** a track mosh over an event mosh (Q3) multiplies walks. The identity names the inner
-  key, so nothing stale is shown; the cost is visible in the trace (`StreamRun` per host).
+- **Cost.** A history position composes the whole track. After a seek into a 3-layer lane the walk makes `before + (n − cut)` composites at the
+  stream's size. The trace's `StreamAdvance` has their time; Loading says so; nothing waits for it.
+- **The front executor's memory.** It now holds a lane's uploads, not one frame: its upload cache is the ledger's `Upload` tenant already.
+- **An inner Datamosh under a track's** (Q3 a): walks multiply; the trace shows both ids.

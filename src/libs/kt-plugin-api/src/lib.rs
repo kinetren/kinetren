@@ -1544,11 +1544,25 @@ pub struct Registry {
     plugins: Vec<std::sync::Arc<dyn Plugin>>,
     /// Ids that came through the test door (D8): never part of a reference list.
     test_only: Vec<PluginId>,
+    /// What each plugin's source is, as its assembler says (project-cache-folder D1b).
+    sources: Vec<(Family, PluginId, u64)>,
 }
 
 impl Registry {
     pub fn new() -> Registry {
         Registry::default()
+    }
+
+    /// The source the plugin was built from, a hash its assembler makes of its crate: what names the
+    /// plugin's version in a key that outlives the build.
+    pub fn set_source(&mut self, family: Family, id: &str, source: u64) {
+        self.sources.retain(|(f, i, _)| (*f, &**i) != (family, id));
+        self.sources.push((family, id.to_string().into(), source));
+    }
+
+    /// The plugin's source as [`Registry::set_source`] noted it; 0 — it was not.
+    pub fn source(&self, family: Family, id: &str) -> u64 {
+        self.sources.iter().find(|(f, i, _)| (*f, &**i) == (family, id)).map_or(0, |s| s.2)
     }
 
     /// Register, or refuse BEFORE any frame or sample is produced (D4).
@@ -1615,8 +1629,10 @@ impl Registry {
                     (Some(VideoClass::PointWise | VideoClass::Barrier), Gpu::Warp(_)) => {
                         return refuse("a warp map from a plugin that is not a geometry plugin");
                     }
-                    (Some(VideoClass::PointWise | VideoClass::Barrier), Gpu::None) if m.decl.builtin => {
-                        return refuse("a built-in point-wise or barrier plugin without a GPU kernel");
+                    // whoever offers it: the device is the one executor of a frame, and a stage with no
+                    // text there ended the preview's thread at its first frame (one-process-tests)
+                    (Some(VideoClass::PointWise | VideoClass::Barrier), Gpu::None) => {
+                        return refuse("a point-wise or barrier plugin without a GPU kernel");
                     }
                     (Some(VideoClass::Geometry | VideoClass::PointWise), Gpu::Barrier) => {
                         return refuse("a barrier GPU graph on a plugin that is not a barrier");

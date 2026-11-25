@@ -230,6 +230,35 @@ pub enum Ev {
     /// (stream-picture-stays D3, the device-memory risk on a card). `a` device bytes, `b` all the
     /// memo's bytes, `c` its bound.
     StreamHeld = 124,
+    /// A project's cache folder (project-cache-folder D8): `aux` the [`cache_folder`] kind.
+    CacheFolder = 125,
+    /// A wait inside a frame's device part past [`GPU_WAIT_NOTED`] (gpu-waits-named; a span): `aux` what
+    /// was waited for (a [`name`]: a lock, a turn, one device call, a file), `a` 1 — one call into the
+    /// device, 2 — a lock or a turn somebody else held, 3 — a file, `b` the device's role (a [`name`]; 0 —
+    /// not a device's).
+    GpuWait = 126,
+}
+
+/// The shortest wait a [`Ev::GpuWait`] is written for: shorter ones are the call itself.
+pub const GPU_WAIT_NOTED: std::time::Duration = std::time::Duration::from_micros(500);
+
+/// What kind of wait ([`Ev::GpuWait`] `a`).
+pub mod gpu_wait {
+    /// One call into the device (a submission, a poll, a pipeline's creation, an upload).
+    pub const CALL: u64 = 1;
+    /// A lock or a turn somebody else held.
+    pub const LOCK: u64 = 2;
+    /// A file read or written.
+    pub const FILE: u64 = 3;
+
+    pub fn name(a: u64) -> &'static str {
+        match a {
+            CALL => "call",
+            LOCK => "lock",
+            FILE => "file",
+            _ => "?",
+        }
+    }
 }
 
 /// Where a stream picture crossed ([`Ev::StreamCross`] `aux`).
@@ -241,7 +270,7 @@ pub mod cross {
 }
 
 impl Ev {
-    pub const ALL: [Ev; 59] = [
+    pub const ALL: [Ev; 61] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -301,6 +330,8 @@ impl Ev {
         Ev::Click,
         Ev::StreamCross,
         Ev::StreamHeld,
+        Ev::CacheFolder,
+        Ev::GpuWait,
     ];
 
     pub fn from_u16(v: u16) -> Option<Ev> {
@@ -368,6 +399,8 @@ impl Ev {
             Ev::Click => "click",
             Ev::StreamCross => "stream_cross",
             Ev::StreamHeld => "stream_held",
+            Ev::CacheFolder => "cache_folder",
+            Ev::GpuWait => "gpu_wait",
         }
     }
 }
@@ -446,6 +479,9 @@ pub mod wait {
     pub const NEST: u32 = 7;
     /// The shared build of the state asked for (`dur`): the compose thread waited for it.
     pub const BUILD: u32 = 8;
+    /// The disk tier's read of this moment (`dur`), `a` 1 — it came in time, 0 — the frame went on
+    /// without it (gpu-waits-named).
+    pub const DISK: u32 = 9;
 }
 
 /// `FrameExec.aux` bits.
@@ -647,6 +683,52 @@ pub mod export_stage {
     }
 }
 
+/// `CacheFolder.aux` (project-cache-folder D8).
+pub mod cache_folder {
+    /// The folder was opened: `id` its path, with why it lies elsewhere (a [`name`]), `b` its cap.
+    pub const PLACE_PROJECT: u32 = 1;
+    /// The same, under the user's data folder: the project is untitled.
+    pub const PLACE_UNTITLED: u32 = 2;
+    /// The same, under the user's data folder: the project's folder takes no files.
+    pub const PLACE_NO_FILES: u32 = 3;
+    /// A tenant's state, at the first count and at the close: `a` the tenant, `b` its bytes, `c` its
+    /// hits, `id` its misses so far.
+    pub const SIZE: u32 = 4;
+    /// An entry dropped: `a` the tenant, `b` its bytes, `c` why (a [`why`] code).
+    pub const DROP: u32 = 5;
+    /// A write skipped, no room could be made: `b` its bytes.
+    pub const SKIPPED: u32 = 6;
+
+    /// Why an entry was dropped.
+    pub mod why {
+        pub const CAP: u64 = 1;
+        pub const DISK: u64 = 2;
+        pub const QUOTA: u64 = 3;
+        pub const ASKED: u64 = 4;
+        pub fn name(c: u64) -> &'static str {
+            match c {
+                CAP => "the cap",
+                DISK => "the disk",
+                QUOTA => "a quota",
+                ASKED => "asked",
+                _ => "?",
+            }
+        }
+    }
+
+    /// A tenant's name by its number.
+    pub fn tenant_name(t: u64) -> &'static str {
+        match t {
+            0 => "frames",
+            1 => "mix",
+            2 => "copies",
+            3 => "reels",
+            4 => "media",
+            _ => "?",
+        }
+    }
+}
+
 /// `RenderCache.aux` (render-cache-disk D6).
 pub mod render_cache {
     /// A moment read from disk into the display's memo.
@@ -660,7 +742,8 @@ pub mod render_cache {
     pub const HEAVY: u32 = 4;
     /// The prerender measured a moment light: nothing written, its run ends there.
     pub const LIGHT: u32 = 5;
-    /// The prerender stopped a moment: `b` why (the [`render_cache::why`] code).
+    /// The prerender stopped a moment: `b` why (the [`render_cache::why`] code). With `c`: the close left
+    /// an open segment of `c` moments, whose composites took the span.
     pub const ABANDON: u32 = 6;
     /// The bars' scan at rest: `a` moments looked at, `b` found on disk.
     pub const SCAN: u32 = 7;
@@ -1271,20 +1354,23 @@ pub fn uninstall() {
 /// How long [`flush`] waits at most: a panic hook must not hold a dying process longer.
 pub const FLUSH_LIMIT: Duration = Duration::from_secs(2);
 
-/// Wait until everything recorded so far is in the file (a panic hook, a test), at most
-/// [`FLUSH_LIMIT`].
-pub fn flush() {
+/// Wait until everything recorded so far is in the file (a panic hook, a close), at most
+/// [`FLUSH_LIMIT`]. `false` — the writer stands (a busy disk) and the tail is not there yet.
+pub fn flush() -> bool {
+    flush_until(Instant::now() + FLUSH_LIMIT)
+}
+
+fn flush_until(until: Instant) -> bool {
     if WRITER.get().is_none() {
-        return;
+        return true;
     }
     let target = (HEAD.load(Ordering::Acquire), TEXTS_PUSHED.load(Ordering::Acquire));
-    let until = Instant::now() + FLUSH_LIMIT;
     while Instant::now() < until {
         if TAIL.load(Ordering::Acquire) >= target.0.min(HEAD.load(Ordering::Acquire))
             && TEXTS_DONE.load(Ordering::Acquire) >= target.1
             && DRAINED.load(Ordering::Acquire) >= target.0
         {
-            return;
+            return true;
         }
         if let Some(w) = WRITER.get() {
             PARKED.store(false, Ordering::Release);
@@ -1292,6 +1378,7 @@ pub fn flush() {
         }
         std::thread::sleep(Duration::from_millis(1));
     }
+    false
 }
 
 /// The writer thread's kernel id (Linux), for the at-rest test.
@@ -1601,15 +1688,21 @@ pub mod testing {
         if !on() {
             install(Config::new(None, "test"));
         }
-        flush();
+        self::flush();
         *CAPTURE.lock().unwrap() = Some(Vec::new());
         f();
-        flush();
+        self::flush();
         let got = CAPTURE.lock().unwrap().take().unwrap_or_default();
         if was.is_none() {
             ON.store(false, Ordering::Release);
         }
         got
+    }
+
+    /// Everything recorded so far is in the file or the capture. [`super::flush`] gives up after
+    /// [`FLUSH_LIMIT`]: on a busy disk a test then read what the writer had not written (found-defects 918).
+    pub fn flush() {
+        assert!(super::flush_until(crate::test_deadline()), "the trace's writer stands");
     }
 
     /// The records of a capture.

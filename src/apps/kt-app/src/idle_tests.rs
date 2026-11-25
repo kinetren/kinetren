@@ -33,6 +33,7 @@ fn complete() -> ReelPreview {
 /// pause (the scenario `idle` counts 2 to 4 jobs a second on the old code).
 #[test]
 fn t1830_more_live_releases_than_the_cap_do_not_go_round() {
+    crate::alone::own_process!();
     let mut svc = ReelPreviews::default();
     let keys: Vec<ReelKey> =
         (0..MAX_REELS_READY as u64 + 3).map(|i| ReelKey { seq: MediaId(1000), hash: i }).collect();
@@ -54,7 +55,8 @@ fn t1830_more_live_releases_than_the_cap_do_not_go_round() {
 /// Test t1831 (E4): two releases have two rows in the sidecar. With one row per reel each release
 /// overwrote the other, and all but the last rendered again on every opening.
 #[test]
-fn t1831_each_release_has_its_own_sidecar_row() {
+fn t1831_each_release_has_its_own_row() {
+    crate::alone::own_process!();
     let seq = MediaId(1000);
     let set = |t: &str| vec![Override::value(PubId(1), ParamValue::Text(t.into()))];
     assert_eq!(reel_row(seq, &[]), 1000, "an instance with no overrides keeps the row it always had");
@@ -64,8 +66,8 @@ fn t1831_each_release_has_its_own_sidecar_row() {
     assert_eq!(a, reel_row(seq, &set("A")), "the row must not depend on anything but the set");
     let dir = std::env::temp_dir().join(format!("kt-t1831-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
-    let db_path = dir.join("t.ktindex.db");
-    let mut db = kt_media::index::MediaIndexDb::open(&db_path).unwrap();
+    let db_path = dir.join("kinetren-cache");
+    let mut db = kt_media::index::ReelStore::open(&db_path, None).unwrap();
     let frame: &[u8] = b"jpeg";
     db.put_reel_frames(a, 11, 5, 90_000, 90_000, &[Some(frame)]).unwrap();
     db.put_reel_frames(b, 22, 5, 90_000, 90_000, &[Some(frame)]).unwrap();
@@ -83,6 +85,7 @@ fn t1831_each_release_has_its_own_sidecar_row() {
 /// whole chain.
 #[test]
 fn t1832_a_moving_pointer_does_not_recompose_an_incomplete_frame() {
+    crate::alone::own_process!();
     let (mut h, _) = crate::layout_tests::harness_three_clips_dt(Some(0.02));
     h.state_mut().push_project_to_player();
     h.state_mut().player.seek(kt_time::Tick(10_000));
@@ -105,6 +108,7 @@ fn t1832_a_moving_pointer_does_not_recompose_an_incomplete_frame() {
 /// exactly the frame it needs. The tick of 4 Hz drew the whole window for nobody.
 #[test]
 fn t1833_at_rest_nothing_asks_for_a_frame() {
+    crate::alone::own_process!();
     let mut h = rest_harness();
     h.step();
     assert!(next_repaint(&h) > Duration::from_secs(3600), "a program at rest asks for a frame in {:?}", next_repaint(&h));
@@ -136,6 +140,7 @@ fn t1833_at_rest_nothing_asks_for_a_frame() {
 /// frame.
 #[test]
 fn t1938_a_hover_over_kept_ranges_does_not_lay_out_the_events() {
+    crate::alone::own_process!();
     let (mut h, g) = crate::layout_tests::harness_three_clips_dt(Some(0.02));
     let span = h.state().model.project().clips.iter().map(|c| (c.start + c.duration).0).max().unwrap_or(0);
     let kept: Vec<std::ops::Range<i64>> = std::iter::once(0..span).collect();
@@ -164,6 +169,7 @@ fn t1938_a_hover_over_kept_ranges_does_not_lay_out_the_events() {
 /// with what the view held, so with the scroll (kkt-26.11.07 item E2).
 #[test]
 fn t1834_a_hover_frame_does_not_lay_out_the_events() {
+    crate::alone::own_process!();
     let (mut h, g) = crate::layout_tests::harness_three_clips_dt(Some(0.02));
     let hover = |h: &mut Harness<'_, KtApp>, p: egui::Pos2| {
         h.input_mut().events.push(egui::Event::PointerMoved(p));
@@ -213,6 +219,7 @@ fn cpu_time() -> Option<Duration> {
 ///   moving the mouse over the gallery changes nothing and the processor stays idle
 #[test]
 fn t2559_an_open_gallery_of_a_heavy_event_costs_nothing_at_rest() {
+    crate::alone::own_process!();
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
     crate::plugins::install();
@@ -304,6 +311,7 @@ fn t2559_an_open_gallery_of_a_heavy_event_costs_nothing_at_rest() {
 ///   itself and the processor stays idle
 #[test]
 fn t2813_an_open_render_settings_window_costs_nothing_at_rest() {
+    crate::alone::own_process!();
     use kt_model::*;
     crate::plugins::install();
     crate::i18n::set_lang(crate::i18n::Lang::En);
@@ -385,6 +393,7 @@ fn t2813_an_open_render_settings_window_costs_nothing_at_rest() {
 ///   nothing redraws by itself
 #[test]
 fn t3003_an_open_node_editor_costs_nothing_at_rest() {
+    crate::alone::own_process!();
     use kt_model::*;
     crate::plugins::install();
     let mut h = rest_harness();
@@ -440,6 +449,150 @@ fn t3003_an_open_node_editor_costs_nothing_at_rest() {
     assert!(next_repaint(&h) > Duration::from_secs(3600), "after a hover the node editor asks for a frame in {:?}", next_repaint(&h));
 }
 
+/// Test t3006 (fx-graph v1c): the event's effects window and the morpher's window open TOGETHER over
+/// heavy chains (Datamosh, VHS Tape and Camera ISP in the one, VHS Tape and Datamosh with their sound
+/// halves in the other) cost nothing at rest: still, or with the pointer moving over both graphs, no
+/// frame is asked, nothing is composed again and neither graph is laid out again.
+/// - **PATH** open the effects window of an event carrying Datamosh, VHS Tape and Camera ISP and the
+///   window of the morpher layer over it → both graphs stand open; the mouse rests, then moves over
+///   the nodes of one and of the other: nothing redraws by itself
+#[test]
+fn t3006_the_event_s_and_the_morpher_s_windows_together_cost_nothing_at_rest() {
+    use kt_model::*;
+    crate::plugins::install();
+    let mut h = rest_harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    let fx = |ids: &[&str]| ids.iter().map(|id| FxInstance::plugin(id).expect(id)).collect::<Vec<_>>();
+    let mut c = kt_model::demo::demo_project(kt_model::demo::DemoSources::Synth).clips.into_iter().find(|c| c.kind == ClipKind::Video).expect("a video event");
+    (c.id, c.lane, c.start, c.duration, c.source_in, c.media, c.link_group) = (ClipId(1), 0, kt_time::Tick(0), kt_time::Tick(90_000), kt_time::Tick(0), MediaId(1), None);
+    c.fx = fx(&["datamosh", "vhs_tape", "camera_isp"]);
+    (c.fx_bypass, c.fx_auto, c.geometry_pos) = (vec![false; 3], vec![], 0);
+    p.clips.push(c);
+    p.ensure_tracks(LaneKind::Morph, 1);
+    p.morphers.push(MorpherEvent {
+        id: MorphId(1),
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        targets: MorphTargets::Clips { ids: vec![ClipId(1)] },
+        patch: MorphPatch { video_fx: fx(&["vhs_tape", "datamosh"]), audio_fx: fx(&["vhs_tape_sound", "datamosh_sound"]), ..Default::default() },
+        timed: true,
+        strength: 1.0,
+        fade_in: kt_time::Tick::ZERO,
+        fade_out: kt_time::Tick::ZERO,
+        enabled: true,
+    });
+    p.validate().unwrap();
+    app.model = TimelineModel::new(p);
+    app.open_fx_editor(ClipId(1));
+    h.step();
+    h.state_mut().open_morph_editor(MorphId(1));
+    // past the windows' misclick guards, which ask for the frame that ends them
+    let guard = crate::fx_thumbs::DECODE_GUARD * 2;
+    let app = h.state_mut();
+    app.fx_editors.iter_mut().for_each(|e| e.opened_at -= guard);
+    app.morph_editors.iter_mut().for_each(|e| e.opened_at -= guard);
+    for _ in 0..8 {
+        h.step();
+    }
+    let rects: Vec<egui::Rect> = [egui::Id::new(("fx", ClipId(1))), egui::Id::new(("morph", 1u64))]
+        .iter()
+        .filter_map(|id| h.ctx.memory(|m| m.area_rect(*id)))
+        .collect();
+    assert_eq!(rects.len(), 2, "scene: both windows have a place");
+    let (fx_open, morph_open) = (h.state().fx_editors.iter().any(|e| e.open), h.state().morph_editors.iter().any(|e| e.open));
+    assert!(fx_open && morph_open, "scene: both windows are open");
+    assert!(next_repaint(&h) > Duration::from_secs(3600), "two open node editors ask for a frame in {:?}", next_repaint(&h));
+    let laid = crate::graph_layout::LAID.with(|c| c.get());
+    let composites = h.state().composites;
+    for r in &rects {
+        for i in 0..30 {
+            h.input_mut().events.push(egui::Event::PointerMoved(r.left_top() + egui::vec2(20.0 + i as f32 * 12.0, 70.0)));
+            h.step();
+        }
+    }
+    for _ in 0..6 {
+        h.step();
+    }
+    assert!(next_repaint(&h) > Duration::from_secs(3600), "after a hover over both graphs a frame is asked in {:?}", next_repaint(&h));
+    assert_eq!(crate::graph_layout::LAID.with(|c| c.get()), laid, "a hover laid a graph out again");
+    assert!(h.state().composites - composites <= 1, "a hover recomposed the preview");
+}
+
+/// Test t3221 (fx-graph-dag D8): a graph that branches (Datamosh on the trunk, VHS Tape and Slowed in
+/// arms, Camera ISP after the merges) costs nothing at rest: still, or with the pointer moving over
+/// it, it asks for no frame of its own, lays nothing out and recomposes nothing.
+/// - **PATH** open a heavy event whose graph branches: double click it → its effects window shows
+///   the arms under the trunk → the mouse rests, then moves over the nodes → nothing redraws by itself
+#[test]
+fn t3221_an_open_branched_graph_costs_nothing_at_rest() {
+    use kt_model::*;
+    crate::plugins::install();
+    let mut h = rest_harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    let fx = |id: &str| FxInstance::plugin(id).expect(id);
+    let merge = || FxInstance::Merge { mode: MergeMode::Blend(BlendMode::Screen), mix: 0.5 };
+    let fx = vec![fx("datamosh"), fx("vhs_tape"), merge(), FxInstance::slowed_reverb(0.5, 0.35, 100.0), merge(), fx("camera_isp")];
+    let from = |main: FxIn| SlotInputs { main, ..Default::default() };
+    let onto = |main: FxIn| SlotInputs { main, second: Some(FxIn::Prev), matte: None };
+    let fx_in = vec![from(FxIn::Prev), from(FxIn::Source), onto(FxIn::Slot(0)), from(FxIn::Source), onto(FxIn::Slot(2)), from(FxIn::Prev)];
+    p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
+        overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
+        masks: Default::default(),
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx_bypass: vec![false; 6],
+        fx_auto: vec![],
+        fx,
+        opacity: 1.0,
+        fx_off: false,
+        fx_in,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.open_fx_editor(ClipId(1));
+    // past the window's misclick guard, which asks for the frame that ends it
+    for ed in app.fx_editors.iter_mut() {
+        ed.opened_at -= crate::fx_thumbs::DECODE_GUARD * 2;
+    }
+    for _ in 0..6 {
+        h.step();
+    }
+    let graph = crate::widgets::field_probe::rect_of("fx.graph").expect("the node editor is open");
+    assert!(crate::widgets::field_probe::rect_of("fx.read.4").is_some(), "the second read is not drawn");
+    let laid = crate::graph_layout::LAID.with(|c| c.get());
+    let composites = h.state().composites;
+    assert!(next_repaint(&h) > Duration::from_secs(3600), "the open node editor asks for a frame in {:?}", next_repaint(&h));
+    for i in 0..30 {
+        h.input_mut().events.push(egui::Event::PointerMoved(graph.left_center() + egui::vec2(8.0 + i as f32 * 12.0, 0.0)));
+        h.step();
+    }
+    // the pointer rests where it stopped: the frames of the last move settle
+    for _ in 0..6 {
+        h.step();
+    }
+    assert!(next_repaint(&h) > Duration::from_secs(3600), "after a hover the node editor asks for a frame in {:?}", next_repaint(&h));
+    assert_eq!(crate::graph_layout::LAID.with(|c| c.get()), laid, "a hover laid the graph out again");
+    assert!(h.state().composites - composites <= 1, "a hover recomposed the preview");
+}
+
 /// t3236 (track-device-sound): a video track's window with VHS Tape and Camera ISP and its sound
 /// track — one graph of both chains and the Device sound row — costs nothing at rest: still, or with
 /// the pointer moving over the graph. Its name field holds the focus, and a focused field's caret
@@ -450,6 +603,7 @@ fn t3003_an_open_node_editor_costs_nothing_at_rest() {
 ///   redraws by itself
 #[test]
 fn t3236_an_open_track_pair_costs_nothing_at_rest() {
+    crate::alone::own_process!();
     use kt_model::*;
     crate::plugins::install();
     let mut h = rest_harness();
@@ -492,6 +646,7 @@ fn t3236_an_open_track_pair_costs_nothing_at_rest() {
 ///   rests, then moves over the preview → nothing redraws or walks by itself
 #[test]
 fn t3822_a_paused_mosh_on_one_device_costs_nothing() {
+    crate::alone::own_process!();
     use kt_model::*;
     use kt_time::work::{count, Work};
     crate::plugins::install();
@@ -531,11 +686,11 @@ fn t3822_a_paused_mosh_on_one_device_costs_nothing() {
         gain_db: 0.0,
         reversed: false,
         fx_bypass: vec![],
-        fx_in: vec![],
         fx_auto: vec![],
         fx,
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     p.clips.push(clip(1, 0, vec![]));
     p.clips.push(clip(2, 90_000, vec![mosh]));
@@ -589,4 +744,98 @@ fn t3822_a_paused_mosh_on_one_device_costs_nothing() {
     }
     assert!(next_repaint(&h) > Duration::from_secs(3600), "a program at rest asks for a frame in {:?}", next_repaint(&h));
     assert_eq!(snapshot(), last, "the rest after the pointer ran work");
+}
+
+/// Test t3843 (project-cache-folder D3): after a prerender wrote into a full folder — its oldest segments
+/// replaced, the notice told — the program at rest, and with the pointer moving over the preview, walks no
+/// cache folder, drops nothing, reads and writes nothing, composes and submits nothing, and asks no frame.
+/// - **PATH** the heavy showcase opens → Space plays a lap → Space stops → the mouse rests, then moves over
+///   the preview → nothing redraws or works by itself once the writes are done
+#[test]
+fn t3843_the_program_at_rest_after_cyclic_writing_costs_nothing() {
+    crate::alone::own_process!();
+    use kt_media::cache_folder::{Folder, Tenant};
+    use kt_time::work::{count, Work};
+    crate::plugins::install();
+    let mut h = rest_harness();
+    if matches!(h.state().player.video_backend(), kt_engine::VideoBackendStatus::Missing) {
+        eprintln!("skipped: no wgpu adapter");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("kt-t3843-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let root = kt_media::cache_folder::beside(&dir.join("film.kt"));
+    let folder = Folder::open(&root).unwrap();
+    folder.set_protect_for_tests(Some(Duration::ZERO));
+    let app = h.state_mut();
+    app.player.set_preview_quality(kt_media::Quality { width: 160, height: 90 });
+    folder.set_cap(8 * 160 * 90 * 4);
+    let p = kt_model::demo::demo_project(kt_model::demo::DemoSources::Generators);
+    app.model = kt_model::TimelineModel::new(p);
+    app.model_rev += 1;
+    app.sync_media_sources();
+    app.push_project_to_player();
+    app.player.seek(kt_time::Tick(4 * 90_000));
+    app.player.render_cache().set_heavy_for_tests(Some(1));
+    app.player.set_render_cache(Some(kt_engine::render_cache::Config {
+        codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
+        root: root.clone(),
+        made: kt_engine::render_cache::Made::of(60),
+        cap: None,
+    }));
+    // a stretch longer than the folder holds is measured slow: the prerender writes it in a cycle
+    let step = app.player.video_grid().frame_step();
+    let start = app.player.video_grid().align_floor(kt_time::Tick(4 * 90_000)).0;
+    let deadline = kt_time::test_deadline();
+    while folder.counts(Tenant::Frames).2 == 0 {
+        for k in 0..30 {
+            h.state().player.note_preview_cost(kt_time::Tick(start + k * step), 1_000_000_000, (160, 90));
+        }
+        h.state().player.render_cache().kick();
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(std::time::Instant::now() < deadline, "the folder never wrote in its cycle: {:?}", folder.known_sizes());
+    }
+    // every moment is heavy to this test's threshold, and the prerender would walk on to the project's end
+    h.state().player.render_cache().set_heavy_for_tests(Some(u64::MAX));
+    h.state().player.render_cache().kick();
+    let snapshot = || {
+        (
+            (folder.walks_for_tests(), folder.counts(Tenant::Frames), folder.known_sizes()),
+            count(Work::Composite),
+            count(Work::DeviceSubmit),
+            count(Work::PrefetchPass),
+        )
+    };
+    let (mut last, mut still) = (snapshot(), 0);
+    // the notice of the full folder stands in the status line some seconds: its going is the last frame
+    while still < 25 || h.state().status.is_some() || !h.state().player.render_cache().settled() || h.state().incomplete_since.is_some() || h.state().meter.is_active() {
+        if h.state().incomplete_since.is_some() {
+            // the harness hears no wake: the frame whose sources came is asked again here
+            h.state_mut().preview_key = None;
+        }
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+        let now = snapshot();
+        still = if now == last { still + 1 } else { 0 };
+        last = now;
+        assert!(std::time::Instant::now() < deadline, "the prerender never came to rest");
+    }
+    for i in 0..60 {
+        h.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(600.0 + (i % 30) as f32 * 4.0, 200.0)));
+        h.step();
+    }
+    assert_eq!(snapshot(), last, "a moving pointer walked, dropped, composed or submitted");
+    for _ in 0..6 {
+        h.step();
+    }
+    assert!(
+        next_repaint(&h) > Duration::from_secs(3600),
+        "a program at rest asks for a frame in {:?}: {:?}",
+        next_repaint(&h),
+        h.ctx.repaint_causes()
+    );
+    assert_eq!(snapshot(), last, "the rest after the pointer ran work");
+    let _ = std::fs::remove_dir_all(&dir);
 }

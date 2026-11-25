@@ -713,8 +713,9 @@ pub(crate) fn run<S: ExportSink>(
         facts.observe(*m, s.info());
     }
     // the chunks being composed and the ones decoded ahead (see the module doc)
-    let cache = BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: pipe_cache_bytes(hooks.budget) });
+    let cache = Arc::new(BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: pipe_cache_bytes(hooks.budget) }));
     let mut video = VideoRenderer::new_with_facts(project, &facts);
+    crate::export::adopt_sources(&cache, &mut video, src.iter().map(|(m, s)| (*m, s.as_ref())));
     video.set_stream_memo(Arc::new(kt_plugin_api::stream::StreamMemo::new(crate::export::EXPORT_STREAM_MEMO_BYTES)));
     let video = video;
     let (t_first, end) = match range {
@@ -729,6 +730,7 @@ pub(crate) fn run<S: ExportSink>(
         Some((a, _)) => a.to_audio_frames(),
         None => 0,
     };
+    let announced_audio = (end.to_audio_frames() - audio_start).max(0) as u64;
 
     let halt = Arc::new(AtomicBool::new(false));
     let halted = || {
@@ -790,6 +792,7 @@ pub(crate) fn run<S: ExportSink>(
                 project,
                 audio_sources,
                 range,
+                crate::program::params(project),
                 &audio_halt,
                 |done| {
                     (hooks.wait_paused)();
@@ -808,7 +811,7 @@ pub(crate) fn run<S: ExportSink>(
 
         // --- decode: a chunk ahead, a thread per source within the chunk ---
         let video_ref = &video;
-        let cache_ref = &cache;
+        let cache_ref: &BurstCache = &cache;
         let gate_ref = &gate;
         let chunks_ref = &chunks;
         let decode = scope.spawn(move || -> std::io::Result<()> {
@@ -1119,15 +1122,15 @@ pub(crate) fn run<S: ExportSink>(
         // the first cause wins: a stage's own error over the "stopped" it caused on either side
         let derived = written.as_ref().is_err_and(|e| e.kind() == std::io::ErrorKind::BrokenPipe);
         let stages = compose.and(decode).and(worker_err);
-        let incomplete = match (written, stages) {
+        let wrote = match (written, stages) {
             (Ok(n), Ok(())) => n,
             (Err(_), Err(s)) if derived => return Err(s),
             (Err(e), _) | (Ok(_), Err(e)) => return Err(e),
         };
-        let astats = audio?;
-        Ok::<_, std::io::Error>((incomplete, astats))
+        let astats = ExportStats { audio_frames: wrote.samples, announced_audio, ..audio? };
+        Ok::<_, std::io::Error>((wrote, astats))
     });
-    let (incomplete, astats) = match result {
+    let (wrote, astats) = match result {
         Ok(r) => r,
         Err(e) => {
             return Err(if cancel.load(Ordering::Acquire) { cancelled() } else { e });
@@ -1137,16 +1140,24 @@ pub(crate) fn run<S: ExportSink>(
         p.wall_ns.fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
     }
     let vstats = ExportStats {
-        video_frames: total,
-        missing_video_layers: incomplete,
+        video_frames: wrote.frames,
+        announced_video: total,
+        missing_video_layers: wrote.incomplete,
         ..Default::default()
     };
     Ok((vstats, astats))
 }
 
+/// What the writer handed to the sink.
+struct Wrote {
+    frames: u64,
+    samples: u64,
+    incomplete: u64,
+}
+
 /// The writer: video frame `i` from the worker the compose thread named for it (in frame order), then
 /// the audio up to the end of that frame.
-/// Returns how many layers frames were composed without.
+/// Returns what it wrote (render-result-check D1) and how many layers frames were composed without.
 #[allow(clippy::too_many_arguments)]
 fn write_all<S: ExportSink>(
     sink: &mut S,
@@ -1159,8 +1170,9 @@ fn write_all<S: ExportSink>(
     gate: &Gate,
     halted: &dyn Fn() -> bool,
     hooks: &Hooks<'_>,
-) -> std::io::Result<u64> {
+) -> std::io::Result<Wrote> {
     let prof = hooks.profile;
+    let mut frames = 0u64;
     let mut incomplete = 0u64;
     let mut audio_written = 0u64;
     let mut audio_open = true;
@@ -1188,6 +1200,7 @@ fn write_all<S: ExportSink>(
         sink.write_video(&done.frame)?;
         ExportProfile::encode_apart(prof, mark, sink.surface_upload_ns() - up);
         let _ = back_txs[w].send(done.frame);
+        frames += 1;
         gate.set(i + 1);
         (hooks.video_done)(i + 1);
         let want = audio_until(i);
@@ -1216,7 +1229,7 @@ fn write_all<S: ExportSink>(
         (hooks.audio_done)(audio_written);
     }
     (hooks.bytes)(sink.bytes());
-    Ok(incomplete)
+    Ok(Wrote { frames, samples: audio_written, incomplete })
 }
 
 /// Decode one chunk's frames into the cache, a thread per source (the serial export's

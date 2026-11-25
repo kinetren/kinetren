@@ -378,7 +378,7 @@ pub fn flags_row<P: HasParams + ?Sized>(
         for spec in specs {
             let mut v = f.get_flag(spec.name).unwrap_or(spec.default);
             let r = ui.checkbox(&mut v, flag_label(spec.name));
-            field_probe::note(spec.name, r.rect);
+            field_probe::note(&format!("flag.{}", spec.name), r.rect);
             if r.changed() {
                 f.set_flag(spec.name, v);
                 changed = true;
@@ -848,6 +848,36 @@ pub(crate) mod lesson_mark {
 pub fn window_actions(ui: &mut egui::Ui, actions: impl FnOnce(&mut egui::Ui)) {
     ui.separator();
     actions(ui);
+}
+
+/// An action drawn as an icon (`v26.10` T7): the status bar says its name and hint, the accessible
+/// name is its name.
+pub fn icon_action(
+    ui: &mut egui::Ui,
+    hover: &mut Option<String>,
+    icon: &str,
+    name: &str,
+    hint: Option<&str>,
+    enabled: bool,
+) -> egui::Response {
+    let r = ui.add_enabled(enabled, egui::Button::new(icon));
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, name));
+    let text = match hint {
+        Some(h) => format!("{name}. {h}"),
+        None => name.to_string(),
+    };
+    // a dead icon says what it is too: `hovered` is false on a disabled widget
+    if r.contains_pointer() {
+        *hover = Some(text);
+    }
+    r
+}
+
+/// The number of what a window edits (`v26.10` W3): small and weak, at the row's free end.
+pub fn entity_number(ui: &mut egui::Ui, id: u64) {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.label(egui::RichText::new(format!("#{id}")).small().weak());
+    });
 }
 
 /// Row of a NUMBER WITHOUT A SPEC (R.66).
@@ -2106,6 +2136,9 @@ pub struct ChainEdit<'a> {
     /// The second lane's master switch (the pair's audio event); `Some` puts a switch at each lane's
     /// In node instead of the toolbar's one.
     pub master2: Option<&'a mut bool>,
+    /// Where every slot takes its inputs (fx-graph-dag): parallel to `fx`, by the slot's address; the
+    /// lane's Output is its last slot. A chain that does not branch is `fx_strip::line_links`.
+    pub links: &'a mut Vec<kt_model::fx_strip::Links>,
     /// The chain belongs to an event: its nodes offer the Viewer (fx-graph D11). A layer's or a
     /// track's chain has no one event to cut, so no dead item is offered there (rule 9).
     pub viewer: bool,
@@ -2188,7 +2221,7 @@ impl ChainSel {
     }
 }
 
-#[derive(Default, Debug, Clone, Copy, PartialEq)]
+#[derive(Default, Debug, Clone, PartialEq)]
 pub struct ChainChanged {
     pub fx: bool,
     pub bypass: bool,
@@ -2196,10 +2229,13 @@ pub struct ChainChanged {
     pub master: bool,
     /// The pinned slot was touched (the checkbox of the morph slot).
     pub head: bool,
-    /// A slot was moved / removed (strip indices) — for an owner keeping its own list parallel
-    /// to the chain (the slot masks, shape-masks).
-    pub moved: Option<(usize, usize)>,
-    pub removed: Option<usize>,
+    /// Slots were moved, added or removed: which slot each one of the strip was (`None` — new) —
+    /// for an owner keeping its own list parallel to the chain (the slot masks, shape-masks).
+    pub from: Option<Vec<Option<usize>>>,
+    /// The chain branches (or did): its wiring goes with the slots, as one step of its own.
+    pub wires: bool,
+    /// A gesture the graph refused, in words (rule 16): nothing changed.
+    pub refused: Option<String>,
     /// A context box asked for its own window (a double click on it).
     pub open: Option<ContextTarget>,
     /// The second lane's master switch changed (a pair, fx-graph D10).
@@ -2210,8 +2246,8 @@ pub struct ChainChanged {
 }
 
 impl ChainChanged {
-    pub fn any(self) -> bool {
-        self.fx || self.bypass || self.auto || self.master || self.head
+    pub fn any(&self) -> bool {
+        self.fx || self.bypass || self.auto || self.master || self.head || self.wires
     }
 }
 

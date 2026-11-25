@@ -2264,6 +2264,7 @@ dependencies = [
 name = "kt-dirs"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "windows-sys 0.61.2",
 ]
 
@@ -2341,6 +2342,7 @@ dependencies = [
 name = "kt-media"
 version = "0.1.0"
 dependencies = [
+ "kt-dirs",
  "kt-ffmpeg",
  "kt-gpu",
  "kt-model",
@@ -2365,6 +2367,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "xxhash-rust",
 ]
 
 [[package]]

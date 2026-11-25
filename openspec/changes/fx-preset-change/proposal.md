@@ -1,7 +1,7 @@
 # Proposal: fx-preset-change
 
-> DESIGN ONLY (spec session, 2026-11-20), revision 2 after the owner's answer (`kkt-26.11.20` A4, his Q52). Code
-> starts on the orchestrator's go. Tests reserved: t3595–t3596, t3932–t3934.
+> DESIGN, revision 3 (2026-11-24), base `229c694b` (graph v2d merged): implementation-ready. Decided by the owner's A4. Code
+> starts on the orchestrator's go. Tests: t3595–t3596, t3932–t3934, t4243–t4244.
 
 ## Why
 
@@ -10,7 +10,7 @@ The owner, `kkt-26.11.07` line 12: "невозможно после добавл
 kind's variants (`UiDecl.variants`) are offered only by the picker when a slot is ADDED, and a chain preset is
 appended at the end of the chain. Note F-UI-010.
 
-His decision, 2026-11-20 (`kkt-26.11.20.txt` lines 4–5): "если это пресет конкретного эффекта - то заменяется. если
+His decision, 2026-11-20 (`kkt-26.11.20.txt` lines 7–8, whole): "Q52 preset change: "я думаю если это пресет конкретного эффекта - то заменяется. если
 это прессет цепочки - то можно просто к существующей цепочке на графе соединить ту что с пресета или мышкой быстро
 выделить и удалить лишнее или соединить".
 
@@ -24,10 +24,9 @@ His decision, 2026-11-20 (`kkt-26.11.20.txt` lines 4–5): "если это пр
   and its identity, so an audio effect keeps its tail.
 - **The menu reads the truth**: it names the preset the effect currently equals (values and curves), or
   "(custom)" after any edit; picking the shown preset again resets to it.
-- **A chain preset joins the chain on the graph**: inserted after the selected node (at the end when none is
-  selected), its nodes arrive as one SELECTION, highlighted; the person deletes the extra ones with Delete or moves
-  them by dragging, and on the graph v2 (change `fx-graph-dag`) wires them where wanted. Nothing of the existing
-  chain is removed by inserting a chain preset.
+- **A chain preset joins the chain on the graph** where the picker adds (after the selected node on a lane that branches,
+  else at the end), its nodes arrive as one SELECTION; the person deletes the extra ones with Delete, moves them by
+  dragging or wires them where wanted (graph v2d). Nothing of the existing chain is removed.
 - **Selecting several nodes with the mouse**: Ctrl+click adds or removes a node, a drag on the empty canvas draws a
   selection frame; Delete removes every selected node in one undo step; dragging one of them moves them all.
 - The same head and the same selection work in the event's, the track's and the morpher's graph (one widget).
@@ -42,13 +41,10 @@ His decision, 2026-11-20 (`kkt-26.11.20.txt` lines 4–5): "если это пр
 
 ## Impact
 
-- kt-app: the slot form head (`fx_editor.rs` / `widgets`), the variant list shared with the picker
-  (`fx_registry.rs`), the comparison "effect equals preset"; `ChainEdit.selected` grows from one `ChainSel` to a
-  set; the selection frame, Delete and group drag in `node_editor.rs`; the chain preset's insertion point;
-  i18n ×5 ("Preset", "(custom)").
-- kt-model: `ops::insert_chain_block_at(position)` beside `append_chain_block` (the same re-hanging of keys).
-- No engine or format change.
-- Idle: nothing runs; the comparison is computed when the form is drawn.
+- kt-app: `fx_registry::presets_of`, the form's head, `apply_preset` (event, morpher, track); `ChainEdit.group`,
+  `Op::{RemoveMany, ShiftMany}`; i18n ×5; `shortcuts.md`.
+- kt-model: nothing (the gestures go through v2d's `perform` and its checks). No engine or format change.
+- Idle: nothing runs at rest.
 
 ## Questions to the owner
 

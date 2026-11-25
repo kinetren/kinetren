@@ -129,7 +129,7 @@ pub fn run(args: &[String]) -> i32 {
 /// and why it stopped or abandoned a moment.
 pub fn cache(run: &Run) -> String {
     use kt_time::trace::render_cache as k;
-    let mut o = String::new();
+    let mut o = cache_folders(run);
     let recs: Vec<&Rec> = run.recs.iter().filter(|r| is(r, Ev::RenderCache)).collect();
     if recs.is_empty() {
         o.push_str("no render cache records: the tier was off, or nothing was measured slow\n");
@@ -168,6 +168,9 @@ pub fn cache(run: &Run) -> String {
     if !scans.is_empty() {
         let _ = writeln!(o, "scans for the bars: {} ({} moments looked at, {} found on disk)", scans.len(), scans.iter().map(|r| r.a).sum::<u64>(), scans.iter().map(|r| r.b).sum::<u64>());
     }
+    for r in recs.iter().filter(|r| r.aux == k::ABANDON && r.c > 0) {
+        let _ = writeln!(o, "left at the close: a segment of {} moments ({} ms of the device)", r.c, r.dur / 1_000_000);
+    }
     let mut why: BTreeMap<&'static str, usize> = BTreeMap::new();
     for r in recs.iter().filter(|r| r.aux == k::ABANDON || r.aux == k::STOPPED) {
         *why.entry(k::why::name(r.b)).or_default() += 1;
@@ -180,6 +183,43 @@ pub fn cache(run: &Run) -> String {
     for (i, (a, b, _, _)) in laps.iter().enumerate() {
         let n = recs.iter().filter(|r| r.aux == k::RESTORE && r.t >= *a && r.t < *b).count();
         let _ = writeln!(o, "  lap {i} {}: {n} restored", s(*a));
+    }
+    o
+}
+
+/// The project's cache folder (project-cache-folder D8): where it lies and why, per cache the bytes at
+/// the last count with the hits and misses, what was dropped and why, the writes that found no room.
+fn cache_folders(run: &Run) -> String {
+    use kt_time::trace::cache_folder as k;
+    let mut o = String::new();
+    let recs: Vec<&Rec> = run.recs.iter().filter(|r| is(r, Ev::CacheFolder)).collect();
+    for r in &recs {
+        let place = match r.aux {
+            k::PLACE_PROJECT => "beside the project",
+            k::PLACE_UNTITLED => "in the user's folder, the project is untitled",
+            k::PLACE_NO_FILES => "in the user's folder, the project's folder takes no files",
+            _ => continue,
+        };
+        let _ = writeln!(o, "cache folder {} ({place}), the cap {:.1} GB", run.name_of(r.id as u32), r.b as f64 / 1e9);
+    }
+    let mut last: BTreeMap<u64, &Rec> = BTreeMap::new();
+    for r in recs.iter().filter(|r| r.aux == k::SIZE) {
+        last.insert(r.a, r);
+    }
+    let mut drops: BTreeMap<(u64, u64), (usize, u64)> = BTreeMap::new();
+    for r in recs.iter().filter(|r| r.aux == k::DROP) {
+        let d = drops.entry((r.a, r.c)).or_default();
+        *d = (d.0 + 1, d.1 + r.b);
+    }
+    for (t, r) in &last {
+        let _ = writeln!(o, "  {:<7} {} bytes, {} hits, {} misses", k::tenant_name(*t), r.b, r.c, r.id);
+    }
+    for ((t, why), (n, bytes)) in &drops {
+        let _ = writeln!(o, "  dropped {n} of {} ({bytes} bytes): {}", k::tenant_name(*t), k::why::name(*why));
+    }
+    let skipped = recs.iter().filter(|r| r.aux == k::SKIPPED).count();
+    if skipped > 0 {
+        let _ = writeln!(o, "  {skipped} writes skipped: no room could be made");
     }
     o
 }
@@ -447,7 +487,7 @@ fn memory(run: &Run) -> String {
     o
 }
 
-/// The program's trace directory: `KINETREN_DATA_DIR`, else the data directory.
+/// The program's trace directory, read: `KINETREN_DATA_DIR`, else the data directory.
 fn default_dir() -> std::path::PathBuf {
     if let Some(d) = std::env::var_os("KINETREN_DATA_DIR") {
         return std::path::PathBuf::from(d).join("trace");
@@ -914,6 +954,12 @@ fn exec_word(aux: u32) -> String {
 }
 
 /// The critical path of one frame, a line per stage.
+/// A device wait in words: "lock pass times", "call submit (preview)".
+fn wait_word(run: &Run, r: &Rec) -> String {
+    let what = format!("{} {}", trace::gpu_wait::name(r.a), run.name_of(r.aux));
+    if r.b == 0 { what } else { format!("{what} ({})", run.name_of(r.b as u32)) }
+}
+
 fn path(run: &Run, l: &Life, o: &mut String) {
     let t0 = l.start();
     let rel = |t: u64| ms(t.saturating_sub(t0));
@@ -930,6 +976,10 @@ fn path(run: &Run, l: &Life, o: &mut String) {
             }
             trace::wait::DEVICE if w.dur > 1_000_000 => {
                 let _ = writeln!(o, "      device finishing the frame before: {}", ms(w.dur));
+            }
+            trace::wait::DISK if w.dur > 1_000_000 || w.a == 0 => {
+                let how = if w.a == 1 { "it came" } else { "not in time, or not there" };
+                let _ = writeln!(o, "      waited for the disk tier: {} ({how})", ms(w.dur));
             }
             trace::wait::BUILD => {
                 let _ = writeln!(o, "      waited for the shared build of the project's state: {}", ms(w.dur));
@@ -963,6 +1013,10 @@ fn path(run: &Run, l: &Life, o: &mut String) {
     if let Some(e) = l.exec {
         let cold = if e.b > 0 { format!(", {} pipelines compiled cold", e.b) } else { String::new() };
         let _ = writeln!(o, "      executor at {} took {}: {}{cold}", rel(e.t), ms(e.dur), exec_word(e.aux));
+        // what it waited for inside (gpu-waits-named), by the thread it ran on
+        for r in run.recs.iter().filter(|r| is(r, Ev::GpuWait) && r.th == e.th && r.t < e.end() && r.end() > e.t) {
+            let _ = writeln!(o, "        at {} {} for {}", rel(r.t), wait_word(run, r), ms(r.dur));
+        }
     }
     match (l.done, l.drop) {
         (Some(d), _) => {
@@ -1285,27 +1339,50 @@ pub fn lap_bounds(run: &Run) -> Vec<(u64, u64, u64, u64)> {
     let mut out = vec![];
     let mut region = (0u64, 0u64);
     let mut start: Option<u64> = None;
+    // a lap is played: the opening's seek and a click on the ruler of a paused transport start none
+    let mut playing = false;
+    // the head Play started at, while it is the last record: the render thread writes its own seek right
+    // after it, and a lap cut between the two was empty (found-defects 846)
+    let mut played: Option<u64> = None;
     for r in run.recs.iter().filter(|r| is(r, Ev::Play)) {
+        use trace::play::{PAUSE, PLAY, REGION, SEEK, WRAP};
+        if !matches!(r.aux, PLAY | PAUSE | SEEK | WRAP | REGION) {
+            continue;
+        }
+        let own_seek = r.aux == SEEK && played == Some(r.a);
+        played = (r.aux == PLAY).then_some(r.a);
         match r.aux {
-            trace::play::REGION => {
+            REGION => {
                 region = (r.b, r.c);
                 if let Some(a) = start.take() {
                     out.push((a, r.t, region.0, region.1));
                 }
-                start = None;
             }
-            trace::play::PLAY | trace::play::SEEK if region.1 > region.0 => {
-                if let Some(a) = start.take() {
-                    out.push((a, r.t, region.0, region.1));
-                }
-                start = Some(r.t);
-            }
-            trace::play::WRAP if region.1 > region.0 => {
-                if let Some(a) = start.replace(r.t) {
+            PLAY => {
+                playing = true;
+                if region.1 > region.0
+                    && let Some(a) = start.replace(r.t)
+                {
                     out.push((a, r.t, region.0, region.1));
                 }
             }
-            trace::play::PAUSE => {
+            SEEK if playing && region.1 > region.0 => {
+                if let Some(a) = start.replace(r.t)
+                    && !own_seek
+                {
+                    out.push((a, r.t, region.0, region.1));
+                }
+            }
+            WRAP => {
+                playing = true;
+                if region.1 > region.0
+                    && let Some(a) = start.replace(r.t)
+                {
+                    out.push((a, r.t, region.0, region.1));
+                }
+            }
+            PAUSE => {
+                playing = false;
                 if let Some(a) = start.take() {
                     out.push((a, r.t, region.0, region.1));
                 }
@@ -1556,6 +1633,7 @@ pub fn during(run: &Run, from: u64, to: u64) -> String {
         let name = match k {
             Ev::Job => format!("job:{}", job_name(r.aux)),
             Ev::ComputeJob | Ev::Warm | Ev::ColdDraw => format!("{}:{}", k.name(), run.name_of(r.aux)),
+            Ev::GpuWait => format!("{}:{}", k.name(), wait_word(run, r)),
             Ev::Play => format!("play:{}", play_name(r.aux)),
             Ev::FrameDrop => format!("frame_drop:{}", r.aux),
             Ev::FrameDone => format!("frame_done:{}", if r.aux == 1 { "complete" } else { "incomplete" }),
@@ -1726,7 +1804,7 @@ pub fn chrome(run: &Run) -> String {
     for r in &run.recs {
         let Some(k) = kind(r) else { continue };
         let name = match k {
-            Ev::ComputeJob | Ev::Warm | Ev::ColdDraw => format!("{}:{}", k.name(), run.name_of(r.aux)),
+            Ev::ComputeJob | Ev::Warm | Ev::ColdDraw | Ev::GpuWait => format!("{}:{}", k.name(), run.name_of(r.aux)),
             Ev::Job => format!("job:{}", job_name(r.aux)),
             Ev::SchedQueue | Ev::SchedRun | Ev::SchedCancel => sched_word(run, k, r),
             _ => k.name().to_string(),

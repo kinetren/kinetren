@@ -188,12 +188,13 @@ fn t3201_highlights_blurred_and_laid_back() {
 #[test]
 fn t3208_the_keys_see_the_wiring() {
     let t = Tick(SPAN / 2);
+    // one cache for every project: the same frame under the same name, the wiring alone differs
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    warm(&VideoRenderer::new(&project(vec![clip(1, 0, vec![], vec![], BlendMode::Normal)])), &cache, t);
     let key = |p: &Project| {
         let vr = VideoRenderer::new(p);
-        let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
-        warm(&vr, &cache, t);
         let plan = vr.frame_plan(&cache, t, kt_media::Quality { width: W, height: H });
-        kt_engine::render_cache::durable_hash(&plan)
+        kt_engine::moment_key::moment_key(&plan)
     };
     kt_plugins_builtin::install();
     let fx = vec![FxInstance::blur(6), duotone(), merge(BlendMode::Screen, 1.0)];
@@ -336,4 +337,161 @@ fn t3227_the_order_sees_both_reads() {
     want.extend(slow.layers_at(t, q));
     assert_eq!(graph.layers_at(t, q), want, "the graph's order is not its two reads'");
     assert_eq!(line.layers_at(t, q).len(), 1, "a line orders one frame");
+}
+
+/// Test t3205 (fx-graph-dag D2, D3; capability `video-plan`): a graph whose arms hold no time kind
+/// reads as its line — a slowed event that branches after it asks the line's frames at every moment;
+/// with the zooming lead before the branch the layer keeps the line's decode step; a zoom that stands
+/// in an arm (the branch before any geometry) gives step 1.
+#[test]
+fn t3205_a_graph_without_a_time_kind_in_an_arm_reads_as_the_line() {
+    kt_plugins_builtin::install();
+    let q = kt_media::Quality { width: W, height: H };
+    let natives = std::collections::HashMap::from([(MediaId(1), (W * 4, H * 4))]);
+    let build = |p: &Project| VideoRenderer::new_with_natives(p, &natives);
+    let zoomed = |fx: Vec<FxInstance>, w: Vec<SlotInputs>| {
+        let (mut c, b) = clip(1, 0, fx, w, BlendMode::Normal);
+        c.geometry.zoom = 2.0;
+        project(vec![(c, b)])
+    };
+    let from = |j: u32| SlotInputs { main: FxIn::Slot(j), ..Default::default() };
+    // Slowed on the trunk, two arms after it
+    let graph = build(&zoomed(
+        vec![slowed(), FxInstance::blur(6), duotone(), merge(BlendMode::Screen, 1.0)],
+        vec![SlotInputs::default(), SlotInputs::default(), from(0), merged(FxIn::Slot(1), FxIn::Prev)],
+    ));
+    let line = build(&zoomed(vec![slowed(), FxInstance::blur(6)], vec![]));
+    for k in 0..30 {
+        let t = Tick(k * 3000);
+        assert_eq!(graph.layers_at(t, q), line.layers_at(t, q), "at {t:?} the graph asked other frames than its line");
+    }
+    assert!(line.layers_at(Tick(0), q)[0].2.width > W, "scene: the zooming lead raises the decode step");
+    assert!(graph.read_rows(q).is_empty(), "no arm holds a time kind: no second read");
+    // the zoom in an arm: the branch stands before any geometry
+    let (c, b) = clip(
+        1,
+        0,
+        vec![FxInstance::geometry_zoom(2.0), FxInstance::blur(6), merge(BlendMode::Screen, 1.0)],
+        vec![SlotInputs::default(), SlotInputs { main: FxIn::Source, ..Default::default() }, merged(FxIn::Slot(0), FxIn::Prev)],
+        BlendMode::Normal,
+    );
+    let early = build(&project(vec![(c, b)]));
+    assert_eq!(early.layers_at(Tick(0), q)[0].2, q, "a zoom in an arm raised the layer's decode step");
+}
+
+fn half_mask(x: f64) -> Mask {
+    Mask::new(1, "half", MaskShape::Rect { cx: x, cy: 0.5, w: 0.5, h: 1.0, rot: 0.0, round: 0.0 })
+}
+
+/// Test t3206 (fx-graph-dag D3; capability `video-plan`): masks in a graph are the stacked layers'
+/// masks — a mask on a slot of an arm takes the slot's OWN input as its dry side (not what ran before
+/// it in the list), a mask of a read's slot cuts inside the read, and the picture's masks cut before
+/// the branch, so every arm gets the cut frame.
+#[test]
+fn t3206_masks_in_a_graph_are_the_stacked_layers_masks() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    let t = Tick(SPAN / 2);
+    let src = || SlotInputs { main: FxIn::Source, ..Default::default() };
+    let same = |what: &str, lsb: u8, graph: &Project, stacked: &Project| {
+        let (a, _) = compose_timed(graph, t);
+        let (b, _) = compose_timed(stacked, t);
+        let diff = a.iter().zip(&b).filter(|(x, y)| x != y).count();
+        let worst = a.iter().zip(&b).map(|(x, y)| x.abs_diff(*y)).max().unwrap_or(0);
+        assert!(diff == 0 || (worst <= lsb), "{what}: the graph differs from the stacked layers in {diff} bytes, by up to {worst}");
+    };
+    let masked = |c: (ClipEvent, BlendMode), slot: Option<usize>, x: f64| {
+        let (mut c, b) = c;
+        c.masks.list_mut(slot).push(half_mask(x));
+        (c, b)
+    };
+    // the duotone arm's slot is masked: outside it shows the source, not the blur before it
+    let fx = vec![FxInstance::blur(6), duotone(), merge(BlendMode::Screen, 1.0)];
+    let w = vec![SlotInputs::default(), src(), merged(FxIn::Slot(0), FxIn::Prev)];
+    let plain = project(vec![clip(1, 0, fx.clone(), w.clone(), BlendMode::Normal)]);
+    let graph = project(vec![masked(clip(1, 0, fx, w, BlendMode::Normal), Some(1), 0.25)]);
+    assert!(compose_timed(&graph, t).0 != compose_timed(&plain, t).0, "scene: the mask does something");
+    same(
+        "a masked slot of an arm",
+        0,
+        &graph,
+        &project(vec![
+            masked(clip(1, 0, vec![duotone()], vec![], BlendMode::Screen), Some(0), 0.25),
+            clip(2, 1, vec![FxInstance::blur(6)], vec![], BlendMode::Normal),
+        ]),
+    );
+    // a masked slot of a READ's line (duotone before Slowed in the arm)
+    let fx = vec![FxInstance::blur(6), duotone(), slowed(), merge(BlendMode::Screen, 1.0)];
+    let w = vec![SlotInputs::default(), src(), SlotInputs::default(), merged(FxIn::Slot(0), FxIn::Prev)];
+    let plain = project(vec![clip(1, 0, fx.clone(), w.clone(), BlendMode::Normal)]);
+    let graph = project(vec![masked(clip(1, 0, fx, w, BlendMode::Normal), Some(1), 0.75)]);
+    assert!(compose_timed(&graph, t).0 != compose_timed(&plain, t).0, "scene: the read's mask does something");
+    same(
+        "a masked slot of a read",
+        0,
+        &graph,
+        &project(vec![
+            masked(clip(1, 0, vec![duotone(), slowed()], vec![], BlendMode::Screen), Some(0), 0.75),
+            clip(2, 1, vec![FxInstance::blur(6)], vec![], BlendMode::Normal),
+        ]),
+    );
+    // the picture's mask: every arm, the read among them
+    let (fx, w) = arm_graph();
+    let plain = project(vec![clip(1, 0, fx.clone(), w.clone(), BlendMode::Normal)]);
+    let graph = project(vec![masked(clip(1, 0, fx, w, BlendMode::Normal), None, 0.25)]);
+    assert!(compose_timed(&graph, t).0 != compose_timed(&plain, t).0, "scene: the picture's mask does something");
+    same(
+        "the picture's mask",
+        1,
+        &graph,
+        &project(vec![
+            masked(clip(1, 0, vec![slowed()], vec![], BlendMode::Screen), None, 0.25),
+            masked(clip(2, 1, vec![FxInstance::blur(6)], vec![], BlendMode::Normal), None, 0.25),
+        ]),
+    );
+}
+
+/// Test t3243 (fx-graph-dag D3, 2.6): a register used again gives the picture of a register of its own —
+/// a chain of five merges one after another (more held values than `MAX_HELD`, never more than that at
+/// once), a slot that makes no pass between a load and the next hold, and a frame after a frame on the
+/// same engine are the same bytes as the arms computed apart.
+#[test]
+fn t3243_a_register_used_again_gives_the_same_picture() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    let t = Tick(SPAN / 2);
+    let src = || SlotInputs { main: FxIn::Source, ..Default::default() };
+    // blur | duotone, merge | vignette, merge | … — each arm from the Source
+    // (the fourth arm is a neutral geometry: a slot that makes no pass over a loaded Source)
+    let slot = |id: &str| if id == "neutral" { FxInstance::geometry_zoom(1.0) } else { FxInstance::plugin(id).unwrap() };
+    let arms = ["duotone", "vignette", "posterize", "neutral", "color_grade"];
+    let mut fx = vec![FxInstance::blur(6)];
+    let mut w = vec![SlotInputs::default()];
+    for (n, id) in arms.iter().enumerate() {
+        let at = fx.len() as u32;
+        fx.push(slot(id));
+        w.push(src());
+        fx.push(merge(BlendMode::Screen, 0.5));
+        w.push(merged(FxIn::Slot(if n == 0 { 0 } else { at - 1 }), FxIn::Prev));
+    }
+    assert!(kt_model::fx_graph::held_peak(&w, fx.len()) <= kt_model::fx_graph::MAX_HELD, "scene");
+    let graph = project(vec![clip(1, 0, fx, w, BlendMode::Normal)]);
+    let a = compose(&graph, t);
+    // the same arms one merge deep at a time: the running result is the Background of the next
+    let mut want = compose(&project(vec![clip(1, 0, vec![FxInstance::blur(6)], vec![], BlendMode::Normal)]), t);
+    for id in arms {
+        let arm = compose(&project(vec![clip(1, 0, vec![slot(id)], vec![], BlendMode::Normal)]), t);
+        for (b, f) in want.chunks_exact_mut(4).zip(arm.chunks_exact(4)) {
+            for c in 0..3 {
+                let (x, y) = (b[c] as i32, f[c] as i32);
+                let screen = x + y - (x * y + 127) / 255;
+                b[c] = (x + (screen - x) / 2).clamp(0, 255) as u8;
+            }
+        }
+    }
+    let worst = a.iter().zip(&want).map(|(x, y)| x.abs_diff(*y)).max().unwrap();
+    assert!(worst <= 4, "the chain of merges is off its arms by {worst}");
+    assert!(a == compose(&graph, t), "two compositions differ");
 }

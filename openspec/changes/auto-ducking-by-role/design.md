@@ -31,8 +31,9 @@ refused by name. Order: the keyed track renders after every key holder (the R.65
 
 ## D3. Title spans (Q1 a)
 
-`Project::title_spans(reel)`: the union of the spans of Text generator events and of events tagged `Title`, merged when
-closer than `2 × title_fade_ms`; indexed per revision. Moving or trimming a title moves its section.
+`Project::title_spans(reel)`: the spans of Text generator events MINUS the spans in which an event of the content key (its listed tracks, its roles; an audible body, not a silence of its sound) lies, plus the spans of events and tracks tagged
+`Title`, minus those tagged `Not a title`; a remainder shorter than `2 × title_fade_ms` is dropped, spans closer than that are merged; indexed per revision. (Revision 3, 2026-11-25: revision 2 took every Text event, so a lower third over speech
+raised the music under it.) Moving or trimming a title moves its section.
 
 ## D4. Hand edits
 

@@ -81,6 +81,13 @@ pub enum MergeMode {
     Crossfade,
 }
 
+impl MergeMode {
+    /// A mode of the sound lane.
+    pub fn is_sound(self) -> bool {
+        matches!(self, MergeMode::Sum | MergeMode::Crossfade)
+    }
+}
+
 impl Default for MergeMode {
     fn default() -> Self {
         MergeMode::Blend(BlendMode::Normal)
@@ -182,12 +189,15 @@ pub enum GraphWhy {
     TooManyHeld,
     /// More than `MAX_READS` reads of the source.
     TooManyReads,
-    /// Wiring on a SOUND chain: the sound graph comes with v2c (the owner's Q1 a, "Сначала
-    /// картинка"); until then the processor would run its arms one after another.
-    SoundLater,
+    /// A Matte on a SOUND chain: the sound has no coverage to make (a sound Merge sums or crossfades,
+    /// design D4).
+    MatteOnSound,
     /// A time kind in an arm whose own path from the Source branches: a read is a LINE (design D2),
     /// so it reads exactly as an event with that line does.
     ReadBranches,
+    /// A Merge whose mode belongs to the other lane: a picture's blend mode on a sound chain summed
+    /// silently, a sum on a picture chain has no kernel (design D4).
+    ModeOnLane,
     /// The wiring list is longer than the chain.
     TooLong,
 }
@@ -199,11 +209,14 @@ pub struct GraphError {
     pub why: GraphWhy,
 }
 
-/// `check` for a chain on its lane: a sound chain takes no wiring yet (`SoundLater`).
+/// `check` for a chain on its lane: a sound chain runs its graph since v2c (design D4); it takes no
+/// Matte, and a Merge's mode is its lane's.
 pub fn check_lane(fx: &[FxInstance], fx_in: &[SlotInputs], lead: usize, sound: bool) -> Result<(), GraphError> {
-    if sound && !is_line(fx_in) {
-        let slot = fx_in.iter().position(|s| !s.is_line()).unwrap_or(0);
-        return Err(GraphError { slot, why: GraphWhy::SoundLater });
+    if sound && let Some(slot) = fx_in.iter().position(|s| s.matte.is_some()) {
+        return Err(GraphError { slot, why: GraphWhy::MatteOnSound });
+    }
+    if let Some(slot) = fx.iter().position(|f| matches!(f, FxInstance::Merge { mode, .. } if mode.is_sound() != sound)) {
+        return Err(GraphError { slot, why: GraphWhy::ModeOnLane });
     }
     check(fx, fx_in, lead)
 }
@@ -224,7 +237,8 @@ pub fn check(fx: &[FxInstance], fx_in: &[SlotInputs], lead: usize) -> Result<(),
                 return Err(GraphError { slot: i, why: GraphWhy::Forward });
             }
         }
-        if (s.second.is_some() || s.matte.is_some()) && !f.is_merge() {
+        // a second input on a Merge (its Foreground) or on a keyed effect (its key, design D4)
+        if (s.second.is_some() && !f.is_merge() && !f.has_key_socket()) || (s.matte.is_some() && !f.is_merge()) {
             return Err(GraphError { slot: i, why: GraphWhy::SocketOnPlain });
         }
     }
@@ -539,19 +553,19 @@ pub fn splice(target: &mut Vec<SlotInputs>, n0: usize, patch: &[SlotInputs], m: 
 }
 
 /// The engine's leading Geometry node materialized at `pos` of an active chain of `n` slots: it
-/// stands on the wire into slot `pos` (`insert_slot`), and the Source of every later slot is the
-/// frame after it — design D1's Source is "the decoded frame after the leading Geometry node"
-/// (the lead stands before the first branch, so with `pos > 0` no later slot reads the Source).
+/// stands on the OUTPUT of what it reads, so every reader of that value reads the frame after it —
+/// design D1's Source is "the decoded frame after the leading Geometry node", and the lead stands
+/// before the first branch even when the branch is the value right before it.
 pub fn insert_lead(fx_in: &mut Vec<SlotInputs>, n: usize, pos: usize) {
     if fx_in.is_empty() {
         return;
     }
     insert_slot(fx_in, n, pos);
-    if pos != 0 {
-        return;
-    }
-    let lead = |i: usize, x: FxIn| if x == FxIn::Source { encode(i, Node::Slot(0)) } else { x };
-    for (i, s) in fx_in.iter_mut().enumerate().skip(1) {
+    let pos = pos.min(n);
+    let before = resolve(pos, inputs(fx_in, pos).main);
+    fx_in.resize(n + 1, SlotInputs::default());
+    let lead = |i: usize, x: FxIn| if resolve(i, x) == before { encode(i, Node::Slot(pos)) } else { x };
+    for (i, s) in fx_in.iter_mut().enumerate().skip(pos + 1) {
         s.main = lead(i, s.main);
         s.second = s.second.map(|x| lead(i, x));
         if let Some(m) = s.matte.as_mut() {

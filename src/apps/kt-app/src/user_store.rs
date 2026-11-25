@@ -527,7 +527,7 @@ impl Workspace {
     }
 }
 
-fn workspace_path() -> PathBuf {
+pub fn workspace_path() -> PathBuf {
     store_dir().join("workspace.json")
 }
 
@@ -536,7 +536,7 @@ pub fn load_workspace() -> Workspace {
 }
 
 pub fn load_workspace_at(path: &std::path::Path) -> Workspace {
-    let Ok(text) = std::fs::read_to_string(path) else { return Workspace::default() };
+    let Ok(text) = crate::later::read(path) else { return Workspace::default() };
     let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
         // a broken file does not bring the programme down and does not eat the work: it will be
         // moved aside to `.broken` on the first write
@@ -568,10 +568,6 @@ pub fn load_workspace_at(path: &std::path::Path) -> Workspace {
     w
 }
 
-pub fn save_workspace(w: &Workspace) {
-    save_workspace_at(&workspace_path(), w);
-}
-
 pub fn save_workspace_at(path: &std::path::Path, w: &Workspace) {
     if w.readonly {
         return; // file newer than ours — we do not rewrite what we do not understand
@@ -598,11 +594,8 @@ pub fn save_workspace_at(path: &std::path::Path, w: &Workspace) {
     if let Some(on) = w.geom_controls {
         doc["geom_controls"] = serde_json::json!(on);
     }
-    if let Some(d) = path.parent() {
-        let _ = std::fs::create_dir_all(d);
-    }
-    // by the same code as the project: a break midway leaves no stump
-    let _ = kt_otio::write_atomic(path, &format!("{doc:#}\n"));
+    // no fsync: two of them held a close for 21 s on a busy disk (found-defects 831)
+    crate::later::write(path, format!("{doc:#}\n"));
 }
 
 // ---- between-projects records (welcome-window-and-tour) -------------------
@@ -679,6 +672,8 @@ pub struct StartChoice {
     /// Economy UI (30 fps while playing) — a program preference (welcome-window-and-settings D8):
     /// it lives here, not in the app File → New rebuilds.
     pub economy_ui: bool,
+    /// Which copies the preview plays from (persistent-cache); `None` — as in the preview.
+    pub persistent_cache: Option<String>,
     /// The language choice code (`auto`, `ru`, …); `None` — never chosen through this record (the
     /// start then takes the former eframe value once, D8).
     pub lang: Option<String>,
@@ -690,6 +685,8 @@ pub struct StartChoice {
     pub controls_by_style: Vec<(u8, String)>,
     /// The style question was asked once (L1: on the first entry).
     pub controls_offered: bool,
+    /// The last pick of "Match loudness…" and its number (loudness-norms).
+    pub match_pick: Option<(u8, f64)>,
 }
 
 impl Default for StartChoice {
@@ -700,10 +697,12 @@ impl Default for StartChoice {
             seeded: false,
             started_before: false,
             economy_ui: false,
+            persistent_cache: None,
             lang: None,
             controls: None,
             controls_by_style: Vec::new(),
             controls_offered: false,
+            match_pick: None,
         }
     }
 }
@@ -749,7 +748,7 @@ pub fn project_key(p: &std::path::Path) -> PathBuf {
 }
 
 fn read_record(path: Option<&std::path::Path>) -> (Option<serde_json::Value>, FileState) {
-    let Some(text) = path.and_then(|p| std::fs::read_to_string(p).ok()) else {
+    let Some(text) = path.and_then(|p| crate::later::read(p).ok()) else {
         return (None, FileState::default());
     };
     match serde_json::from_str::<serde_json::Value>(&text) {
@@ -845,6 +844,7 @@ impl StartStore {
                 seeded: v.get("seeded").and_then(|x| x.as_bool()).unwrap_or(false),
                 started_before: v.get("started_before").and_then(|x| x.as_bool()).unwrap_or(true),
                 economy_ui: v.get("economy_ui").and_then(|x| x.as_bool()).unwrap_or(false),
+                persistent_cache: v.get("persistent_cache").and_then(|x| x.as_str()).map(str::to_string),
                 lang: v.get("lang").and_then(|x| x.as_str()).map(str::to_string),
                 controls: v.get("controls").and_then(|x| x.as_str()).map(str::to_string),
                 controls_by_style: v
@@ -859,6 +859,9 @@ impl StartStore {
                 // a record without the key was written by an older build: that person has
                 // entered the program long ago, the first entry is behind them
                 controls_offered: v.get("controls_offered").and_then(|x| x.as_bool()).unwrap_or(true),
+                match_pick: v
+                    .get("match_pick")
+                    .and_then(|r| Some((r.get(0)?.as_u64()? as u8, r.get(1)?.as_f64()?))),
             };
         }
         s
@@ -902,16 +905,9 @@ impl StartStore {
         }
         let mut doc = body;
         doc["version"] = serde_json::json!(RECORDS_VERSION);
-        if let Some(d) = path.parent() {
-            let _ = std::fs::create_dir_all(d);
-        }
         // tmp + rename, WITHOUT fsync: a break midway leaves no stump, and these records are
-        // conveniences — a lost recent list costs nothing, while two fsyncs per open stall the
-        // UI thread for seconds on a busy disk (t985 took 90 s with `write_atomic`)
-        let tmp = path.with_extension("json.tmp");
-        if std::fs::write(&tmp, format!("{doc:#}\n")).is_ok() {
-            let _ = kt_otio::replace_file(&tmp, &path);
-        }
+        // conveniences — a lost recent list costs nothing (t985 took 90 s with `write_atomic`)
+        crate::later::write(&path, format!("{doc:#}\n"));
     }
 
     fn save_recent(&mut self) {
@@ -959,6 +955,9 @@ impl StartStore {
             "started_before": self.start.started_before,
             "economy_ui": self.start.economy_ui,
         });
+        if let Some(m) = &self.start.persistent_cache {
+            v["persistent_cache"] = serde_json::json!(m);
+        }
         if let Some(l) = &self.start.lang {
             v["lang"] = serde_json::json!(l);
         }
@@ -972,6 +971,9 @@ impl StartStore {
             v["controls_by_style"] = serde_json::json!(self.start.controls_by_style);
         }
         v["controls_offered"] = serde_json::json!(self.start.controls_offered);
+        if let Some(p) = &self.start.match_pick {
+            v["match_pick"] = serde_json::json!(p);
+        }
         self.write(F_START, v);
     }
 
@@ -1071,6 +1073,18 @@ impl StartStore {
     pub fn set_economy_ui(&mut self, on: bool) {
         if self.start.economy_ui != on {
             self.start.economy_ui = on;
+            self.save_start();
+        }
+    }
+
+    pub fn set_persistent_cache(&mut self, mode: &str) {
+        self.start.persistent_cache = Some(mode.to_string());
+        self.save_start();
+    }
+
+    pub fn set_match_pick(&mut self, pick: u8, number: f64) {
+        if self.start.match_pick != Some((pick, number)) {
+            self.start.match_pick = Some((pick, number));
             self.save_start();
         }
     }
@@ -1252,6 +1266,7 @@ mod records_tests {
     /// or next to it (no sidecar written by the poster).
     #[test]
     fn t985_posters_render_into_the_store_never_into_the_project_folder() {
+        crate::alone::own_process!();
         crate::plugins::install();
         let store = tmp("t985p-store");
         let projects = tmp("t985p-projects");
@@ -1279,8 +1294,8 @@ mod records_tests {
             .collect();
         names.sort();
         assert!(
-            // the project's own sidecar (with its WAL files) is the project's, not the poster's
-            names.iter().all(|n| n == "edit.kt" || n.starts_with("edit.ktindex.db")),
+            // the project's own cache folder is the project's, not the poster's
+            names.iter().all(|n| n == "edit.kt" || n == kt_media::cache_folder::DIR_NAME),
             "a poster file appeared next to the project: {names:?}"
         );
         assert!(!names.iter().any(|n| n.ends_with(".png")), "a PNG in the project folder: {names:?}");

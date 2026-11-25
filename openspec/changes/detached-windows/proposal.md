@@ -40,12 +40,23 @@ inside the main window.
 
 ## Questions to the owner
 
-**Q1. Which windows detach?** Your words: "окна fx и прочие окна".
-- (a) **Every tool window of the registry (effects, morpher, transition, camera, track, Diagnostics, Guide,
-  settings); dialogs and progress windows stay inside** (*recommended*: a dialog asks and closes; detaching it
-  helps nobody).
-- (b) Every window, dialogs included.
+(Q66, Q67 of `docs/owner-checks.md`; re-read against `fc60a5d9`, 2026-11-25.)
 
-**Q2. On Wayland a program cannot place its windows.** The system decides where a new window appears.
-- (a) **Keep the detached state and size; the position is the system's** (*recommended*).
-- (b) Offer detaching only on X11 and Windows.
+**Your item whole** (`docs/ktprompts/v26.10.txt` line 65): "окна fx и прочие окна не должны ограничиваться основным окном приложения, хочется их выдвигать и за пределы основного окна, без потери
+производительности, и с полностью тем же стилем самого окна."
+
+**Now**: only the preview leaves the main window (View › Detach preview), with the system's frame. The other 28 windows live inside it and stop at its edge: 14 tools (effects, morpher layer, transition,
+camera, track, program loudness, search, notices, diagnostics, guide, composition parameters, preferences, keys, FFmpeg), 12 dialogs (project settings, render settings, welcome, names, confirmations),
+2 progress windows (render, analysis).
+
+**Q66 (Q1). Which windows may stand outside?** "окна fx и прочие окна" can be read as "effects and the other editing windows" or as "all of them".
+- (a) **The 14 tools, project settings and the render's progress; the questions stay inside** (*recommended*): you move effects, morpher, transitions, camera, the track, diagnostics and the running render to
+  the second monitor. A question ("save?", a name) appears over the main window, as now.
+- (b) All 28: a question may also open on another monitor, where it was last left; a "save before closing?" that is not seen stands in the way of closing.
+- (c) The editing windows only (effects, morpher, transition, camera, track): five. Diagnostics and the guide stay inside.
+
+**Q67 (Q2). On Wayland a program cannot place its own windows; the system decides.** On X11 and Windows the place is remembered to the pixel.
+- (a) **Detach there too: the size and "outside" are remembered, the place is the system's each time** (*recommended*): on Wayland the effects window reopens outside, at a place of the system's choosing
+  (usually the active monitor's centre); moved by hand each session.
+- (b) No detaching on Wayland: the windows stay inside there.
+Under XWayland (the program's X11 mode) the places are remembered as on X11 in both options.

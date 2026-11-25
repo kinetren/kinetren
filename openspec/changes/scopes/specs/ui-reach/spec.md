@@ -1,14 +1,14 @@
 ## ADDED Requirements
 
 ### Requirement: The Scopes window is reached from View and from the preview
-The Scopes window SHALL be a row of the window registry with its reason, opened from the View menu and
-from the preview's right-click menu, built by the window shell as a tool window (Esc and the cross
-close it, its body fills it), and its choice of instruments and scale SHALL be kept in the project's
-UI state, not written at its default.
-Why: UI rule 22 — a new window only from the registry, reached where the person acts.
+The Scopes window SHALL be a row of the window registry with its reason, opened from View and from the preview's
+right-click menu by one body, and built by the window shell as a tool window. Its instruments and scale SHALL be
+remembered per person, not in the project. False colour SHALL be a toggle of its head, marked on the picture while on,
+and Esc SHALL turn it off.
+Why: UI rules 17, 22, 23; kkt-26.11.20 A8.
 
 #### Scenario: Opening and arranging the scopes by mouse
-- **WHEN** View → "Scopes" is clicked, the vectorscope and parade toggles are pressed, the scale switch is set to %, the window is closed with Esc and opened again from the preview's right-click menu
-- **THEN** the window opens with the luma waveform by default, then shows parade and vectorscope side by side with % labels; after reopening the same choice is shown; the project saved and reopened keeps it; a project that never opened the window writes no field
-- **PATH** click "View" → "Scopes" → a window with the waveform of the current frame → press "Parade" and "Vectorscope" → three panes side by side → click "%" → labels 0–100 % → Esc → the window closes → right click on the preview → "Scopes" → the same three panes
+- **WHEN** View › Scopes is clicked, "Parade" is pressed, the scale is set to %, False colour is pressed, Esc, the window is closed and opened again from the preview's menu, then the program is started again
+- **THEN** the window opens with the waveform and the vectorscope of the shown frame, then three instruments with % labels; the picture is painted by zones with its badge and Esc gives it back, the window staying; the choice is the same after the reopening and the restart; the project file holds nothing of it
+- **PATH** click "View" → "Scopes" → a window: the waveform and the vectorscope of the current frame, at the right "1280×720" → press "Parade" → three panes → click "%" → labels 0–100 % → press "False colour" → the picture turns into zones with the badge → Esc → the picture is back, the window stays → Esc → the window closes → right click on the preview → "Scopes" → the same three panes
 - **TEST** t3411 (`src/apps/kt-app/src/reach_tests.rs`), planned live scenario `scopes` (t3412)

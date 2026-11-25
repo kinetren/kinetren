@@ -27,6 +27,13 @@ pub enum AudioNode {
     LayerMix,
     /// An audio plugin's state (plugin-api-stage1, D2a): one dynamic call per chunk.
     Plugin(Box<dyn kt_plugin_api::AudioState>),
+    /// A Merge (fx-graph-dag D4): Background (the main input) + mix × Foreground (`Sum`), or
+    /// Background × (1 − mix) + Foreground × mix (`Crossfade`). The graph pass executes it; with no
+    /// Foreground (a line) it passes its Background.
+    Merge { crossfade: bool, mix: f64 },
+    /// A sound read's output stands here (fx-graph-dag D2, D4): the caller renders read `k` (a line
+    /// of its own, `Feed::input`) and hands its samples in place of the slot's.
+    Input(usize),
 }
 
 /// The curves of one slot as a plugin state sees them (D2a): kt-model's profiles, shapes included.
@@ -91,6 +98,9 @@ impl AudioNode {
         }
         match fx {
             FxInstance::LayerMix { .. } => Some(AudioNode::LayerMix),
+            FxInstance::Merge { mode, mix } => {
+                Some(AudioNode::Merge { crossfade: *mode == kt_model::fx_graph::MergeMode::Crossfade, mix: *mix })
+            }
             _ => None,
         }
     }
@@ -107,6 +117,12 @@ impl AudioNode {
         match (self, fx) {
             (AudioNode::Plugin(n), FxInstance::Plugin(p)) => n.apply(&p.values, structural),
             (AudioNode::LayerMix, FxInstance::LayerMix { .. }) => {}
+            (AudioNode::Merge { crossfade, mix }, FxInstance::Merge { mode, mix: m }) => {
+                *crossfade = *mode == kt_model::fx_graph::MergeMode::Crossfade;
+                *mix = *m;
+            }
+            // a read's slot: its values belong to the read's own processor
+            (AudioNode::Input(_), _) => {}
             // the chain fingerprint matched — the kinds by slots match by
             // construction; one can get here only through a matching error
             _ => debug_assert!(false, "node/slot kind mismatch"),
@@ -123,7 +139,7 @@ impl AudioNode {
     pub(crate) fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
         match self {
             AudioNode::Plugin(n) => n.set_targets(&SlotView { auto, slot }, s),
-            AudioNode::LayerMix => {}
+            AudioNode::LayerMix | AudioNode::Merge { .. } | AudioNode::Input(_) => {}
         }
     }
 
@@ -147,7 +163,7 @@ impl AudioNode {
     /// within its own window.
     pub(crate) fn process(&mut self, buf: &mut [f32], _pos: i64, key: Option<&[f32]>) {
         match self {
-            AudioNode::LayerMix => {}
+            AudioNode::LayerMix | AudioNode::Merge { .. } | AudioNode::Input(_) => {}
             AudioNode::Plugin(n) => n.process(buf, _pos, key),
         }
     }
@@ -177,7 +193,7 @@ impl AudioNode {
 
     pub(crate) fn reset(&mut self) {
         match self {
-            AudioNode::LayerMix => {}
+            AudioNode::LayerMix | AudioNode::Merge { .. } | AudioNode::Input(_) => {}
             AudioNode::Plugin(n) => n.reset(),
         }
     }
@@ -187,6 +203,8 @@ impl AudioNode {
     pub(crate) fn fork(&self) -> Option<AudioNode> {
         match self {
             AudioNode::LayerMix => Some(AudioNode::LayerMix),
+            AudioNode::Merge { crossfade, mix } => Some(AudioNode::Merge { crossfade: *crossfade, mix: *mix }),
+            AudioNode::Input(k) => Some(AudioNode::Input(*k)),
             AudioNode::Plugin(n) => n.fork().map(AudioNode::Plugin),
         }
     }

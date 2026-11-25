@@ -63,8 +63,18 @@ fn main() {
         kt_gpu::trace_machine();
         args.drain(i..i + 2);
     }
+    // `--cache-dir DIR` on any command: the project's caches lie there in this run
+    if let Some(i) = args.iter().position(|a| a == "--cache-dir")
+        && let Some(dir) = args.get(i + 1).cloned()
+    {
+        let _ = CACHE_DIR.set(dir.into());
+        args.drain(i..i + 2);
+    }
+    kt_media::cache_folder::set_data_root(&kt_dirs::tool_dir());
     let code = run(&args);
-    kt_time::trace::flush();
+    if !kt_time::trace::flush() {
+        eprintln!("the trace lacks its last records: the disk did not take them in time");
+    }
     std::process::exit(code);
 }
 
@@ -99,6 +109,31 @@ fn crash_report(args: &[String]) -> i32 {
 // Parsing of pseudo-paths (`synth:`, `gen:`) — the SINGLE factory of kt-media
 // (R.52). A second, case-SENSITIVE copy of `synth_pattern` lived here, and
 // the copies were already drifting apart (footnote of item 211).
+
+/// The arms of an event's graph (fx-graph-dag): a line per slot with what its inputs read (a slot
+/// that reaches no Output is marked), and a line per read the layer makes beyond its own.
+fn graph_lines(c: &kt_model::ClipEvent) -> Vec<String> {
+    use kt_model::fx_graph::{self, Node, Socket};
+    let name = |n: Node| match n {
+        Node::Source => "source".to_string(),
+        Node::Slot(j) => format!("{j}:{}", c.fx[j].tag()),
+    };
+    let live = fx_graph::reaches_output(&c.fx_in, c.fx.len());
+    let mut out: Vec<String> = (0..c.fx.len())
+        .map(|i| {
+            let ins: Vec<String> = fx_graph::reads_of(&c.fx_in, i)
+                .map(|(n, s)| match s {
+                    Socket::Main => name(n),
+                    Socket::Second => format!("foreground {}", name(n)),
+                    Socket::Matte => format!("matte {}", name(n)),
+                })
+                .collect();
+            format!("graph {i}:{} <- {}{}", c.fx[i].tag(), ins.join(", "), if live[i] { "" } else { "  (dangles)" })
+        })
+        .collect();
+    out.extend(fx_graph::reads(&c.fx, &c.fx_in).iter().map(|r| format!("second read opened by {}:{}", r.slot, c.fx[r.slot].tag())));
+    out
+}
 
 /// What the engine reads in the range [from, to) seconds of the timeline.
 ///
@@ -262,6 +297,12 @@ fn probe_range(
             if c.reversed { "  REVERSED" } else { "" },
             if c.fx.is_empty() { String::new() } else { format!("  fx {}", c.fx.len()) }
         );
+        // a chain that branches (fx-graph-dag): what every slot reads, and the reads beyond its own
+        if !c.fx_in.is_empty() {
+            for line in graph_lines(c) {
+                println!("      {line}");
+            }
+        }
         // SIGNED SPEED (R.57): from a single “warped” one cannot see either the
         // direction, or which piece of material the event occupies —
         // and a complaint “it plays the wrong thing” is worked out precisely by these numbers.
@@ -573,6 +614,9 @@ fn probe_range(
     }
 
     probe_prefetch(project, &facts, t0, t1);
+    if let Some(g) = &project.program {
+        println!("\nprogram stage: {:+.1} dB at {:.1} dBTP, after the mix above (not in it)", g.gain_db, project.loudness.ceiling_dbtp);
+    }
 
     // --time: DOES THE ENGINE KEEP UP rendering this place (R.43, item 301).
     // After item 294 the starvation of the ring (“right underrun”) no longer stalls
@@ -745,12 +789,18 @@ fn probe_video_cost(project: &Project, path: &str, t0: Tick, t1: Tick) -> Result
             facts.observe(*a, s.info());
         }
     }
-    let video = kt_engine::VideoRenderer::new_with_facts(project, &facts);
+    let mut video = kt_engine::VideoRenderer::new_with_facts(project, &facts);
     let q = kt_media::Quality { width: project.settings.width, height: project.settings.height };
-    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig {
+    let cache = std::sync::Arc::new(kt_cache::BurstCache::new(kt_cache::CacheConfig {
         max_audio_bytes: 1,
         max_video_bytes: 2 << 30,
-    });
+    }));
+    for a in &addrs {
+        if let Some(s) = fetcher.source_mut(*a) {
+            kt_engine::export::adopt_source(&cache, *a, s.as_ref());
+        }
+    }
+    video.set_source_idents(cache.ident_reader());
     let start = video.grid.align_floor(t0);
     let mut per: std::collections::BTreeMap<(kt_model::MediaId, kt_media::Quality), Vec<Tick>> =
         Default::default();
@@ -829,10 +879,7 @@ fn media_facts(project: &Project, project_path: &str) -> kt_engine::SourceFacts 
         if kt_media::factory::synth_pattern(&m.path).is_some() {
             continue;
         }
-        let mut idx_db = kt_media::index::MediaIndexDb::open(
-            &std::path::Path::new(project_path).with_extension("ktindex.db"),
-        )
-        .ok();
+        let mut idx_db = media_store(project_path);
         if let Ok(src) = kt_media::factory::open_indexed(&m.path, idx_db.as_mut()) {
             out.observe(m.id, kt_media::MediaSource::info(&*src));
         }
@@ -998,10 +1045,7 @@ fn pause_scan(
     preview_decode_threads(project);
     let mut sources: Vec<(kt_model::MediaId, Box<dyn kt_media::MediaSource>)> = Vec::new();
     for m in &project.media {
-        let mut db = kt_media::index::MediaIndexDb::open(
-            &std::path::Path::new(path).with_extension("ktindex.db"),
-        )
-        .ok();
+        let mut db = media_store(path);
         match kt_media::factory::open_indexed(&m.path, db.as_mut()) {
             Ok(s) => sources.push((m.id, s)),
             Err(e) => eprintln!("  skipped: {}: {e}", m.path),
@@ -1092,10 +1136,9 @@ fn largest_step(s: &[f32]) -> (f32, usize) {
     best
 }
 
-/// The build salt of the disk tier (render-cache-disk D1): the program's build and the FFmpeg it decodes
-/// with — another of either may be another picture of the same plan.
-fn render_cache_build() -> String {
-    format!("{} avcodec {:?}", kt_version::FULL, kt_media::ffmpeg::backend_info().map(|b| b.avcodec_version))
+/// What makes the pixels of the disk tier here (project-cache-folder D1b).
+fn render_cache_made() -> kt_engine::render_cache::Made {
+    kt_engine::render_cache::Made::of(kt_media::ffmpeg::backend_info().map_or(0, |b| b.avcodec_version.0))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1112,6 +1155,7 @@ fn preview_run(
     wav: Option<String>,
     device_open_ms: f64,
     render_cache: Option<String>,
+    copies: Option<String>,
     one_device: bool,
 ) -> Result<(), String> {
     use kt_ffmpeg::iostats as io;
@@ -1125,10 +1169,7 @@ fn preview_run(
     }
     let mut sources: Vec<(kt_model::MediaId, Box<dyn kt_media::MediaSource>)> = Vec::new();
     for m in &project.media {
-        let mut db = kt_media::index::MediaIndexDb::open(
-            &std::path::Path::new(path).with_extension("ktindex.db"),
-        )
-        .ok();
+        let mut db = media_store(path);
         match kt_media::factory::open_indexed(&m.path, db.as_mut()) {
             Ok(s) => sources.push((m.id, s)),
             Err(e) => eprintln!("  skipped: {}: {e}", m.path),
@@ -1158,10 +1199,31 @@ fn preview_run(
         player.set_render_cache(Some(kt_engine::render_cache::Config {
             codec: std::sync::Arc::new(kt_media::segment::ffmpeg::FfmpegSegments::from_env()),
             root: dir.into(),
-            build: render_cache_build(),
-            base: std::path::Path::new(path).parent().map(|p| p.to_path_buf()),
+            made: render_cache_made(),
             cap: kt_engine::render_cache::cap_from_env(),
         }));
+    }
+    // the copies of heavy sources as the editor makes them (persistent-cache): made at rest before the run
+    if let Some(dir) = &copies {
+        let c = player.copies();
+        c.set_config(Some(kt_engine::copies::Config {
+            maker: std::sync::Arc::new(kt_media::copy::ffmpeg::FfmpegCopies::from_env()),
+            root: dir.into(),
+            resolve: std::sync::Arc::new(|p| {
+                let p = std::path::PathBuf::from(p);
+                p.is_file().then_some(p)
+            }),
+        }));
+        let t0 = std::time::Instant::now();
+        while !c.settled() && t0.elapsed().as_secs() < 1800 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        println!("  copies: {} made in {:.1} s", c.made(), t0.elapsed().as_secs_f64());
+        for m in &project.media {
+            if let Some(card) = c.card(m.id) {
+                println!("    {}: {card:?}", m.path);
+            }
+        }
     }
     let opts = kt_engine::preview_bench::BenchOptions {
         from: Tick((from * kt_time::TICK_HZ as f64) as i64),
@@ -1363,10 +1425,7 @@ fn open_sources(
         // target_url from the project directory, item 316) — a second
         // join doubled the prefix and “lost” the file on a relative call
         let resolved = m.path.clone();
-        let mut idx_db = kt_media::index::MediaIndexDb::open(
-            &std::path::Path::new(project_path).with_extension("ktindex.db"),
-        )
-        .ok();
+        let mut idx_db = media_store(project_path);
         match kt_media::ffmpeg::FfmpegSource::open_indexed(&resolved, idx_db.as_mut()) {
             Ok(src) => fetcher.add_source(m.id, Box::new(src)),
             Err(e) if strict => return Err(format!("{resolved}: {e}")),
@@ -1494,6 +1553,54 @@ fn load_project_file(input: &str) -> Result<(Project, Retained), i32> {
     }
 }
 
+/// `kt-cli cache <project> [size|prune|clear]` (project-cache-folder D8): what the project's cache folder
+/// holds, per cache; `prune` drops down to the room it has, `clear` empties it.
+fn cache_command(project: &str, what: &str) -> i32 {
+    use kt_media::cache_folder::{Folder, Place, Tenant};
+    let folder = match Folder::open(&cache_dir(project)) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("{}: {e}", cache_dir(project).display());
+            return 1;
+        }
+    };
+    println!("{}", folder.root().display());
+    match folder.place() {
+        Place::Project => {}
+        Place::Untitled => println!("the project's file lies in the user's data folder"),
+        Place::NoFiles(why) => println!("the project's folder takes no files: {why}"),
+    }
+    match what {
+        "size" => {}
+        "prune" => println!("dropped {} bytes", folder.prune()),
+        "clear" => println!("dropped {} bytes", folder.clear(None)),
+        _ => {
+            eprintln!("usage: kt-cli cache <in.kt> [size|prune|clear]");
+            return 2;
+        }
+    }
+    let sizes = folder.sizes();
+    for t in Tenant::ALL {
+        let (bytes, n) = sizes.get(&t).copied().unwrap_or_default();
+        println!("{:<7} {bytes} bytes in {n}", t.name());
+    }
+    println!("total   {} bytes, the cap {} bytes", sizes.values().map(|v| v.0).sum::<u64>(), folder.cap());
+    folder.flush();
+    0
+}
+
+/// The media index of a project: its cache folder's, or `--cache-dir`'s (project-cache-folder).
+fn media_store(project: &str) -> Option<kt_media::index::MediaStore> {
+    kt_media::index::MediaStore::open(&cache_dir(project)).ok()
+}
+
+/// `--cache-dir DIR` of this run.
+static CACHE_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+fn cache_dir(project: &str) -> std::path::PathBuf {
+    CACHE_DIR.get().cloned().unwrap_or_else(|| kt_media::cache_folder::beside(std::path::Path::new(project)))
+}
+
 /// The project for render/probe: relative media paths are resolved from the
 /// project directory ONCE, here (t307: otherwise `sub/p.kt` looked for `sub/sub/clip.mp4`
 /// from the directory above it). In the file they stay
@@ -1504,7 +1611,7 @@ fn load_project_resolved(input: &str) -> Result<Project, i32> {
     kt_otio::resolve_project_media(&mut p, std::path::Path::new(input).parent());
     // what the audio-reactive generators hear, before any of them is raised (gen-audio-reactive): a
     // render never depends on a background job; the sidecar keeps the series between runs
-    let mut db = kt_media::index::MediaIndexDb::open(&std::path::Path::new(input).with_extension("ktindex.db")).ok();
+    let mut db = media_store(input);
     kt_engine::listen::ensure(
         &p,
         &|path| path.to_string(),
@@ -1543,8 +1650,8 @@ fn run(args: &[String]) -> i32 {
     // (stream-front-on-device)
     kt_engine::video::install_stream_front(kt_gpu::stream_front_engine);
     kt_time::mem::set_resident_probe(kt_gpu::memory::resident);
-    // the disk tier of compiled pipelines, in the data folder (pipeline-prewarm D7)
-    kt_gpu::set_cache_dir(kt_dirs::data_dir().join("shader-cache"));
+    // the disk tier of compiled pipelines, in the tool's data folder (pipeline-prewarm D7, own-data-dir)
+    kt_gpu::set_cache_dir(kt_dirs::tool_dir().join("shader-cache"));
     match args.first().map(String::as_str) {
         Some("ffmpeg") => {
             // the search report (media-index): what was loaded, what was rejected and why
@@ -1791,7 +1898,7 @@ fn run(args: &[String]) -> i32 {
             let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3))
             else {
                 eprintln!(
-                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--ui-ms N] [--free-running] [--cold] [--loop S] [--wav out.wav] [--device-open-ms N] [--render-cache DIR] [--one-device]"
+                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--ui-ms N] [--free-running] [--cold] [--loop S] [--wav out.wav] [--device-open-ms N] [--render-cache DIR] [--copies DIR] [--one-device]"
                 );
                 return 2;
             };
@@ -1814,10 +1921,11 @@ fn run(args: &[String]) -> i32 {
             let wav = opt("--wav").cloned();
             let device_open_ms = opt("--device-open-ms").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
             let render_cache = opt("--render-cache").cloned();
+            let copies = opt("--copies").cloned();
             // the window's device shared with the compute host, as the editor does where it can
             // (stream-picture-stays D2): its stream pictures reach the composite as they lie
             let one_device = args.iter().any(|a| a == "--one-device");
-            match preview_run(&project, input, from, to, size, ui_ms, free, cold, looped, wav, device_open_ms, render_cache, one_device) {
+            match preview_run(&project, input, from, to, size, ui_ms, free, cold, looped, wav, device_open_ms, render_cache, copies, one_device) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{e}");
@@ -1908,6 +2016,13 @@ fn run(args: &[String]) -> i32 {
                     1
                 }
             }
+        }
+        Some("cache") => {
+            let (Some(input), what) = (args.get(1), args.get(2).map_or("size", String::as_str)) else {
+                eprintln!("usage: kt-cli cache <in.kt> [size|prune|clear]");
+                return 2;
+            };
+            cache_command(input, what)
         }
         Some("pause-scan") => {
             let (Some(input), Some(step)) = (args.get(1), args.get(2).and_then(|s| s.parse::<f64>().ok())) else {
@@ -2001,10 +2116,7 @@ fn run(args: &[String]) -> i32 {
                             // the path is already resolved on load (item 316)
                             let resolved = m.path.clone();
                             {
-                                let mut idx_db = kt_media::index::MediaIndexDb::open(
-                                    &std::path::Path::new(input).with_extension("ktindex.db"),
-                                )
-                                .ok();
+                                let mut idx_db = media_store(input);
                                 Box::new(
                                     kt_media::ffmpeg::FfmpegSource::open_indexed(
                                         &resolved,
@@ -2089,13 +2201,25 @@ fn run(args: &[String]) -> i32 {
             ) {
                 Ok(stats) => {
                     eprintln!(
-                        "ok: {} video frames, {} audio frames, underruns {}, missing layers {}, encoder {}",
+                        "ok: {} video frames, {} audio frames, {}, underruns {}, missing layers {}, encoder {}",
                         stats.video_frames,
                         stats.audio_frames,
+                        stats.totals(),
                         stats.underruns,
                         stats.missing_video_layers,
                         stats.encoder
                     );
+                    if let Some(l) = &stats.loudness {
+                        eprintln!(
+                            "loudness: {} LUFS, true peak {:.1} dBTP, range {:.1} LU",
+                            l.lufs.map_or("silent".to_string(), |v| format!("{v:.1}")),
+                            l.dbtp,
+                            l.lra
+                        );
+                        for line in kt_engine::export::loudness_lines(l, &project.loudness, stats.program.as_ref()) {
+                            eprintln!("  {line}");
+                        }
+                    }
                     eprintln!("{}", stats.stages);
                     if let Some(p) = &profile {
                         eprint!("stages:\n{}", p.report());
@@ -2193,7 +2317,8 @@ fn warn_if_locked(path: &str) {
     }
 }
 
-/// The per-user data directory of the app — the same resolver as kt-app (`kt-dirs`).
+/// The per-user data directory of the app — the same resolver as kt-app (`kt-dirs`). READ only: what
+/// kt-cli writes goes into `kt_dirs::tool_dir()` (own-data-dir).
 fn app_data_dir() -> Option<std::path::PathBuf> {
     Some(kt_dirs::data_dir())
 }
@@ -2258,5 +2383,38 @@ mod export_tests {
         let sets: Vec<&str> = src.lines().filter(|l| l.contains(concat!("kt_ffmpeg::set_", "decode_threads(")) || l.contains(concat!("kt_ffmpeg::set_", "rgba_threads("))).collect();
         assert_eq!(sets, ["    kt_ffmpeg::set_decode_threads(threads);"], "a process-wide decoder setting outside the preview tools");
         assert!(src.contains(concat!("match open_", "render_sources(free")), "the export opens its sources around the scope");
+    }
+}
+
+#[cfg(test)]
+mod graph_tests {
+    use kt_model::fx_graph::{FxIn, SlotInputs};
+
+    /// Test t3225 (fx-graph-dag, the probe): an event that branches prints what every slot reads, a
+    /// slot that reaches no Output marked, and the reads it makes beyond its own.
+    #[test]
+    fn t3225_the_probe_prints_the_arms_and_the_reads() {
+        kt_plugins_builtin::install();
+        let fx = |id: &str| kt_model::FxInstance::plugin(id).unwrap();
+        let mut p = kt_model::demo::demo_project(kt_model::demo::DemoSources::Synth);
+        let c = p.clips.iter_mut().find(|c| c.kind == kt_model::ClipKind::Video).expect("a video event");
+        c.fx = vec![
+            kt_model::FxInstance::slowed_reverb(0.5, 0.35, 100.0),
+            fx("glow"),
+            fx("blur"),
+            kt_model::FxInstance::Merge { mode: kt_model::MergeMode::default(), mix: 1.0 },
+        ];
+        let src = SlotInputs { main: FxIn::Source, ..Default::default() };
+        c.fx_in = vec![SlotInputs::default(), src, src, SlotInputs { main: FxIn::Prev, second: Some(FxIn::Slot(0)), matte: None }];
+        assert_eq!(
+            super::graph_lines(c),
+            [
+                "graph 0:slowed_reverb <- source",
+                "graph 1:glow <- source  (dangles)",
+                "graph 2:blur <- source",
+                "graph 3:merge <- 2:blur, foreground 0:slowed_reverb",
+                "second read opened by 0:slowed_reverb",
+            ]
+        );
     }
 }

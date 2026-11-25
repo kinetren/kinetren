@@ -112,6 +112,9 @@ pub mod outcome {
     pub const PANICKED: u64 = 3;
 }
 
+/// How many runs in a row a panicking pump gets without a kick.
+const PANICS: u32 = 8;
+
 /// What a pump says when it returns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pump {
@@ -266,6 +269,8 @@ struct LaneSt {
     pump_due: bool,
     pump_at: Option<Instant>,
     pump_id: u64,
+    /// The pump's runs that panicked one after another.
+    panics: u32,
     running: bool,
     in_ready: bool,
     closed: bool,
@@ -617,6 +622,7 @@ impl Sched {
             Unit::Once(q) => (q.id, q.at, q.token.clone()),
             Unit::Pump(_, id, at) => (*id, *at, Token::new()),
         };
+        let is_pump = matches!(unit, Unit::Pump(..));
         let counts = &self.counts[lane.class as usize];
         if job.is_cancelled() || lane.token.is_cancelled() {
             counts[3].fetch_add(1, Ordering::Relaxed);
@@ -642,18 +648,39 @@ impl Sched {
             }
             Unit::Pump(p, _, _) => p(&ctx),
         }));
-        let out = match res {
-            Ok(Pump::More) => {
-                let mut ls = lane.st();
-                if !ls.closed && !ls.pump_due {
-                    ls.pump_due = true;
-                    ls.pump_at = Some(Instant::now());
-                    ls.pump_id = trace::next_id();
-                }
-                outcome::MORE
+        let again = |ls: &mut LaneSt| {
+            if !ls.closed && !ls.pump_due {
+                ls.pump_due = true;
+                ls.pump_at = Some(Instant::now());
+                ls.pump_id = trace::next_id();
             }
-            Ok(Pump::Idle) => outcome::DONE,
-            Err(_) => outcome::PANICKED,
+        };
+        let out = match res {
+            Ok(got) => {
+                let mut ls = lane.st();
+                ls.panics = if is_pump { 0 } else { ls.panics };
+                match got {
+                    Pump::More => {
+                        again(&mut ls);
+                        outcome::MORE
+                    }
+                    Pump::Idle => outcome::DONE,
+                }
+            }
+            Err(_) => {
+                // one item's panic is not the end of the queue behind it (found-defects 843); a pump that
+                // takes nothing before it panics stops after PANICS and waits for its next kick
+                let mut ls = lane.st();
+                if is_pump {
+                    ls.panics += 1;
+                    if ls.panics <= PANICS {
+                        again(&mut ls);
+                    } else {
+                        ls.panics = 0;
+                    }
+                }
+                outcome::PANICKED
+            }
         };
         span.c(out);
         counts[2].fetch_add(1, Ordering::Relaxed);
@@ -776,27 +803,43 @@ pub fn stats() -> Stats {
     }
 }
 
+struct AnswerSt<T> {
+    value: Option<T>,
+    /// The job's side is gone: nothing more comes.
+    gone: bool,
+}
+
 /// A result a job hands back to whoever asked (the UI takes it in a later frame, or waits a grace).
 pub struct Answer<T> {
-    slot: Arc<(Mutex<Option<T>>, Condvar)>,
+    slot: Arc<(Mutex<AnswerSt<T>>, Condvar)>,
 }
 
 /// The job's side of an [`Answer`].
 pub struct Reply<T> {
-    slot: Arc<(Mutex<Option<T>>, Condvar)>,
+    slot: Arc<(Mutex<AnswerSt<T>>, Condvar)>,
 }
 
 impl<T> Reply<T> {
     pub fn send(self, v: T) {
         let (m, cv) = &*self.slot;
-        *m.lock().unwrap_or_else(|e| e.into_inner()) = Some(v);
+        m.lock().unwrap_or_else(|e| e.into_inner()).value = Some(v);
+        cv.notify_all();
+    }
+}
+
+impl<T> Drop for Reply<T> {
+    /// Sent or not, nothing more comes: a waiter of an abandoned answer (its job superseded, cancelled
+    /// or panicked) is told at once.
+    fn drop(&mut self) {
+        let (m, cv) = &*self.slot;
+        m.lock().unwrap_or_else(|e| e.into_inner()).gone = true;
         cv.notify_all();
     }
 }
 
 impl<T> Answer<T> {
     pub fn new() -> (Answer<T>, Reply<T>) {
-        let slot = Arc::new((Mutex::new(None), Condvar::new()));
+        let slot = Arc::new((Mutex::new(AnswerSt { value: None, gone: false }), Condvar::new()));
         (Answer { slot: slot.clone() }, Reply { slot })
     }
 
@@ -805,9 +848,9 @@ impl<T> Answer<T> {
     pub fn take_within(&self, grace: Duration) -> Option<T> {
         let (m, cv) = &*self.slot;
         let mut g = m.lock().unwrap_or_else(|e| e.into_inner());
-        if g.is_none() && !grace.is_zero() {
+        if g.value.is_none() && !grace.is_zero() {
             let until = Instant::now() + grace;
-            while g.is_none() {
+            while g.value.is_none() && !g.gone {
                 let now = Instant::now();
                 if now >= until {
                     break;
@@ -815,12 +858,13 @@ impl<T> Answer<T> {
                 g = cv.wait_timeout(g, until - now).unwrap_or_else(|e| e.into_inner()).0;
             }
         }
-        g.take()
+        g.value.take()
     }
 
     /// The reply was dropped unsent (the job was cancelled or panicked).
     pub fn abandoned(&self) -> bool {
-        Arc::strong_count(&self.slot) == 1 && self.slot.0.lock().map(|g| g.is_none()).unwrap_or(true)
+        let g = self.slot.0.lock().unwrap_or_else(|e| e.into_inner());
+        g.gone && g.value.is_none()
     }
 }
 

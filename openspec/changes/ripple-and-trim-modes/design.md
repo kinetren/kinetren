@@ -1,31 +1,36 @@
 # Design: ripple-and-trim-modes
 
-> DESIGN ONLY, revision 1 (2026-11-20), base `ec30cb02`. The owner's questions Q1–Q3 are in
-> `proposal.md`; the defaults below follow the recommended options and change with his answers.
+> DESIGN ONLY, revision 2 (2026-11-24), base `229c694b`. Q1 a decided (A9, his check C9). Q2 and Q3 were never put to him:
+> asked anew in `proposal.md`, with computed consequences; they set two defaults and hold nothing. Implementation-ready.
+
+## D0. What revision 1 said and the code contradicts
+
+1. **"The VEGAS layout uses VEGAS's keys".** There is no VEGAS style: the five are ours (`OWN`, the owner's own, Vegas-like),
+   Premiere, Resolve, Final Cut, After Effects (`controls.rs:417–585`). Ctrl+F is Find in all of them, so of Vegas's F / Ctrl+F /
+   Ctrl+Shift+F only F and Ctrl+Shift+F are free. They are bound in `OWN` (a new row of his table, t1700's list grows); the
+   others get no key and reach it by menu and the key dialog.
+2. **Vegas's Alt+drag for slip.** Alt+drag belongs to the window manager on many Linux desktops (and on the live stand's
+   openbox), the reason the wand took Ctrl+click. Slip is Shift+drag or Alt+drag, whichever the desktop leaves (D5).
+3. **Locked tracks** (R.62) were not in the plan: `check_on` refuses the whole batch with `TrackLocked` for any row a command
+   touches (`model.rs:1926`). A ripple over all tracks with one locked track would always be refused. D1 says what happens.
+4. **Bands and reels.** With a composition expanded in place its events stand in the same `p.clips`, on rows at the tail, in the
+   root's time; a ripple "over all tracks" would shift the events inside the composition AND the instance. Markers, areas,
+   foreign events and `timeline_end` belong to the root only (`Sequence` has none). D1 scopes by reel.
+5. **`EditFootprint` in the model and `apply_coalesced`.** `apply_batch` clears `last_gesture` (`model.rs:1658`), so a later command
+   cannot join its step, and `apply_coalesced` takes one command. The model gets `amend_batch` (D2); the footprint is the app's.
+6. **Two regimes of `C`.** `delete_region` with a region removes the WHOLE crossing events (and partners), `C` cuts the interior:
+   both stay, each with its ripple.
+7. A morph patch's source window, `FrameHold` and `SetGenSound` exist now; none moves time, so none changes the rule.
 
 ## Context
 
-Read on `ec30cb02`:
-
-- **Commands** (`src/libs/kt-model/src/model.rs`, `Command`): `MoveClip` moves a clip AND its link
-  partners by one offset (`mutate_on`); `TrimStart`/`TrimEnd`/`Split`; `MoveMarker { from, to }` refused
-  with `MarkerExists` on an occupied tick; `SetAreaRange`, `SetMorpher`, `SetCamera`. No command moves a
-  `ForeignEvent` or sets `timeline_end`.
-- **Region operations** (`src/libs/kt-model/src/ops.rs`): `delete_region`, `punch_out_region` — the
-  latter `RemoveClip`s each touched clip and `AddClip`s two remainders with new ids, so a remainder's
-  effect state (reverb tails, the stream history) restarts (invariant 3 is kept only "by id", and a new
-  id is a new chain). `C` (region-cut-key) calls it.
-- **Batches**: `apply_batch` simulates the whole series and writes one undo step; `apply_batch_restoring`
-  adds `restore_handles` (material cut by a dying transition comes back, clamped by the freed space).
-- **Transitions store no time** (`a`, `b`, offsets): moving both neighbours by one delta moves the
-  transition; `reconcile_transitions` leaves it.
-- **Overlaps are legal** (`overlap_layers`, default on): an overlap crossfades by itself.
-- **The material's length is known** once opened (`MediaRef.duration`, R.63) — the slip stop.
-- **Keys are glued to the material** (`AutoKey.t` is a material tick, R.33): a slip moves the
-  animation with the frames (Premiere's behaviour, F-TL-002 trick 4), with no key edits.
-- **The UI**: `plan_move` (`src/apps/kt-app/src/timeline.rs`) classifies drags; the transition roll
-  (`timeline.rs`, "Roll of a transition joint") is the pattern for a plain roll; the loop button in
-  `toolbar.rs` is the three-state pattern; keys live only in `controls.rs` (t1715).
+Read on `229c694b`: `Command` (`model.rs:486`: `MoveClip` moves the link group, `TrimStart/End`, `Split`, `MoveMarker`,
+`SetMarkerDuration`, `SetAreaRange`, `SetMorpher`, `SetCamera`; none moves a `ForeignEvent` or sets `timeline_end`),
+`simulate` (bands), `target_rows`, `ops::{punch_out_region :572, delete_region :603, restore_handles :662, paste_block :426}`,
+`KtApp::{apply_batch_restoring app.rs:4839, delete_selected :7036, delete_action, punch_out_action :6136, paste_at :5956,
+reel_of_clip :4721}`, `timeline.rs` (`plan_move :401`, `event_zone :234`, `Drag :618`, Ctrl = the magnet off, Shift+double click =
+the region of the event), `controls.rs` (`Cmd` up to 37, `PreviewFit = 38` by `preview-canvas-and-gizmos`),
+`MediaRef.duration`, keys in material ticks (R.33), legal overlaps (R.28).
 
 ## Goals / Non-Goals
 
@@ -42,6 +47,12 @@ sync locks (the link group already holds A/V); "close all gaps in the project"; 
 ripple_plan(project, at: Tick, delta: Tick, scope: RippleScope, edited: &[TrackKey]) -> Result<Vec<Command>, RippleRefusal>
 RippleScope = { tracks: Affected | All, refs: bool }      // refs = markers + named areas
 ```
+
+- **One reel**: the plan is of the reel the edited events stand in (`reel_of_clip`): the root, the entered reel, or the band's;
+  other rows of the bench are neither moved nor obstacles. `refs`, foreign placeholders and `timeline_end` take part only at
+  the root. A ripple inside a band whose composition is placed elsewhere keeps the existing "shared" warning.
+- **Locked tracks stay**: a locked track is out of every scope, and the status line names it ("Music is locked and did not
+  move"). A link group with a member on a locked track refuses (`LockedPartner`), since the pair would part.
 
 - **Who moves**: every event of a track in scope whose `start >= at`; each link group is moved once
   (by its member with the smallest id — `MoveClip` moves the partners), and a group with a member on a
@@ -64,8 +75,8 @@ RippleScope = { tracks: Affected | All, refs: bool }      // refs = markers + na
 - **Morpher blocks and camera events** on scope tracks follow the clip rule (start `>= at` moves;
   spanning stretches by `delta` via `SetMorpher`/`SetCamera`); a camera track is in scope when `All`.
 - **Reference-mode layers** (`MorphTargets::Marks`/`Areas`): if `refs` is false and a layer's targets
-  move while its referenced window does not, refuse with `LayerDetached { morpher }` (Q2 b fallback; under
-  Q2 a `refs` is always true and this cannot occur).
+  move while its referenced window does not, refuse with `LayerDetached { morpher }`. The default until Q2 is answered:
+  `refs` = (tracks == All).
 - **Order with handles**: a rippled delete computes `restore_handles` first (on the `preview` of the
   delete), and `delta` = the length actually freed after the handles came back — otherwise the tail
   lands short by the handle's length (F-TL-001 "What gets in the way").
@@ -75,21 +86,22 @@ refusal leaves the project untouched.
 
 ## D2. Post-edit ripple
 
-`Cmd::RippleAfterEdit { scope }` (three rows in `controls.rs`, Vegas's F / Ctrl+F / Ctrl+Shift+F in the
-Vegas layout where free, our layout's keys chosen against the table, conflicts guarded by t1715).
-The model remembers the last edit's `EditFootprint { at, freed: Tick, tracks }` (set by delete, region
-cut, trims, paste, cut; cleared by any other command or by undo). The command ripples by it and joins
-the SAME undo step (`apply_coalesced` with the edit's gesture token), so Undo removes edit and ripple at
-once. With no footprint the item is disabled with the reason ("nothing to ripple: the last action freed
-no time").
+The app remembers `last_edit: Option<EditFootprint { at, delta, tracks, revision }>`, set by its own edit bodies (delete,
+delete by region, `C`, cut, paste, edge trims) from what they computed; it is valid while `model.revision() == revision`,
+so any other command, undo or redo makes it stale without a hook. `Cmd::RippleTracks`, `Cmd::RippleAll` (the next free
+numbers, 39 and 40 after `PreviewFit`) run `ripple_plan` by it and `TimelineModel::amend_batch(cmds)`: `apply_batch` that
+replaces `project` without `push_undo` when the top of the undo stack was made by the batch of `revision` (else an ordinary
+step). One Undo gives back the edit and the ripple. Stale or absent: the item is disabled and its hint says why ("nothing
+to ripple: the last action freed no time").
 
 ## D3. Auto-ripple mode
 
-`UiState.ripple: Option<RippleScope>` (outside undo, `None` not written). The toolbar button cycles
-off → affected → all (refs per Q2) with a drop-down; `Cmd::AutoRipple`. While on: the selected events'
+`Workspace.ripple: Off | Tracks | All` in `user_store` (a tool's mode, the person's: UI rule 23; it starts Off in every
+session, as a mode that moves what is off the screen must be armed knowingly). The toolbar button cycles off → track →
+all; `Cmd::AutoRipple` (41), unbound. While on: the selected events'
 outline and the playhead are drawn red (the already occupied places, UI rule 13), the status line's mode
 hint says where to turn it off (rule 19). Triggers: Delete, Cut, region cut `C`, paste/insert, edge
-trims (Q3 a: not moves). Each trigger builds its normal batch and appends `ripple_plan` in the same
+trims; a move does not, until Q3 says otherwise. Each trigger builds its normal batch and appends `ripple_plan` in the same
 batch — one undo step.
 
 ## D4. Identity-keeping ripple variants (invariant 3)
@@ -107,17 +119,21 @@ batch — one undo step.
 
 ## D5. Roll, slip, slide
 
-- **Roll** (plain cut): a drag at the joint of two butt-joined events with the roll modifier: `TrimEnd`
-  of the left and `TrimStart` of the right by the same `d`, clamped by both materials and by
-  `MIN_CLIP_DURATION`; the transition roll stays as is.
-- **Slip** (body drag with the slip modifier): `source_in += d` with start and duration fixed — a new
-  `Command::Slip { id, delta }` (the trim pair would need two clamps and a temporary shape); clamped by
-  `0` and `MediaRef.duration`; the link group slips together (the A/V pair stays in sync); a warped clip
-  slips along consumption (`clip_slice` rule). The stop is drawn red at the edge that ran out (FCP's
-  only-visible-stop, F-TL-002).
-- **Slide** (body drag with the slide modifier): `MoveClip(d)` + the left butt neighbour's `TrimEnd(+d)` +
-  the right one's `TrimStart(+d)`; a neighbour that is not butt-joined is not touched; clamped by the
-  neighbours' material. Explicit modifier only (rule 20: it changes what was not dragged).
+Modifiers are read at the PRESS (a modifier pressed later changes nothing), from `Event::PointerButton.modifiers`.
+
+| Gesture | Where | Command |
+|---|---|---|
+| **Roll** | Shift or Alt + drag on an edge where two events are butt-joined, no transition there | `TrimEnd(a, +d)` + `TrimStart(b, +d)` in one batch; clamped by both materials, `MIN_CLIP_DURATION`, the link groups of both |
+| **Slip** | Shift or Alt + drag on the body | the new `Command::Slip { id, delta }`: `source_in += δ` for the link group, start and length fixed; δ by the clip's own map (`clip_slice`'s consumption: a warped or reversed clip slips along what it reads) |
+| **Slide** | Ctrl+Shift or Ctrl+Alt + drag on the body | `MoveClip(d)` + the left butt neighbour's `TrimEnd(+d)` + the right one's `TrimStart(+d)`; a neighbour that does not touch is not touched; clamped by the neighbours' material; the magnet stays on (Ctrl here is the slide's) |
+
+- **Stops**: `0` and `MediaRef.duration` (a composition: its content's length; a still, a generator: no stop). The edge that ran
+  out is drawn red and `HintKind::Error` says "the material ends here" (rule 16). While slipping, the event's filmstrip and
+  waveform draw from the live `source_in` (the one map `clip_material_pos`), no command until the release.
+- Keys are glued to the material and move with the frames; the region, markers and neighbours do not move.
+- Shift+click and Ctrl+click on an event keep their meanings (a click is not a drag); Shift+double click too.
+- The zone order of `event_zone` is unchanged: with the modifier a fade or level zone gives the edge or the body.
+- `docs/guide/shortcuts.md`, the timeline table: three rows.
 
 ## D6. Close gaps (F-TL-008)
 
@@ -127,8 +143,7 @@ last selected follow by the total. An empty selection with the playhead on a tra
 
 ## D7. Format, OTIO, idle
 
-- `.kt`: `UiState.ripple` only; the edits are ticks. No version change (`version_for` untouched).
-- OTIO: nothing to lose (UI state).
+- `.kt`: nothing; the edits are ticks. OTIO: nothing to lose.
 - Idle: model-only; the indicator is static colour — no repaint while nothing moves (invariant 12). The
   live `idle` scene runs with the mode on.
 
@@ -145,6 +160,10 @@ last selected follow by the total. An empty selection with the playhead on a tra
 | `timeline_end` | no command today | `SetTimelineEnd` |
 | markers with notes | tick address | ordered moves, refusal on collision |
 | loop region / render region | `Project.region` outside undo | NOT moved (a region is a view choice, not content); stated in the hint |
+| locked tracks | `TrackLocked` for a whole batch | out of scope, named (D1) |
+| an expanded band | its events on the same bench | one reel (D1) |
+| `frame-format-variants` framings, `multicam` angles | follow their events | nothing of their own |
+| curves linked to another event | read the leader's time | both move or the link's shift stays as a move leaves it today |
 | speed change (F-SPD-001) | changes length | will call `ripple_plan`, no second rule |
 | copy-paste blocks (`ClipBlock`) | rebased on paste | insert uses D1, the block's own rule unchanged |
 

@@ -7,6 +7,7 @@
 
 pub mod audio;
 pub mod builds;
+pub mod copies;
 pub mod export;
 pub mod export_pipeline;
 pub mod export_settings;
@@ -17,11 +18,13 @@ pub mod fxstore;
 pub mod incremental;
 pub mod listen;
 pub mod render_ahead;
+pub mod moment_key;
 pub mod render_cache;
 pub mod compose_queue;
 pub mod player;
 pub mod prefetch;
 pub mod prewarm;
+pub mod program;
 pub mod preview_bench;
 pub mod preview_cost;
 pub mod transitions;
@@ -47,14 +50,14 @@ pub use player::{
     reverse_frames, varispeed_fill, Wake,
 };
 pub use prefetch::{
-    FramesSizing, PREFETCH_VIDEO_LOOKAHEAD_TICKS, frames_cache_want, loop_frame_bytes, prefetch_audio_pass,
+    FramesSizing, PREFETCH_VIDEO_LOOKAHEAD_TICKS, frames_cache_want, loop_frame_bytes, loop_frame_bytes_except, prefetch_audio_pass,
     simulate_video_playback, size_frames_cache, video_prefetch_pass, video_prefetch_pass_except,
     video_prefetch_pass_sized, video_prefetch_wants, video_prefetch_wants_except,
 };
 pub use transitions::TransMix;
 pub use transport::Transport;
 pub use video::{
-    NestKey, SourceFacts, StreamPacing, VideoRenderer, clip_source_addr, stop_when, clip_source_addr_in,
+    NestKey, ReadRow, SourceFacts, StreamPacing, VideoRenderer, clip_source_addr, stop_when, clip_source_addr_in,
     content_hash, gen_salt, gen_source_addr, gen_source_addr_in, gen_sources, instance_content,
     nest_source_id, reel_chain_of_clip, resolve_cam3d, revisions_scope, video_cache_idx,
 };

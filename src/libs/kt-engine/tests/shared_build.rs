@@ -415,7 +415,7 @@ fn t2006_a_frame_is_composed_by_its_states_renderer() {
     let mut p = scene(20);
     let (player, _ring) = player_with(p.clone());
     let rec = std::sync::Arc::new(Recorder {
-        info: kt_engine::GpuBackendInfo { name: "rec".into(), backend: "Test".into(), software: true },
+        info: kt_engine::GpuBackendInfo { name: "rec".into(), backend: "Test".into(), software: true, driver: String::new() },
         seen: Mutex::new(Vec::new()),
     });
     player.set_video_gpu(Some(rec.clone()));

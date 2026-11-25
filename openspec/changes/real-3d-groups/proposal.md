@@ -1,7 +1,7 @@
 # Proposal: real-3d-groups
 
-> DESIGN ONLY (spec session, 2026-11-20). Registry `v26.10-index.md` R1–R4 (no) and E1 (future). Note F-CMP-005.
-> Tests reserved: t3952–t3959.
+> IMPLEMENTATION-READY (spec-engine, revision 2, 2026-11-25, orch `fc60a5d9`; written 2026-11-20). Registry `v26.10-index.md` R1–R4 (no) and E1 (future). Note F-CMP-005.
+> Tests: t3952–t3956, t4148–t4150.
 
 ## Why
 
@@ -43,16 +43,10 @@ no thickness.
 
 ## Impact
 
-- kt-model: `Track.three_d: bool`; `Mask.extrude: f64` (depth in project pixels, 0 = flat); the layer transform rows
-  read from Pan3d's passport when the track is 3D; groups derived from the track order (no stored group).
-- kt-engine: `frame_plan` emits `Layer::Group3d { members, camera }` for a run of 3D tracks; each member's 2D chain is
-  planned as today and ends in a texture.
-- kt-gpu: a mesh pipeline (vertex + fragment, a Depth32 target from the pool), plane and extruded-path meshes built on
-  the CPU per revision (cached by the mask's content), drawn back-to-front for alpha with depth test, then resolved to
-  the group's RGBA.
-- kt-app: the switch, the group's bracket on the headers, the depth handle on the preview, the split gesture, i18n ×5.
-- Format: the next free `.kt` version by content. OTIO: a planned row (a foreign editor sees 2D layers).
-- Idle: a still group is a kept composite like any layer.
+- kt-model: `Track.three_d`, `Mask.extrude`; groups derived from the track order (no stored group); the next `.kt` version by content.
+- kt-engine: `PlanLayer::Group` for a run of 3D tracks; a member is the event's 2D picture without its Pan3d, larger where it comes near; its Pan3d rows place it.
+- plugins/fx-video-distort: the full matrix beside the homography, one text. kt-gpu: one mesh pass (4 samples, depth), the 2D path untouched.
+- kt-app: the switch, the bracket, the depth handle, the split, i18n ×5. OTIO: a planned row. Idle: a still group is a kept composite.
 
 ## Questions to the owner
 

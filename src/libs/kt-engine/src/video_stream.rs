@@ -191,7 +191,7 @@ impl StreamPacing {
 }
 
 /// The compiled schedules of one stage, per stream size.
-type PlanCells = Vec<(Quality, Arc<PlanCell>)>;
+type PlanCells = Vec<((Quality, u64), Arc<PlanCell>)>;
 
 /// A clip's stream stage: the slot's plugin and rows, the event before on the same lane and the
 /// events of the second input's lane (clones made when the renderer is built — the renderer is
@@ -282,14 +282,23 @@ impl StreamStage {
         self.plugin.stream().expect("a stream slot's plugin has a stream kernel (registry, t1240)")
     }
 
-    /// The cell of the schedule compiled at stream size `q`.
-    fn plan_cell(&self, q: Quality) -> Arc<PlanCell> {
+    /// The cell of the schedule compiled at stream size `q` over the sources `of` (their identities): the
+    /// schedule names its positions by them, and a source is replaced under a build that stays.
+    fn plan_cell(&self, q: Quality, of: &[(MediaId, Option<kt_cache::SourceIdent>)]) -> Arc<PlanCell> {
+        let of = of.iter().fold(0u64, |h, (m, i)| mix(mix(h, m.0), i.map_or(0, |i| i.key)));
         let mut g = self.plans.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((_, c)) = g.iter().find(|(s, _)| *s == q) {
+        if let Some((_, c)) = g.iter().find(|(s, _)| *s == (q, of)) {
             return c.clone();
         }
+        // the schedules of what the sources decoded before are asked no more; two stand while a retune
+        // is between the renderer and the worker
+        if g.iter().filter(|(s, _)| s.0 == q).count() >= 2
+            && let Some(i) = g.iter().position(|(s, _)| s.0 == q)
+        {
+            g.remove(i);
+        }
         let c = Arc::new(PlanCell::default());
-        g.push((q, c.clone()));
+        g.push(((q, of), c.clone()));
         c
     }
 }
@@ -458,17 +467,18 @@ fn input_slots(fx: &[kt_model::FxInstance]) -> Vec<usize> {
 /// `project_size` are the composite's, as `layer_src` resolves a camera with them.
 pub(super) fn link_stages(clips: &mut [VideoClip], cams: &[kt_model::CameraEvent], project_size: (u32, u32)) {
     // no stage, no snapshot: a build without a stream stage copies no event (frame-work-by-edit)
-    if clips.iter().all(|c| c.stream.is_none()) {
+    if !clips.iter().any(|c| c.stream.is_some() || c.reads.iter().any(|(_, r)| r.stream.is_some())) {
         return;
     }
     let snapshot: Vec<VideoClip> = clips.to_vec();
     let lite = |c: &VideoClip| {
         let mut c = c.clone();
         c.stream = None;
+        c.reads = Vec::new();
         c
     };
-    for c in clips.iter_mut() {
-        let Some(st) = c.stream.as_mut() else { continue };
+    let link = |c: &mut VideoClip| {
+        let Some(st) = c.stream.as_mut() else { return };
         // this build's own schedules: the stage may be the last build's, copied (edit-without-rebuild)
         st.plans = Default::default();
         // the masks of the slots in front cut them in the front run (found-defects 541): an edit of
@@ -523,6 +533,15 @@ pub(super) fn link_stages(clips: &mut [VideoClip], cams: &[kt_model::CameraEvent
             .zip(&st.second_front)
             .map(|(o, sl)| if sl.iter().any(|&i| o.fx[i].uses_camera()) { cams_key } else { 0 })
             .collect();
+    };
+    for c in clips.iter_mut() {
+        link(c);
+        // a read's stage is linked as its line's (fx-graph-dag D2); the joints are the layer's
+        let (head, tail) = (c.head_ext, c.tail_ext);
+        for (_, r) in c.reads.iter_mut() {
+            (r.head_ext, r.tail_ext) = (head, tail);
+            link(r);
+        }
     }
 }
 
@@ -576,10 +595,40 @@ pub(super) struct ClipStream<'a> {
     stopped: std::cell::Cell<Option<u32>>,
     /// The tick the host shows from (the memo's view, stream-history-on-device D4).
     view: Option<i64>,
+    /// What each source the stage can read decodes, as it was when this was made (durable-moment-key D3):
+    /// the positions are named by it, and a frame of another identity is not read under that name.
+    idents: Vec<(MediaId, Option<kt_cache::SourceIdent>)>,
+}
+
+/// The files and generators the stage can read: its event's, the event before's, the second inputs'.
+fn sources<'c>(clip: &'c VideoClip, st: &'c StreamStage) -> Vec<MediaId> {
+    let mut out: Vec<MediaId> = Vec::with_capacity(2);
+    for c in std::iter::once(clip).chain(st.before.as_deref()).chain(st.second.iter()) {
+        if !out.contains(&c.media) {
+            out.push(c.media);
+        }
+    }
+    out
+}
+
+/// Reads what sources decode: the cache's own look, or a renderer's reader of its player's cache.
+pub(super) type Idents<'a> = &'a dyn Fn(&[SourceId]) -> Vec<Option<kt_cache::SourceIdent>>;
+
+fn snapshot(clip: &VideoClip, st: &StreamStage, idents: Idents<'_>) -> Vec<(MediaId, Option<kt_cache::SourceIdent>)> {
+    let of = sources(clip, st);
+    let ids: Vec<SourceId> = of.iter().map(|m| SourceId(m.0)).collect();
+    of.into_iter().zip(idents(&ids)).collect()
 }
 
 impl<'a> ClipStream<'a> {
-    pub fn new(clip: &'a VideoClip, st: &'a StreamStage, grid: &'a FpsGrid, quality: Quality, cache: Option<&'a BurstCache>) -> Self {
+    pub fn new(
+        clip: &'a VideoClip,
+        st: &'a StreamStage,
+        grid: &'a FpsGrid,
+        quality: Quality,
+        cache: Option<&'a BurstCache>,
+        idents: Idents<'_>,
+    ) -> Self {
         let step = grid.frame_step().max(1);
         let cut = ceil_div(clip.start.0, step);
         let end = ceil_div(clip.end.0, step);
@@ -591,7 +640,20 @@ impl<'a> ClipStream<'a> {
         };
         let q = stream_quality(clip, st, quality);
         let coded = stream_coded(clip, st, quality);
-        ClipStream { clip, st, grid, q, coded, step, first, cut, end, cache, plan: st.plan_cell(q), stopped: Default::default(), view: None }
+        let idents = snapshot(clip, st, idents);
+        ClipStream { clip, st, grid, q, coded, step, first, cut, end, cache, plan: st.plan_cell(q, &idents), stopped: Default::default(), view: None, idents }
+    }
+
+    /// What a source decoded when this was made.
+    fn known(&self, m: MediaId) -> Option<kt_cache::SourceIdent> {
+        self.idents.iter().find(|(id, _)| *id == m)?.1
+    }
+
+    /// The decoded frame of `c` at `pts`, when it is of the identity its position is named by: a retune
+    /// applied since is an absent frame, as any other.
+    fn read(&self, cache: &BurstCache, c: &VideoClip, pts: Tick) -> Option<Arc<VideoFrame>> {
+        let (got, ident) = cache.get_video_leaf(SourceId(c.media.0), Some(self.q), video_cache_idx(pts));
+        got.filter(|_| ident == self.known(c.media)).map(|(f, _)| f)
     }
 
     /// The host's view, as the memo holds it (a tick): a walk keeps the pictures from there on.
@@ -686,7 +748,9 @@ impl StreamLayout for ClipStream<'_> {
         let mut h = mix(0x5754_7245_414d, c.media.0);
         h = mix(h, pts.0 as u64);
         h = mix(h, ((self.q.width as u64) << 32) | self.q.height as u64);
-        h = mix(h, c.src_rev);
+        // the file or the values it decodes (found-defects 1061): the media id alone gave another file
+        // relinked under it the old one's history
+        h = mix(h, self.known(c.media).map_or(c.src_rev, |i| i.key));
         // the slots in front feed the main stream: they are part of what the kernel reads
         if side == Side::Main && !self.st.front.is_empty() {
             h = mix(h, self.st.front_key);
@@ -837,14 +901,14 @@ impl StreamInput for ClipStream<'_> {
         if let Some((w, h, FrontOut::Held(held))) = front_memo_get((id, true)) {
             return OnDevice::Held { w, h, held };
         }
-        let Some(fr) = cache.get_video(SourceId(c.media.0), Some(self.q), video_cache_idx(pts)) else { return OnDevice::Missing };
+        let Some(fr) = self.read(cache, c, pts) else { return OnDevice::Missing };
         self.run_slots_held(owner, slots, id, k, fr)
     }
 
     fn with_frame(&self, side: Side, k: i64, f: &mut dyn FnMut(Rgba<'_>)) -> bool {
         let Some(cache) = self.cache else { return false };
         let Some((c, pts)) = self.at(side, k) else { return false };
-        let Some(fr) = cache.get_video(SourceId(c.media.0), Some(self.q), video_cache_idx(pts)) else { return false };
+        let Some(fr) = self.read(cache, c, pts) else { return false };
         // the main stream through the slots in front of the stage (stream-input-order), the event
         // before's frames included (its D2); the second input through its own event's chain (row 540)
         let (slots, owner) = self.input_slots_at(side, k, c);
@@ -859,20 +923,25 @@ impl StreamInput for ClipStream<'_> {
 }
 
 /// The stage's key for frame time `t` without running it (a probe plan, structured-telemetry): an
-/// empty frame of the layer's size and the key the kernel names; `None` — the kernel cannot say.
+/// empty frame of the layer's size and the key the kernel names; `None` — the kernel cannot say. `pts` is the frame's own time.
 pub(super) fn key_only(
     clip: &VideoClip,
     st: &StreamStage,
     grid: &FpsGrid,
     quality: Quality,
     dq: Quality,
-    t: Tick,
-    pts: Tick,
+    (t, pts): (Tick, Tick),
+    cache: &BurstCache,
 ) -> Option<(Option<Arc<VideoFrame>>, u64)> {
-    let cs = ClipStream::new(clip, st, grid, quality, None);
+    let cs = ClipStream::new(clip, st, grid, quality, None, &|of| cache.idents(of));
     let key = st.kernel().key(&st.values, &cs, cs.pos(t))?;
     let frame = VideoFrame { pts, width: dq.width, height: dq.height, rgba: Box::new([]), has_alpha: false };
     Some((Some(Arc::new(frame)), key))
+}
+
+/// Whether every source the stage can read has a name that outlives the process.
+pub(super) fn durable(clip: &VideoClip, st: &StreamStage, cache: &BurstCache) -> bool {
+    snapshot(clip, st, &|of| cache.idents(of)).iter().all(|(_, i)| i.is_some_and(|i| i.durable))
 }
 
 /// Run the stage for frame time `t`: the decoded picture fitted to `dq` (opaque) and its key;
@@ -894,7 +963,7 @@ pub(super) fn run(
     pts: Tick,
 ) -> (Option<Arc<VideoFrame>>, u64, Option<Arc<crate::video_plan::HeldLayer>>) {
     use kt_time::trace::{self, stream as so, Ev};
-    let cs = ClipStream::new(clip, st, grid, quality, Some(cache));
+    let cs = ClipStream::new(clip, st, grid, quality, Some(cache), &|of| cache.idents(of));
     let cs = if view { cs.with_view(memo) } else { cs };
     let k = st.kernel();
     let n = cs.pos(t);

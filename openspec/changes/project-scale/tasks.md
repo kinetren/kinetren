@@ -1,6 +1,6 @@
 # Tasks: project-scale
 
-> DESIGN ONLY until the owner answers Q1–Q2. Tests: t3924–t3931.
+> Waits for Q70 (the budget) and Q71 (the table); task 1 (`kt-cli scale`) and D2 need neither. Tests: t3924–t3931.
 
 ## 0. Notes
 

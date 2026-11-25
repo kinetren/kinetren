@@ -387,3 +387,26 @@ frozen form follow from `FxInstance::all()`; the semantic test — in geo_fuse (
 - **Every graph position is a stop** (`Lowered::cuts`): geometry series, point-wise runs and K×
   barriers fuse only between them, the K accumulators zero there, a merge runs at 1×. Phases A and D
   track a register's SIZE: a `Load` makes it current again. t3203.
+
+## Sound graphs (fx-graph-dag D4)
+
+- **`audio/graph.rs` is the one plan**: `GraphPlan::new` decides once per chain revision which value
+  is SPILLED into a register (read again later) right before the working buffer is overwritten,
+  which step LOADS its input, the alignment delay of each input of a Merge or a keyed node (the
+  side with less look-ahead waits), and the Output path's look-ahead. The pass only follows it;
+  `ClipProcessor` and `TrackProcessor` run the same plan. A line (empty `ChainGraph`) keeps the
+  former pass byte for byte; t3212 holds the graph pass equal to it.
+- **`sound_split` decides what a processor runs**: a read's time kind, the slots only it needs and
+  dangling slots are `Missing("graph-skip")` placeholders in the main chain, so `chain_tail`,
+  `chain_context`, the warp and the windows are those of what runs; `chain_lookahead_in` and
+  `chain_fingerprint_in` take the graph (a rewire is structural). A new static formula over a
+  chain either works on the main chain of a split or takes the graph.
+- **A read's slot is `AudioNode::Input(k)`**: its samples come from `Feed::input(k, local, ..)` at
+  the content position of a zero-latency value (the chain input's); the caller reads the read's
+  own line processor there. A Merge is `AudioNode::Merge`; with no Foreground it passes its
+  Background, so a line holding a Merge sounds as before. Tests t3213–t3215.
+- **The program stage's kernel is `audio::program`** (loudness-norms): its detector is the METER's
+  interpolator (`loudness::tp_table`), so the limiter holds what the report measures; a change of the
+  table changes both and their tests (t2174, t4201). A frame is taken alone (the slicing changes
+  nothing), a signal under the inner ceiling passes to the bit, no allocation after `new`. The R.48
+  limiter effect is a SAMPLE-peak limiter: it holds no dBTP ceiling.

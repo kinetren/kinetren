@@ -1,7 +1,7 @@
 # Proposal: frame-format-variants
 
-> DESIGN ONLY (spec session, 2026-11-20). Code starts on the owner's word after his answers to the
-> questions at the end. Tests reserved: t3485–t3504.
+> DESIGN, revision 2 (2026-11-24), base `229c694b`: implementation-ready after `shared-events`. The owner answered Q1–Q2
+> (A17). Code starts on the orchestrator's go. Tests: t3485–t3492, t4235–t4238.
 
 ## Why
 
@@ -17,23 +17,15 @@ excludes.
 
 ## What Changes
 
-- **Formats of the project**: besides the master raster, a project may declare formats (name, width,
-  height, the default rule for events that follow the project: fit or fill). The cut, the sound, the
-  effects and the tracks are shared; a format changes only framing.
-- **Per-event overrides**: an event may carry, per format, its own Geometry node values and curves
-  (`EventGeometry` + `geometry_auto`) and a presence flag (shown / hidden in that format). An event with
-  no override is planned in the format's raster with its master geometry — positions are canvas
-  fractions, so a PiP stays in its corner and a full-frame shot is re-conformed to the new raster by the
-  format's rule (Q1).
-- **The one plan with a raster input**: `frame_plan` takes a render target (raster + format); the
-  format's overrides and presence are applied in the one door that hands events to the engine
-  (`effective_clips`), so preview and export share it (invariant 7).
-- **A format switch in the preview head** ("16:9 · 9:16 · 1:1"): the preview composes the chosen
-  format; the on-screen geometry frame (R.64) writes the CURRENT format's override, and only on a gesture
-  (rule 20); "Reset to master" removes an override.
-- **Safe areas**: platform overlays per format (Q2), drawn by the preview only, never rendered.
-- **Render all formats**: the render window lists the formats with checkboxes; one press queues one
-  export per checked format, the file name suffixed by the format's name.
+- **Formats of the project**: name, size, the rule for events that follow the project, a safe-area preset. The cut, the sound,
+  the effects and the tracks are shared.
+- **Per-event corrections over the common geometry**: an offset, a zoom factor and a turn (a rule, a crop or a row's own curve
+  where wanted), and "hidden in this format". The master's placement and its curves go on living under them.
+- **A format is a derived project**: one function gives the player, the render and kt-cli the project of a format; the engine
+  learns nothing new but a field of the key (invariant 7).
+- **Titles reflow**: they keep their share of the short side and break lines at the narrow width.
+- **A chooser on the preview**, a Formats section in the project settings, safe areas of the platforms.
+- **Render all formats** from one press; kt-cli `--format`.
 
 ## Capabilities
 
@@ -43,30 +35,27 @@ excludes.
 
 ### Modified Capabilities
 
-- `video-plan`: the render target (raster + format) as an input of the one plan; the format's overrides
-  in the event door; keys by format.
+- `video-plan`: a format as a derived project with corrections over the common geometry; keys by format.
 - `export`: an export renders a chosen format; "all formats" queues one export per format.
-- `project-format`: formats and overrides raise the file by content; OTIO export flattens to the master.
-- `ui-reach`: the format switch, the overrides by gesture, reset, safe-area overlays, the render list.
+- `project-format`: formats and corrections raise the file by content; OTIO export flattens to the master.
+- `ui-reach`: the format switch, the corrections by gesture, reset, safe areas.
+- `generators`: a title and height-sized rows in a format of another shape.
 
 ## Impact
 
-- kt-model: `Project.formats: Vec<FrameFormat>`, `ClipEvent.formats: Vec<FormatOverride>`; commands
-  `AddFormat`, `SetFormat`, `RemoveFormat` (removes its overrides in one step), `SetFormatOverride`,
-  `ClearFormatOverride`; `effective_clips_for(format)`; validation; the format version by content.
-- kt-engine: `RenderTarget` into the builds (`VideoRenderer` raster from the target), the player's
-  current format, plan keys (the raster is already in them; the format's geometry values reach
-  `fx_chain_hash` through the materialized node), the disk render cache key adds the format raster.
-- kt-app: preview head switch, gizmos per format, overlays, render window list, i18n ×5.
-- kt-otio: formats and overrides in `metadata["kt"]`; the exchange file shows the master only (a row in
-  "What OTIO export loses").
-- Idle: a format switch composes the shown moment once; nothing runs at rest.
-- Feature note: F-PRJ-006 (new).
+- kt-model: `Project.formats`, `ClipEvent.framing`, `Track.format_masks`, five commands, `Project::in_format`; the next file
+  version by content.
+- kt-text `wrap_lines`, kt-media `TitleWrap`; kt-engine: the key's field only; kt-cli `--format`.
+- kt-app: `push_project_to_player`, the chooser, `geomctl.rs`, the Geometry form's section, `settings_window.rs`, the render
+  queue, i18n ×5.
+- kt-otio: `metadata["kt"]`; the planned row in "What OTIO export loses". Idle: nothing runs at rest. Note: F-PRJ-006.
 
 ## Questions to the owner
 
-Decided (2026-11-20, `kkt-26.11.20` A17, his Q26–Q27): Q1 (a), each event is fitted into the format by its own
-geometry; Q2 (a), platform safe-area presets.
+Decided (2026-11-20, `kkt-26.11.20.txt` lines 26–27, A17): "Q26 9:16: «Каждое по своей геометрии (Recommended)»" — Q1 (a);
+"Q27 safe areas: «Пресеты платформ (Recommended)»" — Q2 (a). Read again on 2026-11-24: option (a) promises that "a title
+reflows to the narrow width", which the code does not do (design D3 builds it), and his ★15 asks for a correction OVER the
+common geometry, not a replacement (design D2). No open question.
 
 The questions as asked:
 

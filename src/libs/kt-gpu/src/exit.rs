@@ -12,6 +12,8 @@ use std::sync::{Condvar, Mutex, Once};
 static BUSY: Mutex<usize> = Mutex::new(0);
 static DONE: Condvar = Condvar::new();
 static EXITING: AtomicBool = AtomicBool::new(false);
+/// The last wait is taken: it is made once, and `begin` is not it (found-defects 972).
+static WAITED: AtomicBool = AtomicBool::new(false);
 static HOOK: Once = Once::new();
 
 unsafe extern "C" {
@@ -35,15 +37,19 @@ pub(crate) fn device_opened() {
     kt_time::shutdown::end_before_libraries();
 }
 
-/// Stop new background work and wait for the work in flight, at most `EXIT_WAIT`; once.
-fn wait_background() {
-    if EXITING.swap(true, Ordering::AcqRel) {
+/// Stop new background work and wait for the work in flight, at most `EXIT_WAIT` and never to the exit
+/// watcher's moment; once.
+#[doc(hidden)]
+pub fn wait_background() {
+    EXITING.store(true, Ordering::Release);
+    if WAITED.swap(true, Ordering::AcqRel) {
         return;
     }
     let since = std::time::Instant::now();
+    let bound = kt_time::shutdown::left(EXIT_WAIT);
     let mut n = BUSY.lock().unwrap_or_else(|e| e.into_inner());
     while *n > 0 {
-        let left = EXIT_WAIT.saturating_sub(since.elapsed());
+        let left = bound.saturating_sub(since.elapsed());
         if left.is_zero() {
             break;
         }
@@ -52,8 +58,11 @@ fn wait_background() {
     let ended = *n == 0;
     drop(n);
     kt_time::shutdown::record("gpu-background-work", since, ended);
-    // the pass times measured since the last write (gpu-throughput D2)
-    crate::seeds::flush();
+    // the pass times measured since the last write (gpu-throughput D2); a program that is closing wrote
+    // them in its close, on a thread (found-defects 972)
+    if !kt_time::shutdown::ending() {
+        crate::seeds::flush();
+    }
 }
 
 /// The program's close reached its bounded part (found-defects 962): background GPU work starts nothing
@@ -76,7 +85,8 @@ pub fn background_gpu_work() -> usize {
 }
 
 /// Background GPU work: the exit waits for it to end.
-pub(crate) struct Busy(());
+#[doc(hidden)]
+pub struct Busy(());
 
 impl Drop for Busy {
     fn drop(&mut self) {
@@ -89,7 +99,8 @@ impl Drop for Busy {
 }
 
 /// Enter background GPU work; `None` once the process is exiting.
-pub(crate) fn busy() -> Option<Busy> {
+#[doc(hidden)]
+pub fn busy() -> Option<Busy> {
     HOOK.call_once(|| {
         // SAFETY: `at_exit` is a plain C function of the process, registered once
         let _ = unsafe { atexit(at_exit) };

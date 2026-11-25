@@ -1,15 +1,12 @@
 # Proposal: download-library
 
-> DESIGN (spec session, 2026-11-20; revised 2026-11-22). The owner asked for it (kkt-26.11.20 A11) and
-> answered its questions (kkt-26.11.20b B3: the list from our server for everything, the library now with
-> plugins at the wasm host, a missing font pack as a placeholder with Download). Code starts on the
-> orchestrator's go. Feature note: F-EXT-006
-> (`docs/features/plugins/hosts/download-library.md`). Tests reserved: t3850–t3869. Base: `orch-26-11-01` at
-> `5e7a8ea9`.
+> DESIGN, revision 3 (2026-11-24), base `229c694b`: implementation-ready (stages 1–4). The owner asked for it
+> (kkt-26.11.20 A11) and answered its questions (kkt-26.11.20b B3). Q4 below is new and holds stage 5 only. Code starts on
+> the orchestrator's go. Feature note: F-EXT-006. Tests: t3850–t3869.
 
 ## Why
 
-The owner, answering Q14–Q16 (kkt-26.11.20, line 16): "на будущее - все что у нас качается - надо
+The owner, answering Q14–Q16 (kkt-26.11.20, line 19): "на будущее - все что у нас качается - надо
 переносить и делать архитектурно в виде некоторой библиотеки, типо как плагины чтоли их же тоже можно
 будет качать. вот и сделат библиотеку плагинов."
 
@@ -29,7 +26,8 @@ update that silently made the models unusable (F-EXT-006).
 ## What Changes
 
 - **One catalogue of items, from our signed server for every kind** (the owner's Q1 b). The release
-  carries the signed list as of its build, so a machine that was never online still has one. Each item
+  carries the list as of its build inside the binary, so a machine that was never online still has one; a fetched list is
+  verified. Each item
   gives:
   - its id, kind, version, licence, what needs it, and its dependencies;
   - per platform: mirrors, the sha256, the size and the unpack rule.
@@ -42,7 +40,7 @@ update that silently made the models unusable (F-EXT-006).
 - **One download engine.** `ffmpeg_setup.rs`'s machinery becomes generic: `fetch_verified`, the mirrors,
   the size guards, `.partial-<pid>` + rename, `remove_stale`, the progress phases and Cancel. Unpacking is
   by the item's rule (7z, zip, a single file).
-- **One window, "Library"** (View → Library…). It lists every item with:
+- **One window, "Library"** (Preferences › Library…, where FFmpeg… stood). It lists every item with:
   - its size, licence and state (not installed / downloading N % / installed vX / needs vY / broken);
   - what in the program needs it;
   - Download, Cancel, Remove, Open folder, and "Install from file…".
@@ -79,22 +77,14 @@ update that silently made the models unusable (F-EXT-006).
 
 ## Impact
 
-- **kt-app:**
-  - `library/` (catalogue, jobs, window) replaces `ffmpeg_setup.rs`'s window and job;
-  - `subtitles-and-text-editing` uses it instead of a copy.
-- **kt-dirs:** `library_root()` (`<local>/library`), plus the old `ffmpeg_download_root()` still read.
-- **kt-ffmpeg:** the search plan gains the library's FFmpeg folder, after the user's folder and before
-  the old download root.
-- **kt-text:** font packs are registered from `library::resolve`.
-- **kt-plugin-api:** later, the package manifest and the registry door.
-- **kt-cli:** `library`.
-- **Invariants:**
-  - 9 and 10: FFmpeg stays in-process, loaded by the search plan;
-  - 11: a font pack or a plugin version is part of a frame's identity and is named in the project.
-- **Project format:** a title's font pack reference (absent means none: no version bump while no title
-  uses one).
+- new `libs/kt-library` (catalogue, resolver; feature `net`: the download engine of `ffmpeg_setup.rs`);
+- kt-app `library/` (jobs, window) in place of `ffmpeg_setup.rs`'s window; Preferences; `t860`, `t1311`, `t3722` lists;
+- kt-dirs `library_root()`; kt-ffmpeg `search.rs` (a step); kt-cli `library`;
+- kt-text `set_packs`/`resolve_family`, kt-media `GeneratorSource::identity` (the face's file), `render_at` (the placeholder);
+- kt-model `GeneratorKind::Text.font_pack` (**v+** by content; no file moves without one).
+- **Invariants:** 9 and 10 (FFmpeg by the search plan), 11 (a face is part of a frame's identity, named in the project).
 
-## The owner's answers (kkt-26.11.20b, lines 5–7, row B3)
+## The owner's answers (kkt-26.11.20b, lines 10–12, row B3)
 
 - **Q1 b — "Всё с сервера".** Every kind's entries come from our signed list (design D1). The release
   carries the list as of its build as the offline floor, so "Install from file…" and an offline first start
@@ -105,3 +95,21 @@ update that silently made the models unusable (F-EXT-006).
 - **Q3 a — "Заглушка + «Скачать» (Recommended)".** A title whose pack is missing draws a marked placeholder
   with a Download button, and the export refuses until the pack is installed or the person chooses the
   fallback for that render (design D7).
+
+## Questions to the owner
+
+**Q4. Where does the signed list live, and who keeps its key?** Your item whole (`kkt-26.11.20.txt` line 19): "Q14–Q16 subtitles:
+"п.1. и на будущее - все что у нас качается - надо переносить и делать архитектурно в виде некоторой библиотеки, типо как
+плагины чтоли их же тоже можно будет качать. вот и сделат библиотеку плагинов."" and your answer (`kkt-26.11.20b.txt` line 10):
+"download-library Q1 the list: "Всё с сервера"". We have no server of ours: the program talks to GitHub's releases and the
+telemetry address. Whoever holds the key decides what every installed copy may download and load as code (FFmpeg, whisper,
+plugins).
+- (a) **A file on kinetren.com (`/library/catalogue.toml` + `.sig`), the key on your machine only** (*recommended*): you run
+  `scripts/library-sign.py` before publishing. A list changes when you sign it: by hand, about once per new FFmpeg or
+  plugin. A stolen GitHub account cannot change what people download.
+- (b) An asset of the GitHub releases, the key as a secret of GitHub Actions: no hand work, and everyone who can push to the
+  repository (or takes over an account that can) can sign a list. A list then changes only with a release.
+- (c) No fetched list for now: the list of the release is the only one. Nothing to keep; a new FFmpeg or a fixed pin reaches
+  people only with a new release (today's way), which is not what you chose in Q1.
+Until you answer, stages 1–4 are built with the release's list: the window, FFmpeg, fonts and speech work; only "a newer list
+without a new release" waits.

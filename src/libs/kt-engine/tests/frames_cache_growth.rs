@@ -75,7 +75,7 @@ fn lap(vr: &VideoRenderer, cache: &Arc<BurstCache>, q: Quality, region: (i64, i6
     let mut t = Tick(region.0);
     while t.0 < region.1 {
         let (missing, window) = video_prefetch_pass_sized(vr, cache, t, q, Some(region), &|_| false);
-        size_frames_cache(vr, cache, q, Some(region), 1, window, sizing);
+        size_frames_cache(vr, cache, q, Some(region), 1, window, (&|_| false, 0), sizing);
         for (m, pts, dq) in missing {
             decoded += 1;
             let frame = VideoFrame {
@@ -198,4 +198,75 @@ fn t2394_the_stream_pacing_reads_the_cap_it_has_now() {
     assert_eq!(vr.stream_order_bytes(), Some(CacheConfig::default().max_video_bytes / 4));
     cache.want_video(4 << 30);
     assert_eq!(vr.stream_order_bytes(), Some(1 << 30), "a quarter of the grown cap");
+}
+
+/// t3605 (cache-audit cut 1): a moment whose final frame is held — in the kept composites or on the
+/// disk prerender — needs no source frame. A loop with half its moments held decodes nothing for them,
+/// and the cache wants only the other half (plus the eighth and the window), counted AFTER the skip:
+/// when the held set grows the loop is counted again and the cap comes down to it.
+#[test]
+fn t3605_held_moments_neither_decode_nor_count() {
+    let p = stack(3);
+    let vr = VideoRenderer::new(&p);
+    let q = Quality { width: 640, height: 360 };
+    let region = (2 * SEC, 14 * SEC);
+    let frame = 640 * 360 * 4;
+    let half = 8 * SEC;
+    let held = |t: Tick| t.0 < half;
+    assert_eq!(kt_engine::loop_frame_bytes_except(&vr, q, region, usize::MAX, &held), 3 * 150 * frame, "the held half counted out");
+    let l = ledger(16 << 30);
+    let cache = Arc::new(BurstCache::with_ledger(CacheConfig::default(), l));
+    let mut sizing = FramesSizing::default();
+    // nothing held first: the cap grows for the whole loop
+    lap(&vr, &cache, q, region, &mut sizing);
+    let whole = cache.max_video_bytes();
+    assert!(whole >= 3 * 300 * frame, "the whole loop wanted: {} MB", whole >> 20);
+    // half the loop held: a lap decodes none of its frames, and the want comes down to the other half
+    let step = vr.grid.frame_step();
+    let mut decoded_held = 0;
+    let mut t = Tick(region.0);
+    while t.0 < region.1 {
+        let (missing, window) = video_prefetch_pass_sized(&vr, &cache, t, q, Some(region), &held);
+        size_frames_cache(&vr, &cache, q, Some(region), 1, window, (&held, 150), &mut sizing);
+        decoded_held += missing.iter().filter(|(_, pts, _)| pts.0 < half).count();
+        t = Tick(t.0 + step);
+    }
+    assert_eq!(decoded_held, 0, "no source frame of a held moment asked");
+    let cut = cache.max_video_bytes();
+    assert!(cut < whole, "the want sized after the skip: {} MB of {} MB", cut >> 20, whole >> 20);
+    assert!(cut >= 3 * 150 * frame + 3 * 150 * frame / 8, "still the unheld half and its eighth: {} MB", cut >> 20);
+}
+
+/// t4114 (durable-moment-key D4): the held moments are not counted on every pass: a 600-moment loop that
+/// fills one by one is counted at each sixteenth, at its lap's end and once more when one is lost, and the
+/// last want is a count made then.
+#[test]
+fn t4114_the_held_moments_are_not_counted_on_every_pass() {
+    let p = stack(1);
+    let vr = VideoRenderer::new(&p);
+    let q = Quality { width: 640, height: 360 };
+    let step = vr.grid.frame_step();
+    let moments = 500i64;
+    let region = (0, moments * step);
+    let l = ledger(64 << 30);
+    let cache = Arc::new(BurstCache::with_ledger(CacheConfig::default(), l));
+    let mut sizing = FramesSizing::default();
+    for n in 0..=moments {
+        let held = |t: Tick| t.0 < n * step;
+        size_frames_cache(&vr, &cache, q, Some(region), 1, 0, (&held, n as usize), &mut sizing);
+    }
+    let filled = sizing.counts_for_tests();
+    assert!(filled <= 18, "counted {filled} times over the fill");
+    sizing.lap();
+    size_frames_cache(&vr, &cache, q, Some(region), 1, 0, (&|_| true, moments as usize), &mut sizing);
+    let lapped = sizing.counts_for_tests();
+    assert!(lapped <= filled + 1);
+    // the lap that counted everything held asks the base; one lost is counted at once
+    let lost = |t: Tick| t.0 != 7 * step;
+    let cap = size_frames_cache(&vr, &cache, q, Some(region), 1, 0, (&lost, moments as usize - 1), &mut sizing);
+    assert_eq!(sizing.counts_for_tests(), lapped + 1, "a lost moment is counted at once");
+    let one = kt_engine::loop_frame_bytes_except(&vr, q, region, usize::MAX, &lost);
+    assert_eq!(one, 640 * 360 * 4, "one moment's frames");
+    assert_eq!(cap, cache.max_video_bytes());
+    assert_eq!(cap, CacheConfig::default().max_video_bytes, "the loop held final wants the base");
 }

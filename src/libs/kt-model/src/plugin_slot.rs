@@ -220,6 +220,12 @@ pub struct MissingSlot {
 }
 
 impl MissingSlot {
+    /// A slot that names `id` and nothing else: the placeholder of a slot a sound processor does not
+    /// run itself (fx-graph-dag D4, `kt_fx::sound_split`), inert like a missing plugin.
+    pub fn named(id: &str) -> MissingSlot {
+        MissingSlot { raw: serde_json::json!({ "kind": id }) }
+    }
+
     /// The id the file names.
     pub fn id(&self) -> &str {
         self.raw.get("kind").and_then(|k| k.as_str()).unwrap_or("")

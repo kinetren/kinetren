@@ -221,6 +221,31 @@ fn t2147_loop_names_why_a_frame_was_composed_again() {
     assert_eq!(lap2[3..6], ["3", "3", "0"], "lap 2: all kept");
 }
 
+/// Test t3269 (found-defects 846; capability `telemetry`): a lap is what was played. The render thread's
+/// own seek behind Play cuts no empty lap, the opening's seek (in either order with the region's record)
+/// and a click of a paused transport start none, a seek while playing starts one.
+#[test]
+fn t3269_a_lap_is_what_was_played() {
+    let p = |t: u64, aux: u32, a: u64| rec(Ev::Play, t * MS, |r| (r.aux, r.a) = (aux, a));
+    let region = |t: u64| rec(Ev::Play, t * MS, |r| (r.aux, r.b, r.c) = (play::REGION, 9000, 99_000));
+    let laps_of = |open: [Rec; 2]| {
+        let mut v = open.to_vec();
+        v.extend([
+            p(3, play::SEEK, 9000),
+            p(100, play::PLAY, 9000),
+            p(101, play::SEEK, 9000),
+            p(200, play::WRAP, 9500),
+            p(250, play::SEEK, 20_000),
+            p(300, play::PAUSE, 0),
+            p(310, play::SEEK, 9000),
+        ]);
+        lap_bounds(&run_of(v)).into_iter().map(|(a, b, ..)| (a / MS, b / MS)).collect::<Vec<_>>()
+    };
+    let want = vec![(101, 200), (200, 250), (250, 300)];
+    assert_eq!(laps_of([p(1, play::SEEK, 9000), region(2)]), want, "the seek first");
+    assert_eq!(laps_of([region(1), p(2, play::SEEK, 9000)]), want, "the region first");
+}
+
 /// Test t2148: "the slowest frames and their critical path": ordered by ask → done, each with its
 /// plan, stream runs, compute and executor lines.
 #[test]
@@ -312,6 +337,53 @@ fn t2243_during_names_scheduled_jobs_pauses_and_blocking_calls() {
         "block:ui:fsync",
     ] {
         assert!(o.contains(want), "{want} missing in:\n{o}");
+    }
+}
+
+/// Test t3253 (gpu-waits-named, found-defects 835): a frame whose executor stood says what it stood on —
+/// the lock and who else was inside the file — in `frame` and in `during`; another thread's wait and one
+/// outside the executor are not the frame's.
+#[test]
+fn t3253_a_standing_frame_names_what_it_waited_for() {
+    let mut run = run_of(vec![
+        rec(Ev::FrameAsk, 10 * MS, |r| r.id = 7),
+        rec(Ev::FramePlan, 10 * MS, |r| r.id = 7),
+        rec(Ev::FrameExec, 11 * MS, |r| {
+            r.id = 7;
+            r.dur = 4820 * MS;
+        }),
+        rec(Ev::FrameDone, 10 * MS, |r| {
+            r.id = 7;
+            r.aux = 1;
+            r.dur = 4822 * MS;
+        }),
+        rec(Ev::GpuWait, 12 * MS, |r| {
+            r.aux = 51;
+            r.a = kt_time::trace::gpu_wait::LOCK;
+            r.dur = 4818 * MS;
+        }),
+        rec(Ev::GpuWait, 12 * MS, |r| {
+            r.th = 9;
+            r.aux = 52;
+            r.a = kt_time::trace::gpu_wait::FILE;
+            r.dur = 4817 * MS;
+        }),
+        rec(Ev::GpuWait, 5000 * MS, |r| {
+            r.aux = 53;
+            r.a = kt_time::trace::gpu_wait::CALL;
+            r.b = 54;
+            r.dur = 2 * MS;
+        }),
+    ]);
+    for (n, s) in [(51, "pass times"), (52, "pass times write"), (53, "submit"), (54, "preview")] {
+        run.names.insert(n, s.into());
+    }
+    let f = frame(&run, 7);
+    assert!(f.contains("lock pass times for 4818"), "{f}");
+    assert!(!f.contains("file pass times write") && !f.contains("call submit"), "{f}");
+    let d = during(&run, 0, 6000 * MS);
+    for want in ["gpu_wait:lock pass times", "gpu_wait:file pass times write", "gpu_wait:call submit (preview)"] {
+        assert!(d.contains(want), "{want} missing in:\n{d}");
     }
 }
 
@@ -870,6 +942,46 @@ fn t2987_trace_cache_reads_the_tiers_work() {
     assert!(out.contains("prerendered light: 1"), "{out}");
     assert!(out.contains("stopped: input 1"), "{out}");
     assert!(out.lines().any(|l| l.contains("lap 0") && l.contains("3 restored")), "{out}");
+}
+
+/// Test t3841 (project-cache-folder D8): `trace cache` names the cache folder's place, each cache's bytes
+/// with its hits and misses as last counted, the drops with their reasons and the skipped writes; a real
+/// folder's records read back so, and its sizes are what it counts itself.
+#[test]
+fn t3841_trace_cache_names_each_cache_of_the_folder() {
+    use kt_media::cache_folder::{Folder, Tenant};
+    let dir = std::env::temp_dir().join(format!("kt-cli-t3841-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let root = dir.join("kinetren-cache");
+    let mut sizes = Default::default();
+    let items = kt_time::trace::testing::capture(|| {
+        let f = Folder::open(&root).unwrap();
+        f.set_free_for_tests(Some(1 << 40));
+        f.set_protect_for_tests(Some(std::time::Duration::ZERO));
+        f.set_cap(4000);
+        for i in 0..6u32 {
+            let rel = format!("results/v3/dev/frames/s{i}.mkv");
+            assert!(f.ask_room(1000));
+            std::fs::create_dir_all(root.join("results/v3/dev/frames")).unwrap();
+            std::fs::write(root.join(&rel), vec![0u8; 1000]).unwrap();
+            f.wrote(&rel, 1000, 10);
+            f.used(&rel);
+        }
+        let _ = f.read("media/none/peaks", b"PEAK", 1);
+        assert!(!f.ask_room(10_000), "more than the folder may hold");
+        sizes = f.sizes();
+        f.trace_sizes();
+    });
+    let run = run_of(kt_time::trace::testing::recs(&items).into_iter().collect());
+    let out = cache(&run);
+    println!("{out}");
+    assert!(out.contains("(beside the project), the cap 20.0 GB"), "{out}");
+    assert!(out.contains("frames  4000 bytes, 6 hits, 0 misses"), "{out}");
+    assert!(out.contains("media   0 bytes, 0 hits, 1 misses"), "{out}");
+    assert!(out.contains("dropped 2 of frames (2000 bytes): the cap"), "{out}");
+    assert!(out.contains("1 writes skipped"), "{out}");
+    assert_eq!(sizes[&Tenant::Frames], (4000, 4), "the trace's last count is the folder's own");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// t3316 (export-host-copy D1, found-defects 741): the export view states every move of a frame after

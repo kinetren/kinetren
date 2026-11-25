@@ -16,25 +16,23 @@ pub fn open_source(path: &str) -> Result<Box<dyn MediaSource>, String> {
     open_source_indexed(path, None)
 }
 
-/// Opening via the project's sidecar index DB: if the file has not changed,
-/// the batch index is taken from the DB and the full scan pass is skipped
-/// (fast opening of large files, test 34). The connection is short-lived —
-/// WAL allows parallel readers/writers from other threads.
+/// Opening via the project's cache folder: if the file has not changed,
+/// the packet index is taken from it and the full scan pass is skipped
+/// (fast opening of large files, test 34).
 /// Pseudo-paths (`synth:`, `gen:`) are resolved by the kt-media factory.
 pub fn open_source_indexed(
     path: &str,
     db_path: Option<&Path>,
 ) -> Result<Box<dyn MediaSource>, String> {
-    // A pseudo-path is cut off BEFORE the sidecar DB (R.53, item 413): opening an
-    // sqlite (the connection + WAL pragma + a schema version query) for a source that has no file is
-    // pure waste, and this is called on every edit of generator parameters and on every placement
+    // A pseudo-path is cut off BEFORE the cache folder (R.53, item 413): looking there
+    // for a source that has no file is pure waste, and this is called on every edit of generator parameters and on every placement
     // of a clip.
     if let Some(r) = kt_media::factory::open_pseudo(path) {
         return r;
     }
     // a file: FFmpeg's probe and the sidecar — never on the UI thread (one-scheduler, row 148)
     let _w = kt_time::block::wait(kt_time::block::kind::FILE_OPEN);
-    let mut db = db_path.and_then(|p| kt_media::index::MediaIndexDb::open(p).ok());
+    let mut db = db_path.and_then(|p| kt_media::index::MediaStore::open(p).ok());
     kt_media::factory::open_indexed(path, db.as_mut())
 }
 
@@ -105,7 +103,13 @@ pub struct IndexService {
 }
 
 struct IndexTask {
+    /// The project's cache folder.
     db_path: Option<PathBuf>,
+    /// A project just opened or named: its folder is noted and a former sidecar read
+    /// (project-cache-folder D3, D5).
+    project: Option<PathBuf>,
+    /// Where the project's caches lay, and the file it was.
+    carry: Option<(PathBuf, Option<PathBuf>)>,
     media: Vec<(MediaId, String)>,
 }
 
@@ -115,10 +119,10 @@ impl Drop for IndexService {
     }
 }
 
-/// What the index pump keeps between runs: the channel and the sidecar of the last path.
+/// What the index pump keeps between runs: the channel and the media index of the last path.
 struct IndexState {
     rx: std::sync::mpsc::Receiver<IndexTask>,
-    db: Option<(PathBuf, kt_media::index::MediaIndexDb)>,
+    db: Option<(PathBuf, kt_media::index::MediaStore)>,
 }
 
 impl IndexService {
@@ -140,19 +144,38 @@ impl IndexService {
             // one task per run: a project's list is one task, and a pause is seen between files
             // and inside a file (`checkpoint`)
             let Ok(task) = rx.try_recv() else { return Pump::Idle };
-            // the DB is reopened only when the path has changed: on
-            // each added media there is no point in reopening
+            // reopened only when the folder has changed
+            if let (Some((from, was)), Some(to), Some(now)) = (&task.carry, &task.db_path, &task.project) {
+                // the handle on the folder that may move goes first
+                *db = None;
+                if let Err(e) = kt_media::cache_folder::carry(from, to, was.as_deref(), now) {
+                    err_t.lock().unwrap().push(format!("{}: {e}", to.display()));
+                }
+            }
             if db.as_ref().map(|(p, _)| p) != task.db_path.as_ref() {
                 *db = task.db_path.as_ref().and_then(|p| {
                     let _w = kt_time::block::wait(kt_time::block::kind::SIDECAR);
-                    match kt_media::index::MediaIndexDb::open(p) {
-                        Ok(d) => Some((p.clone(), d)),
+                    match kt_media::index::MediaStore::open(p) {
+                        Ok(d) => {
+                            // Preferences list the folder (project-cache-folder D3)
+                            kt_media::cache_folder::registry::note(d.folder().root(), None);
+                            Some((p.clone(), d))
+                        }
                         Err(e) => {
                             err_t.lock().unwrap().push(format!("{}: {e}", p.display()));
                             None
                         }
                     }
                 });
+            }
+            if let (Some(project), Some((_, db))) = (&task.project, db.as_ref()) {
+                let folder = db.folder();
+                kt_media::cache_folder::registry::note(folder.root(), Some(project));
+                kt_media::old_sidecar::import(project, folder, &|| {
+                    stop_t.load(std::sync::atomic::Ordering::Acquire) || ctx.checkpoint()
+                });
+                kt_media::cache_folder::sweep_untitled();
+                kt_engine::render_cache::remove_former(&crate::journal::data_dir());
             }
             for (id, path) in task.media {
                 if stopped() {
@@ -162,7 +185,8 @@ impl IndexService {
                     continue;
                 }
                 let stop_here = || stop_t.load(std::sync::atomic::Ordering::Acquire) || ctx.checkpoint();
-                match build_peaks(&path, db.as_mut().map(|(_, d)| d), &stop_here) {
+                let built = crate::bg::caught(|| build_peaks(&path, db.as_mut().map(|(_, d)| d), &stop_here));
+                match built.unwrap_or_else(|| Err("the index of this file failed".into())) {
                     Ok(Some((p, l))) => {
                         out.lock().unwrap().insert(id, p);
                         if let Some(l) = l {
@@ -177,9 +201,28 @@ impl IndexService {
                     }
                 }
             }
+            // the folder's stamps and its size in the list, while this lane has the folder at hand
+            if let Some((_, db)) = db.as_ref() {
+                db.folder().flush();
+            }
             Pump::More
         });
         IndexService { tx, stop, errors, lane }
+    }
+
+    /// A project was opened or named: its cache folder is made known, and what a former build kept in
+    /// a sidecar is read into it before its media are indexed.
+    pub fn open_cache(&self, folder: PathBuf, project: PathBuf) {
+        let _ = self.tx.send(IndexTask { db_path: Some(folder), project: Some(project), carry: None, media: Vec::new() });
+        self.lane.kick();
+    }
+
+    /// The project is now `now`, whose caches lie in `to`: carry what lies in `from` (the folder of
+    /// `was`, `None` — an untitled project's) there.
+    pub fn carry_cache(&self, from: PathBuf, to: PathBuf, was: Option<PathBuf>, now: PathBuf) {
+        let carry = Some((from, was));
+        let _ = self.tx.send(IndexTask { db_path: Some(to), project: Some(now), carry, media: Vec::new() });
+        self.lane.kick();
     }
 
     /// Queue the media. The service is dead — not a disaster: the waveforms
@@ -188,7 +231,7 @@ impl IndexService {
         if media.is_empty() {
             return;
         }
-        let _ = self.tx.send(IndexTask { db_path, media });
+        let _ = self.tx.send(IndexTask { db_path, project: None, carry: None, media });
         self.lane.kick();
     }
 
@@ -213,7 +256,7 @@ type PeaksAndLoudness = (Peaks, Option<(f64, f64, f64)>);
 
 fn build_peaks(
     path: &str,
-    db: Option<&mut kt_media::index::MediaIndexDb>,
+    db: Option<&mut kt_media::index::MediaStore>,
     stop: &dyn Fn() -> bool,
 ) -> Result<Option<PeaksAndLoudness>, String> {
     let stopped = || stop();
@@ -271,13 +314,7 @@ fn build_peaks(
         }
         db.mark_complete(mid).map_err(|e| e.to_string())?;
     }
-    let mut levels = Vec::new();
-    let mut level = 0u32;
-    while let Ok(Some(l)) = db.audio_peaks(mid, level, 0) {
-        let r = db.audio_peaks(mid, level, 1).ok().flatten().unwrap_or_else(|| l.clone());
-        levels.push((l, r));
-        level += 1;
-    }
+    let levels = db.pyramid(mid).ok().flatten().map(pyramid_to_peaks).unwrap_or_default();
     // loudness is taken from the DB: the PREVIOUS launch could have computed it too — a second
     // full decode for an already known number is needed by nobody
     let loud = db.loudness(mid).ok().flatten();
@@ -639,7 +676,7 @@ pub(crate) mod tests {
         }; // here Drop
         std::thread::sleep(std::time::Duration::from_millis(400));
         let _ =
-            tx.send(IndexTask { db_path: None, media: vec![(MediaId(3), "synth:ramp".into())] });
+            tx.send(IndexTask { db_path: None, project: None, carry: None, media: vec![(MediaId(3), "synth:ramp".into())] });
         std::thread::sleep(std::time::Duration::from_millis(600));
         assert!(
             out2.lock().unwrap().is_empty(),
@@ -656,7 +693,7 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join(format!("kt-t411-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let db_path = dir.join("p.ktindex.db");
+        let db_path = dir.join("kinetren-cache");
         let file = fixture("sine48k_stereo.flac");
 
         let peaks: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -696,7 +733,7 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join(format!("kt-t1740-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        for db in [None, Some(dir.join("p.ktindex.db"))] {
+        for db in [None, Some(dir.join("kinetren-cache"))] {
             let out: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
             let loud: Arc<Mutex<LoudnessMap>> = Arc::new(Mutex::new(Default::default()));
             let svc = IndexService::start(out.clone(), loud);

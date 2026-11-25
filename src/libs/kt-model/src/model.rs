@@ -6,6 +6,7 @@
 //! TimelineEditor, where push went before the checks).
 
 use crate::genmedia::GeneratorKind;
+use crate::loudness::{LoudnessTarget, ProgramStage};
 use crate::project::*;
 use crate::published::*;
 use kt_time::{Tick, TickRange};
@@ -48,6 +49,92 @@ fn sync_gen_to_link_group(p: &mut Project, id: ClipId) {
         if c.id != id && c.link_group == Some(group) && c.media == media {
             c.r#gen = kind.clone();
             c.gen_auto = auto.clone();
+        }
+    }
+}
+
+/// The sound events paired with a generator's picture event: the same media and link group.
+fn gen_sound_of(clips: &[ClipEvent], v: &ClipEvent) -> Vec<ClipId> {
+    if v.kind != ClipKind::Video || v.link_group.is_none() {
+        return Vec::new();
+    }
+    clips
+        .iter()
+        .filter(|c| c.kind == ClipKind::Audio && c.media == v.media && c.link_group == v.link_group)
+        .map(|c| c.id)
+        .collect()
+}
+
+/// The audio row of a picture event's sound: track 1 of its reel.
+fn gen_sound_lane(strips: &[(u32, u32, u32)], v: &ClipEvent) -> u32 {
+    strips.iter().find(|(from, n, _)| (*from..*from + *n).contains(&v.lane)).map_or(0, |(_, _, audio)| *audio)
+}
+
+/// The next free ids of `Command::SetGenSound`.
+struct GenSoundIds {
+    clip: u64,
+    group: u64,
+}
+
+/// `Command::SetGenSound` in one reel.
+fn set_gen_sound(
+    clips: &mut Vec<ClipEvent>,
+    morphers: &mut [MorpherEvent],
+    transitions: &mut Vec<TransitionEvent>,
+    (media, only, sounds, strips): (MediaId, Option<ClipId>, bool, &[(u32, u32, u32)]),
+    ids: &mut GenSoundIds,
+) {
+    let pictures: Vec<ClipId> = clips
+        .iter()
+        .filter(|c| c.media == media && c.kind == ClipKind::Video && only.is_none_or(|id| id == c.id))
+        .map(|c| c.id)
+        .collect();
+    let mut gone: Vec<ClipId> = Vec::new();
+    for id in pictures {
+        let Some(v) = clips.iter().find(|c| c.id == id).cloned() else { continue };
+        let pair = gen_sound_of(clips, &v);
+        if !sounds {
+            gone.extend(pair);
+            continue;
+        }
+        if !pair.is_empty() {
+            continue;
+        }
+        let group = v.link_group.unwrap_or_else(|| {
+            ids.group += 1;
+            GroupId(ids.group - 1)
+        });
+        if let Some(c) = clips.iter_mut().find(|c| c.id == id) {
+            c.link_group = Some(group);
+        }
+        ids.clip += 1;
+        clips.push(ClipEvent {
+            id: ClipId(ids.clip - 1),
+            kind: ClipKind::Audio,
+            lane: gen_sound_lane(strips, &v),
+            link_group: Some(group),
+            fx: Vec::new(),
+            fx_auto: Vec::new(),
+            fx_bypass: Vec::new(),
+            fx_in: Vec::new(),
+            fx_off: false,
+            opacity: 1.0,
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
+            masks: Default::default(),
+            overrides: Vec::new(),
+            ..v
+        });
+    }
+    if gone.is_empty() {
+        return;
+    }
+    clips.retain(|c| !gone.contains(&c.id));
+    transitions.retain(|t| ![t.a, t.b].into_iter().flatten().any(|id| gone.contains(&id)));
+    for m in morphers {
+        if let Some(t) = m.targets.clip_ids_mut() {
+            t.retain(|id| !gone.contains(id));
         }
     }
 }
@@ -139,7 +226,8 @@ fn sync_warp_to_link_group(p: &mut Project, id: ClipId) {
             }
             // it disappeared from one — we remove it from the partner along with its curves
             (Some(j), None) => {
-                crate::fx_graph::remove_slot(&mut c.fx_in, c.fx.len(), j);
+                let n = c.fx.len();
+                crate::fx_graph::remove_slot(&mut c.fx_in, n, j);
                 c.fx.remove(j);
                 if j < c.fx_auto.len() {
                     c.fx_auto.remove(j);
@@ -147,9 +235,23 @@ fn sync_warp_to_link_group(p: &mut Project, id: ClipId) {
                 if j < c.fx_bypass.len() {
                     c.fx_bypass.remove(j);
                 }
+                slot_gone(c, j);
+                crate::slot_addr::remap(p, pid, &crate::slot_addr::without(n, j));
             }
             (None, None) => {}
         }
+    }
+}
+
+/// What of an event follows a slot the MODEL removed from its chain: the slot's masks and the leading
+/// Geometry node's place (its curves, switch and wires are the remover's).
+fn slot_gone(c: &mut ClipEvent, i: usize) {
+    if i < c.masks.slots.len() {
+        c.masks.slots.remove(i);
+    }
+    c.masks.canonicalize();
+    if c.geometry_pos > i {
+        c.geometry_pos -= 1;
     }
 }
 
@@ -180,16 +282,15 @@ fn sync_pairs_to_link_group(p: &mut Project, id: ClipId) {
         .collect();
     for pid in partners {
         let Some(c) = p.clips.iter_mut().find(|c| c.id == pid) else { continue };
+        let mut n = c.fx.len();
         let removed = mirror_halves(&mine, &mut c.fx, &mut c.fx_auto, &mut c.fx_bypass, &mut c.fx_in);
-        for i in removed {
-            if i < c.masks.slots.len() {
-                c.masks.slots.remove(i);
-            }
-            if c.geometry_pos > i {
-                c.geometry_pos -= 1;
-            }
+        for i in &removed {
+            slot_gone(c, *i);
         }
-        c.masks.canonicalize();
+        for i in removed {
+            crate::slot_addr::remap(p, pid, &crate::slot_addr::without(n, i));
+            n -= 1;
+        }
     }
 }
 
@@ -518,6 +619,14 @@ pub enum Command {
         id: ClipId,
         masks: crate::mask::EventMasks,
     },
+    /// The event's effect slots moved (found-defects 906): `to[old]` — the new number of each slot of the
+    /// chain as it stands, `None` — gone. Moves every ADDRESS of them (published parameters, links) and
+    /// nothing else. It stands LAST in its batch when the lists sent with it were taken before the move (they
+    /// carry links in the old numbers too), and first when they are an earlier state's own.
+    MapFxSlots {
+        id: ClipId,
+        to: crate::slot_addr::SlotMap,
+    },
     /// The event chain's wiring (fx-graph-dag D1): a full replacement, canonical on apply. A gesture
     /// that moves slots sends it with `SetFx` in one batch; the batch's validation sees both.
     SetFxIn {
@@ -547,6 +656,20 @@ pub enum Command {
         media: MediaId,
         kind: GeneratorKind,
         auto: Vec<ParamCurve>,
+    },
+    /// The sound events of a generator's picture events in EVERY reel kept in step with whether it
+    /// sounds (found-defects 1000, 1001): a sounding one gets its linked sound event on audio track 1 of
+    /// its reel, with the picture's values; a silent one loses it. `only` — one picture event, else all
+    /// of the media. New ids go up from `first_id`, new link groups from `first_group`. `strips` — the
+    /// reels expanded in place (video rows from, how many, their first audio row): the command runs in
+    /// the working view, where such a reel's track 1 is a row of the root.
+    SetGenSound {
+        media: MediaId,
+        only: Option<ClipId>,
+        sounds: bool,
+        first_id: u64,
+        first_group: u64,
+        strips: Vec<(u32, u32, u32)>,
     },
     LinkClips {
         ids: Vec<ClipId>,
@@ -638,6 +761,14 @@ pub enum Command {
     },
     SetSettings {
         settings: ProjectSettings,
+    },
+    /// The document's loudness target (loudness-norms).
+    SetLoudness {
+        target: LoudnessTarget,
+    },
+    /// The document's program stage; `None` — none.
+    SetProgram {
+        stage: Option<ProgramStage>,
     },
     /// Morpher (v1 port). Unlike v1, ALL operations are undo-able (defect D6).
     AddMorpher(MorpherEvent),
@@ -799,6 +930,7 @@ impl Command {
             | Command::SetFxAuto { id, .. }
             | Command::SetMasks { id, .. }
             | Command::SetFxIn { id, .. }
+            | Command::MapFxSlots { id, .. }
             | Command::SetClipGen { id, .. }
             | Command::SetClipGenAuto { id, .. }
             | Command::UnlinkClip { id }
@@ -853,6 +985,7 @@ impl Command {
             | Command::SetFxAuto { id, .. }
             | Command::SetMasks { id, .. }
             | Command::SetFxIn { id, .. }
+            | Command::MapFxSlots { id, .. }
             | Command::SetClipGen { id, .. }
             | Command::SetClipGenAuto { id, .. }
             | Command::UnlinkClip { id }
@@ -868,6 +1001,17 @@ impl Command {
             Command::ApplyGenToAll { media, .. } => {
                 for c in p.clips.iter().filter(|c| c.media == *media) {
                     add(Some((lane_key_of(c.kind), c.lane)));
+                }
+            }
+            Command::SetGenSound { media, only, sounds, strips, .. } => {
+                for c in p.clips.iter().filter(|c| c.media == *media && only.is_none_or(|id| id == c.id)) {
+                    add(Some((lane_key_of(c.kind), c.lane)));
+                    if *sounds && gen_sound_of(&p.clips, c).is_empty() {
+                        add(Some((LaneKind::Audio, gen_sound_lane(strips, c))));
+                    }
+                    for s in gen_sound_of(&p.clips, c) {
+                        add(of_clip(s));
+                    }
                 }
             }
             // transitions live AT the joint of two events; locking either of the rows locks it
@@ -898,6 +1042,8 @@ impl Command {
             | Command::SetMediaPath { .. }
             | Command::RemoveMedia { .. }
             | Command::SetSettings { .. }
+            | Command::SetLoudness { .. }
+            | Command::SetProgram { .. }
             | Command::SetTrimStretchesAuto { .. }
             | Command::AddMarker { .. }
             | Command::RemoveMarker { .. }
@@ -958,7 +1104,9 @@ impl Command {
             | Command::SetFxAuto { .. }
             | Command::SetMasks { .. }
             | Command::SetFxIn { .. }
+            | Command::MapFxSlots { .. }
             | Command::ApplyGenToAll { .. }
+            | Command::SetGenSound { .. }
             | Command::LinkClips { .. }
             | Command::UnlinkClip { .. }
             | Command::AddTransition(_)
@@ -979,6 +1127,8 @@ impl Command {
             | Command::SetTrackFxOff { .. }
             | Command::RemoveMedia { .. }
             | Command::SetSettings { .. }
+            | Command::SetLoudness { .. }
+            | Command::SetProgram { .. }
             | Command::AddMorpher(_)
             | Command::RemoveMorpher { .. }
             | Command::SetMorpher(_)
@@ -1213,9 +1363,11 @@ impl Band {
                 | Command::SetFxAuto { .. }
                 | Command::SetMasks { .. }
                 | Command::SetFxIn { .. }
+                | Command::MapFxSlots { .. }
                 | Command::SetClipGen { .. }
                 | Command::SetClipGenAuto { .. }
                 | Command::ApplyGenToAll { .. }
+                | Command::SetGenSound { .. }
                 | Command::LinkClips { .. }
                 | Command::UnlinkClip { .. }
                 | Command::AddTransition(_)
@@ -1229,6 +1381,8 @@ impl Band {
                 | Command::SetMarkerDuration { .. }
                 | Command::RemoveMedia { .. }
                 | Command::SetSettings { .. }
+                | Command::SetLoudness { .. }
+                | Command::SetProgram { .. }
                 | Command::AddMorpher(_)
                 | Command::RemoveMorpher { .. }
                 | Command::SetMorpher(_)
@@ -1438,6 +1592,8 @@ impl TimelineModel {
         let mut p = self.project.clone();
         if let Some(cur) = self.editing {
             p.sequences.retain(|s| s.id != cur);
+            // a reel opened for editing is not the program (loudness-norms D3)
+            p.program = None;
         }
         p
     }
@@ -1641,7 +1797,13 @@ impl TimelineModel {
     /// one undo entry (live editing of FX parameters from the window). `Ok(false)`: the command
     /// changed nothing and was not taken as an edit.
     pub fn apply_coalesced(&mut self, cmd: Command, gesture: u64) -> Result<bool, CommandError> {
-        let scratch = self.simulate(std::slice::from_ref(&cmd))?;
+        self.apply_batch_coalesced(vec![cmd], gesture)
+    }
+
+    /// `apply_coalesced` of several commands that only make sense together (a chain edit that moves slots
+    /// and their addresses): all or none, one gesture token.
+    pub fn apply_batch_coalesced(&mut self, cmds: Vec<Command>, gesture: u64) -> Result<bool, CommandError> {
+        let scratch = self.simulate(&cmds)?;
         // an equal value written again is no edit (input-without-work): a frame of a window
         // that re-sends what the model holds must not end in an undo step or a rebuild
         if scratch == self.project {
@@ -1653,7 +1815,7 @@ impl TimelineModel {
         }
         self.project = scratch;
         for b in &mut self.bands {
-            b.after_batch(std::slice::from_ref(&cmd));
+            b.after_batch(&cmds);
         }
         self.bands.retain(|b| self.project.clips.iter().any(|c| c.id == b.inst));
         self.rebuild_bench();
@@ -1887,6 +2049,9 @@ impl TimelineModel {
                 let c = find(*id)?;
                 crate::check_event_masks(*id, c.kind, c.fx.len(), masks)
                     .map_err(CommandError::InvalidClip)?;
+            }
+            Command::MapFxSlots { id, .. } => {
+                find(*id)?;
             }
             Command::SetFxIn { id, fx_in } => {
                 let c = find(*id)?;
@@ -2268,6 +2433,24 @@ impl TimelineModel {
                 probe.media = *media;
                 kt_check(p, &probe)?;
             }
+            Command::SetGenSound { media, first_id, first_group, .. } => {
+                if p.gen_media_path(*media).is_none() {
+                    return Err(CommandError::MediaNotFound(*media));
+                }
+                if *first_id <= p.max_clip_id() || *first_group <= p.max_group_id() {
+                    return Err(CommandError::IdInUse(*first_id));
+                }
+            }
+            Command::SetLoudness { target } => {
+                if !target.valid() {
+                    return Err(CommandError::InvalidClip(ProjectError::BadLoudness));
+                }
+            }
+            Command::SetProgram { stage } => {
+                if stage.is_some_and(|g| !g.valid()) {
+                    return Err(CommandError::InvalidClip(ProjectError::BadLoudness));
+                }
+            }
             Command::SetSettings { settings } => {
                 if settings.fps == 0 || kt_time::TICK_HZ % settings.fps as i64 != 0 {
                     return Err(CommandError::InvalidClip(ProjectError::BadFps));
@@ -2630,6 +2813,7 @@ impl TimelineModel {
                     t.masks = masks;
                 }
             }
+            Command::MapFxSlots { id, to } => crate::slot_addr::remap(p, id, &to),
             Command::SetFxIn { id, mut fx_in } => {
                 let c = Self::clip_mut_on(p, id);
                 crate::fx_graph::canonical(&mut fx_in, c.fx.len());
@@ -2674,6 +2858,17 @@ impl TimelineModel {
                 for s in &mut p.sequences {
                     apply(&mut s.clips);
                 }
+            }
+            Command::SetGenSound { media, only, sounds, first_id, first_group, strips } => {
+                let mut ids = GenSoundIds { clip: first_id, group: first_group };
+                set_gen_sound(&mut p.clips, &mut p.morphers, &mut p.transitions, (media, only, sounds, &strips), &mut ids);
+                let lanes = u32::from(p.clips.iter().any(|c| c.kind == ClipKind::Audio));
+                p.ensure_tracks(LaneKind::Audio, lanes);
+                for s in &mut p.sequences {
+                    set_gen_sound(&mut s.clips, &mut s.morphers, &mut s.transitions, (media, only, sounds, &[]), &mut ids);
+                    s.ensure_tracks(LaneKind::Audio, u32::from(s.clips.iter().any(|c| c.kind == ClipKind::Audio)));
+                }
+                p.assign_track_ids();
             }
             Command::LinkClips { ids, group } => {
                 for c in &mut p.clips {
@@ -2819,6 +3014,8 @@ impl TimelineModel {
                 Self::clip_mut_on(p, id).overrides.retain(|x| x.pub_id != pub_id);
             }
             Command::SetSettings { settings } => p.settings = settings,
+            Command::SetLoudness { target } => p.loudness = target,
+            Command::SetProgram { stage } => p.program = stage,
             Command::AddMorpher(mut m) => {
                 p.ensure_tracks(LaneKind::Morph, m.lane + 1);
                 sync_pairs_in_patch(&mut m.patch, None);

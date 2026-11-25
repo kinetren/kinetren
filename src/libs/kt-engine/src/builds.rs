@@ -34,6 +34,9 @@ pub struct Built {
     pub project: Arc<Project>,
     pub audio: Arc<AudioRenderer>,
     pub video: Arc<VideoRenderer>,
+    /// What is heard (`program::sound`), where the document has a program stage: the stage compares it
+    /// with what it was measured on.
+    pub sound: Option<u64>,
     /// What this build walked and derived (`kt_time::cost`, on the builder thread): an edit's
     /// `EventDerive` is the events it touched.
     pub cost: kt_time::cost::Costs,

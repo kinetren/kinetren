@@ -1,5 +1,10 @@
 # Proposal
 
+> REVISION 2 (spec session, 2026-11-25, on 36d751a7). The first text waited for three contracts of
+> `plugin-api-stage1`: all three are in (positioned taps, WGSL warp plugins, barrier graphs). Two facts changed since:
+> `glow` lives in `fx-video-blur`, and kernels have no CPU twin (`compute-kernels-render`). Implementation-ready, may
+> start now.
+
 ## Why
 
 Wave W1 of the effects catch-up (F-FX-007, change `effects-transitions-catchup`, design D2/D3): the
@@ -14,13 +19,12 @@ confirmed the gap and the forms the market uses.
 - Four new video kinds as built-in plugins:
   - `lens_housing` (point-wise, `src/plugins/fx-video-color` next to `vignette`): the dark round
     housing and soft corners of a fisheye, measured in its own stage's coordinates;
-  - `lens_dirt` (barrier, `src/plugins/fx-video-stylize` next to `glow`): the frame's own highlights
+  - `lens_dirt` (barrier, `src/plugins/fx-video-blur` next to `glow`): the frame's own highlights
     (glow's threshold) × a seeded procedural dirt pattern, added back — invisible on a dark frame;
-  - `lens_flare` (barrier, `src/plugins/fx-video-stylize`): ghosts along the line from a placed,
+  - `lens_flare` (barrier, `src/plugins/fx-video-blur`): ghosts along the line from a placed,
     animatable light position through the frame centre;
-  - `lens_drops` (geometry, `src/plugins/fx-video-distort`): refraction by seeded drops as a new
-    `drops` MODE of the Warp primitive — the one core edit of the wave (`geom.rs` +
-    `geom_fused.wgsl` in one commit).
+  - `lens_drops` (geometry, `src/plugins/fx-video-distort`): refraction by seeded drops, a warp plugin with its own WGSL
+    arm (`warp_lens_drops`), no core edit.
 - Three factory chain presets: "Fisheye lens" (`lens_distort` + `lens_housing`), "Zoom Shake" and
   "Handheld" (`geometry` curves with zigzag segments, R.61); the existing "Punch in" stays as it is.
 - The picker, the catalogs (×5) and F-FX-007 learn the four ids; F-FX-007's lens rows become `have`
@@ -41,12 +45,8 @@ confirmed the gap and the forms the market uses.
 
 ## Impact
 
-- Code: `src/plugins/fx-video-color`, `src/plugins/fx-video-stylize`, `src/plugins/fx-video-distort`
-  (created by `plugin-api-stage1` stage 4, or by this change with only its new kinds if that stage has
-  not reached them); `src/libs/kt-fx/src/geom.rs` + `src/libs/kt-gpu/src/shaders/geom_fused.wgsl`
-  (the `drops` Warp mode); `src/libs/kt-plugins-builtin` (`BUILTIN_IDS` +4);
-  `src/apps/kt-app/assets/fx-presets-factory.json`; kt-app catalogs and picker keywords.
-- Depends on `plugin-api-stage1`'s three missing contracts (its task 4.1): a positioned tap
-  (`lens_housing`), geometry primitives in the API (`lens_drops`), a barrier pass on the GPU
-  (`lens_dirt`, `lens_flare`). The presets do not wait.
+- Code: `src/plugins/fx-video-color` (housing), `src/plugins/fx-video-blur` (dirt, flare), `src/plugins/fx-video-distort`
+  (drops); `src/libs/kt-plugins-builtin` (`BUILTIN_IDS` +4); `src/apps/kt-app/assets/fx-presets-factory.json`; kt-app
+  catalogs and picker keywords. No core crate.
+- Depends on nothing open.
 - Tests reserved: t1010–t1015.

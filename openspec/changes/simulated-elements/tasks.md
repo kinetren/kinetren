@@ -1,14 +1,13 @@
 # Tasks: simulated-elements
 
-> DESIGN ONLY until the owner answers Q1–Q2 and the orchestrator's go. Revision 2 (D3): the system, then three
-> applications (Q1 a). Tests: t3968–t3973, t3983–t3989 (t3990 reserved). Depends on `motion-driven-params` (the outer
-> map's channels); the mask application on `point-tracker`.
+> IMPLEMENTATION-READY (revision 4, 2026-11-25, orch `fc60a5d9`: design D19); no open question. Tests: t3968–t3973, t3983–t3992, t4107. After `motion-driven-params` (`OuterPath`) and `shared-events`; better after `track-stream-stage` 1.2 (`Look`), else it brings its own probe form. Areas: new `kt-sim`, kt-plugin-api, MODEL (**v+**), the plan (`video.rs`,
+> `video_plan.rs`, `moment_key.rs`), GPU (a sprite op), PLAYER (a thread), SHELL. Five sessions: A1 (1, 3), A2 (2.1, 2.3, 2.4, 4.2), A3 (2.2, 2.5, 4.1), A4 (2.6, 4.3), A5 (5, 6); a merge after each. The tracker home of a mask works when `point-tracker` is in and is not needed to build this.
 
 ## 0. Notes
 
 - [x] 0.1 F-FX-005 refreshed (the system); F-FX-006 points to it for particles
 - [x] 0.2 proposal (the owner's whole items and this design's reading), design (D1–D10, class walk D9), deltas `simulation` (new), `video-plan`, `project-format`, `ui-reach`; planned OTIO row renamed; `openspec validate simulated-elements --strict`
-- [ ] 0.3 the owner's answers folded in
+- [x] 0.3 Q1, Q2 decided by the owner's words; D13–D18
 
 ## 1. The system (kt-sim, kt-plugin-api)
 
@@ -16,17 +15,37 @@
 - [ ] 1.2 the integrator: the outer clock per instance path, fixed step, frozen math, interpolation, memory checkpoints; t3968, t3970
 - [ ] 1.3 drivers (outer channels, home acceleration, links, sound analysis, tracker, other sets) and the dependency order; t3985
 
-## 2. In the plan (kt-engine, kt-gpu)
+- [ ] 1.4 the reference frame and exact homes (D15); t3991
 
-- [ ] 2.1 `frame_plan` asks the sets for poses, the plan and durable keys hash them; zero cost without sets; t3969, t3971, t3987
-- [ ] 2.2 the incomplete-frame report and the export's forward integration; the ceiling; t3986
-- [ ] 2.3 the instanced-sprite pass, warmed with the project
+## 2. In the plan (kt-engine, kt-gpu) — design D10, D12
+
+- [ ] 2.1 plan-side sets: `layer_src` asks `Sim::state_at` and writes simulated numbers into
+      `LayerSrc.masks` and the sub-plan transforms; the `SimKey` joins the per-event memo key
+      (`incremental.rs`, t2004); zero cost without sets; t3969, t3971, t3987
+- [ ] 2.2 source-side producers draw only what does not move (design D12.1): the title's glyph atlas (one sprite per
+      cluster, `GeneratorSource`, `kt-media/src/generator.rs:169` `render_at`), the emitter's sprite; the poses of
+      letters and particles are a plan-side set in `layer_src` like 2.1; two masks per cluster, the shadow blurred after placement (D17); the atlas's identity checked against the values'; no salt from the `SimKey`, no drivers in
+      `Retune::Gen` (a retune drops the source's whole cache, `worker.rs:363–380`); a title or emitter with no set
+      keeps salt 0 and its bytes; t4107
+- [ ] 2.3 catch-up: the player's `sim` thread (class `near`, joined through `kt_time::shutdown`); `layer_src` calls
+      `state_at` with a small budget and on `Behind` notes `note_sim_short` beside `note_stream_short`
+      ; the worker never steps; `render_ahead::Waits` on `sim::walked`; `Sim::preroll` in both export
+      bodies; t3986
+- [ ] 2.4 the key `SimKey(t)` over the drivers' prefix [origin, t] (design D12.2, the table of D16); sound not analysed
+      answers `Behind` (t3992); the plan and the probe hash
+      `(SimKey(t), t)`; `Sim::key_only` never steps, so `show_kept` finds kept moments; probe key == full key; the
+      per-event memo key takes the static part only (t2004); t3987
+- [ ] 2.5 the instanced-sprite op and pass in kt-gpu (design D12.3): a `Compiled` pipe with its `Slot`, timed, cut by
+      the arbiter, warmed by `prewarm::effect_ids`; `kt_engine::moment_key` hashes the op
+      (`durable-moment-key`, built first; before it `plan_key` and `put_plan` would both, t2981)
+- [ ] 2.6 the emitter's `forgets`, the step grid from the origin, the closed-form spawns and ceiling (D18); t3986
 
 ## 3. Model and format
 
-- [ ] 3.1 `ElementSource`, `SimRule` rows, element addresses for links; format by content; t3973
+- [ ] 3.1 `ElementSet`, `SetOp`, `Driver`, `SetSets`, `ParamOwner::Set`, copy/paste/delete rules (D13); format by content; t3973
+- [ ] 3.2 `SimSpan` in `Split`, `FrameHold`, `TrimStart` (D14); t3990
 
-## 4. Applications (Q1 a)
+## 4. Applications (stage A)
 
 - [ ] 4.1 letters: title clusters/words/lines as a producer, poses at rasterization; spring, pendulum, rope, fall solvers in `plugins/sim-basic`
 - [ ] 4.2 mask vertices with a tracker home
@@ -39,5 +58,6 @@
 
 ## 6. Close
 
+- [ ] 6.0 stage B rows (D18) entered in the build queue, one change each
 - [ ] 6.1 What's new; F-FX-005 and F-FX-006 verdicts; registry F2 and D3 moved
 - [ ] 6.2 `src/scripts/finish.sh` (orchestrator), version in the report

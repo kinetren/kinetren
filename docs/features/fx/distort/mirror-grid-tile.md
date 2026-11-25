@@ -117,6 +117,23 @@ per-row/column flips, a phase and a gap, and a new Tile (Motion Tile with a sour
 and phases); all three are steps of the fused geometry pass. The other legacy effects get a parameter audit
 against Vegas and AE in the change's design.
 
+Change `geometry-fx-flex`, implementation-ready 2026-11-24. Two readings of his words corrected: the Tile works INSIDE a
+rectangle ("из верхней части … там"), the rest of the picture stays; a reflection may also be flipped along its line
+("вертикальное отражение отзеркалить по горизонтали").
+
+The audit of the other legacy effects (rows for F-FX-007, built later by his A24 "остальное потом"; the editors' columns
+are [NOT VERIFIED] live):
+
+| Effect | Our rows | What Vegas / After Effects add | Row for the waves |
+|---|---|---|---|
+| Kaleidoscope | segments, angle | CC Kaleida: size, rotation, centre, mirroring kind | centre on the preview, mirroring kind |
+| Twirl | angle, radius | centre | centre on the preview |
+| Ripple | amount, freq, phase | centre, wave kind, wave speed (moves without keys) | centre, wave speed, wave kind |
+| Lens distort | k1, k2 | field of view, reverse distortion, centre | FOV units, reverse, centre |
+| Pixelate | size | separate horizontal and vertical sizes | x/y sizes |
+| Halftone | size, angle | per-channel angles, dot shape | dot shape |
+| Vignette | strength, radius, softness | roundness, centre, colour | roundness, centre, colour |
+
 ## Sources
 
 - `docs/ktprompts/kkt-26.11.01b.txt` lines 7–9; `docs/user-feedback.md` "the second list" (taken 2026-11-01).

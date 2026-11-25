@@ -54,6 +54,7 @@ fn plan<'a>(f: &Arc<VideoFrame>, fx: &'a [FxInstance], id: u64) -> FramePlan<'a>
         source: SourceId(id),
         cache_idx: 0,
         content: id,
+        leaf: Default::default(),
         src_scale: 1,
         input: kt_engine::video_plan::LayerInput::Frame(Some(f.clone())),
         fx: kt_engine::LayerChain::Borrowed(fx),
@@ -259,7 +260,8 @@ fn t2255_the_compute_host_admits_the_frame_on_screen_first() {
             let host = host.clone();
             hs.push(std::thread::spawn(move || {
                 let _class = with_class(c);
-                // never measured: each claims the whole bound
+                // never measured: each claims a piece's limit, half the bound, so the look-ahead's follows
+                // the frame's at once
                 match c {
                     Class::Now => spin(&*host, "test:now", 1000, 1).unwrap(),
                     _ => spin(&*host, "test:near-long", 5_000_000, 1).unwrap(),

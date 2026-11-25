@@ -86,6 +86,7 @@ fn t1274_masked_frames_agree_exactly_on_both_backends() {
             source: SourceId(9000 + i as u64),
             cache_idx: 0,
             content: xxhash_rust::xxh3::xxh3_64(&f.rgba),
+            leaf: Default::default(),
             src_scale: 1,
             input: kt_engine::video_plan::LayerInput::Frame(Some(f)),
             fx: kt_engine::LayerChain::Borrowed(&fx[..]),

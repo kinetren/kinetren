@@ -8,7 +8,7 @@ exposed as an address that any property can link to.
 
 ### Requirement: Track samples are tied to the material and made deterministically
 A tracker SHALL belong to an event and hold up to four points, each with a feature box, a search box and
-samples (position in source pixels, confidence) keyed by the material frame of the event's media; split,
+samples (position in the source, confidence) keyed by the material tick of the frame the plan shows; split,
 trim, move, reverse and speed changes SHALL change no sample. Samples SHALL be computed by zero-mean
 normalized cross-correlation on an integer luma pyramid with sub-pixel refinement, and the same media,
 boxes and start frame SHALL give byte-identical samples on every machine.

@@ -374,6 +374,7 @@ fn played(p: Project, src: GopSource) -> kt_engine::preview_bench::BenchReport {
         name: String::new(),
         backend: String::new(),
         software: true,
+        driver: String::new(),
     }))));
     play_range(&player, ring, BenchOptions { from: Tick(0), to: Tick(4 * SEC), ..Default::default() })
 }

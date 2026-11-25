@@ -249,7 +249,9 @@ impl Shell {
         }
         let esc = take_armed(ctx, id);
         let response = r.map(|r| {
-            record(ctx, id, r.response.layer_id, kind.takes_esc());
+            // a window told to close this frame is not what the NEXT frame's Esc closes (found-defects
+            // 905): still listed, it took a second press that came one frame later
+            record(ctx, id, r.response.layer_id, kind.takes_esc() && !esc && open);
             if let Some(p) = self.probe {
                 crate::widgets::field_probe::note(p, r.response.rect);
             }
@@ -281,8 +283,8 @@ pub(crate) fn modal<R>(
         IN_MODAL.set(false);
         r
     });
-    record(ctx, id, r.response.layer_id, true);
     let esc = take_armed(ctx, id);
+    record(ctx, id, r.response.layer_id, !esc);
     Shown {
         closed: esc.then_some(Closed::Esc),
         response: Some(r.response),
@@ -315,7 +317,8 @@ pub(crate) fn fitting() -> bool {
 #[derive(Clone, Default)]
 struct Frame {
     shown: Vec<(egui::Id, egui::LayerId, bool)>,
-    armed: Option<egui::Id>,
+    /// The windows Esc closes this frame: a slow frame reads several presses, one window each.
+    armed: Vec<egui::Id>,
     /// The windows open as the telemetry journal knows them, with their titles: a window that
     /// appears is journaled once, one that a frame no longer draws is journaled closed
     /// (telemetry-journal). Allocates only when a window opens.
@@ -333,12 +336,9 @@ fn record(ctx: &egui::Context, id: egui::Id, layer: egui::LayerId, esc: bool) {
 fn take_armed(ctx: &egui::Context, id: egui::Id) -> bool {
     ctx.data_mut(|d| {
         let f = d.get_temp_mut_or_default::<Frame>(key());
-        if f.armed == Some(id) {
-            f.armed = None;
-            true
-        } else {
-            false
-        }
+        let n = f.armed.len();
+        f.armed.retain(|a| *a != id);
+        f.armed.len() < n
     })
 }
 
@@ -347,7 +347,7 @@ fn take_armed(ctx: &egui::Context, id: egui::Id) -> bool {
 pub(crate) fn begin_frame(ctx: &egui::Context) -> Vec<egui::Id> {
     let (shown, closed) = ctx.data_mut(|d| {
         let f = d.get_temp_mut_or_default::<Frame>(key());
-        f.armed = None;
+        f.armed.clear();
         let shown = std::mem::take(&mut f.shown);
         let mut closed = Vec::new();
         f.open.retain(|(id, title)| {
@@ -372,9 +372,9 @@ pub(crate) fn begin_frame(ctx: &egui::Context) -> Vec<egui::Id> {
     v.into_iter().map(|(_, id)| id).collect()
 }
 
-/// Hand Esc to the window `escape_action` picked: its `show` this frame reports `Closed::Esc`.
-pub(crate) fn arm_esc(ctx: &egui::Context, id: Option<egui::Id>) {
-    if let Some(id) = id {
-        ctx.data_mut(|d| d.get_temp_mut_or_default::<Frame>(key()).armed = Some(id));
+/// Hand Esc to the windows `escape_action` picked: the `show` of each this frame reports `Closed::Esc`.
+pub(crate) fn arm_esc(ctx: &egui::Context, ids: Vec<egui::Id>) {
+    if !ids.is_empty() {
+        ctx.data_mut(|d| d.get_temp_mut_or_default::<Frame>(key()).armed = ids);
     }
 }

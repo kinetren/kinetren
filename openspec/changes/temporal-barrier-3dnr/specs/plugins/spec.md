@@ -1,16 +1,13 @@
 ## ADDED Requirements
 
-### Requirement: A temporal kind is a recursion over its own state with declared anchors
-A video plugin MAY declare the planner class `Temporal` and provide a temporal kernel: optional spatial
-passes before (run on every history frame), a step from the current input and its previous state to the
-new state and output, optional spatial passes after (run on the shown frame), a warm-up length and an
-anchor grid. Its output at material frame N SHALL be a pure function of its rows and of the inputs from the
-warm-up start of N's anchor to N, the state at an anchor being a cold recursion over the warm-up frames
-before it. The registry SHALL refuse a `Temporal` class without a temporal kernel, a temporal kernel on
-another class, and a kernel that keeps state with a zero warm-up.
-Why: the camera-isp design's option B — the owner chose the real recursive filter on the GPU.
+### Requirement: A stream kernel may be active by its values and may cut its slot in three
+A plugin MAY declare a stream kernel beside another kernel with a rule of its values that says when the slot keeps a history; when it does not, the slot
+SHALL be what the other kernel makes it, byte for byte. Such a kernel MAY cut its slot into a front, run on every frame of the history with the slots
+before it, and a back, run on the shown frame in the slot's place; both SHALL be internal plugins that reach no file and no picker. The host
+SHALL tell a kernel whether its event continues the take of the event before it. A stream's picture MAY be handed over as RGBA kept on the device.
+Why: the camera's recursion is a history between two halves of one effect; one machinery hosts every history (invariant 7).
 
-#### Scenario: The registry refuses a malformed temporal plugin
-- **WHEN** a plugin declares `Temporal` without a kernel, a point-wise plugin offers a temporal kernel, and a kernel with state declares warm-up 0
-- **THEN** each registration is refused naming the declaration; a well-formed temporal plugin registers
+#### Scenario: A slot becomes a stream and back
+- **WHEN** a test kernel with `active` by a row and a `split` is registered; a chain holds it with the row off, on, masked, muted and in an arm; a kernel splits into a plugin that is not registered
+- **THEN** off: the plan and bytes of the other kernel; on: the front runs per history frame and the back in the slot's place, with the mask and the mute as for any slot; the last registration is refused naming it
 - **TEST** t3545 (`src/libs/kt-plugin-api/tests/registry.rs`)

@@ -18,6 +18,9 @@ no longer has; the spec's requirements and the code are what hold now.
 - **Thumbnails open their own sources** on a scheduler lane (the offline-path rule), not requests at
   `Thumbnail` priority.
 - **The order of value** in the memory ledger puts the kept mix first (spec).
+- **The sidecar (`<project>.ktindex.db`, SQLite)** — every passage about its schema, its `-wal`/`-shm`, its
+  locks and its openings (t872, t1171, t1460 below) is history since project-cache-folder (2026-11-24): the
+  media index and the reel previews are files of the project's cache folder. The last section says why.
 
 ## What hurt and for whom
 
@@ -593,3 +596,35 @@ GPU upload, export, generators, effects' own round trips) is in the change's des
 tiers of decoded pixels move a version (`THUMB_PIXELS_VERSION` in the sidecar, `STRIP_ROW_VERSION`
 3). Rejected: tags read once at open — a picture's own tag wins. Left open: primaries and transfer
 are read, not converted (found-defects 724: BT.2020/HDR without gamut or tone mapping).
+
+## The caches are files of one folder (project-cache-folder, 2026-11-24)
+
+The owner, kkt-26.11.20 A14: "у нас не будет все в одной базе sqlite хранится а будет подпапка в папке проекта
+с разными кешами, вот с тем же превью кэшем". One folder per project folder, cyclic writing with a notice
+(kkt-26.11.20b B2).
+
+- **Why not SQLite.** Three defects were SQLite's locks, not ours: a lock taken for a broken file and deleted
+  under another connection (SIGBUS, t872), the journal switch that answers BUSY at once (t1171), an fsync held
+  under a lock for 137 s (t1460). Every one of them cost the WHOLE cache of a project. A file per entry that
+  appears by a rename has no lock to wait for, and a broken one costs itself. What a database gave — rows found
+  by a key — is the file system's own.
+- **Why the content id and not the path.** Rows were keyed by the path string: a renamed project folder made
+  every row a miss. The hash was computed anyway.
+- **Why the folder drops and not each cache its own.** Four caches with four bounds each throw away their own
+  oldest while another holds junk. One room, one order by value.
+- **What must not come back:** a schema bump that wipes every media; a lock a lane waits for; a scan at open or at
+  rest; a key that names the program's build.
+
+**The class walk** (every file the program writes) is the change's D7. What was found by it and what the
+implementation settled is its D10: the salt beside the key, the source hashes of the plugins' crates, reel
+previews named per project because reel ids of two projects collide, room asked before an encoder's bytes.
+
+**Found on the way:** a test binary that opens a folder wrote the registry into the user's data folder. The
+library writes no row now; the program that shows the list does. A prerender whose segment is larger than the
+folder's room lost its moments silently (the old 2 GiB store too): they are taken again in shorter segments.
+
+## Copies of heavy sources (persistent-cache, archived 2026-11-25)
+
+Why a copy holds the picture only, lies in QuickTime and is swapped by `adopt_picture`: the change's design, "Found while
+building", with the class walk of found-defects 974 and the measurement (a dense edit of the heavy showcase 0.4–1.3 →
+9–10 V-fps, resident 4.3–4.6 → 3.8 GB peak, on a software rasterizer and decoder).

@@ -17,6 +17,9 @@ pub struct FfmpegSource {
     has_alpha: bool,
     /// The file's path, for a second decoder (export-throughput D9).
     path: String,
+    /// The file as it was opened (durable-moment-key D1): a decoder made again reopens its codec; one opened
+    /// later by the path is kept only while the same file lies there (`cursor_for`).
+    ident: Option<crate::SourceIdent>,
     /// More decoders of this file, opened by a multi-quality span when one file is read at two
     /// places at once (a picture-in-picture of the same footage, a reel): one decoder
     /// ping-ponged between them, seeking and decoding a GOP for every frame. Owned like `inner`.
@@ -26,6 +29,16 @@ pub struct FfmpegSource {
     runs: u64,
     /// Opened for the device (hw-segment-decode): the decoders added later open the same way.
     hw: bool,
+}
+
+/// A file as it lies now: its NAME (the store lies in the project's folder and must still hit after that
+/// folder moved), size and modification time.
+fn file_ident(path: &str) -> Option<crate::SourceIdent> {
+    let p = std::path::Path::new(path);
+    let md = std::fs::metadata(p).ok()?;
+    let t = md.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
+    let name = p.file_name()?.to_string_lossy();
+    Some(crate::SourceIdent::of(&format!("file|{name}|{}|{}", md.len(), t.as_nanos())))
 }
 
 /// Decoders per file at most (D9): each 4K decoder holds its threads' frame pools.
@@ -81,7 +94,7 @@ impl FfmpegSource {
     /// CACHE error: we silently fall back to the ordinary open with a scan.
     pub fn open_indexed(
         path: &str,
-        db: Option<&mut crate::index::MediaIndexDb>,
+        db: Option<&mut crate::index::MediaStore>,
     ) -> Result<FfmpegSource, MediaError> {
         let Some(db) = db else { return Self::open(path) };
         let Ok((mid, status)) = db.ensure_media(std::path::Path::new(path)) else {
@@ -99,6 +112,11 @@ impl FfmpegSource {
         let _ = db.put_packet_index(mid, "audio", audio);
         let _ = db.put_packet_index(mid, "video", video);
         Ok(src)
+    }
+
+    /// The stream's pictures have alpha (R.67).
+    pub fn has_alpha(&self) -> bool {
+        self.has_alpha
     }
 
     /// The index came from the DB (no scan was performed): diagnostics/test 34.
@@ -130,6 +148,7 @@ impl FfmpegSource {
             info,
             src_size,
             has_alpha,
+            ident: file_ident(path),
             path: path.to_string(),
             cursors: Vec::new(),
             cursor_used: [0; MAX_CURSORS],
@@ -168,7 +187,11 @@ impl FfmpegSource {
             } else {
                 kt_ffmpeg::Source::open_with_index(&self.path, Some(prebuilt))
             };
-            if let Ok(s) = opened {
+            // the path may hold another file by now: a decoder of that one is not this source's
+            // (found-defects 1065); looked at after the open, which read what lies there
+            if let Ok(s) = opened
+                && file_ident(&self.path) == self.ident
+            {
                 self.cursors.push(s);
                 return all;
             }
@@ -254,6 +277,10 @@ impl MediaSource for FfmpegSource {
         let mut out = None;
         self.read_runs(&[(pts, w, h)], &mut |_, _, f| out = Some(f))?;
         out.ok_or(MediaError::OutOfRange)
+    }
+
+    fn identity(&self) -> Option<crate::SourceIdent> {
+        self.ident
     }
 
     fn keyframe_before(&self, pts: Tick) -> Option<Tick> {

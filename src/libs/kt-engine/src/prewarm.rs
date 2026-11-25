@@ -68,9 +68,13 @@ pub fn has_stream_front(p: &Project) -> bool {
 /// their generated passes beside, so a run's first frame does not run as its parts.
 pub fn run_shapes(p: &Project) -> BTreeSet<Vec<&'static str>> {
     fn lanes(out: &mut BTreeSet<Vec<&'static str>>, clips: &[ClipEvent], tracks: &[Track], morphers: &[MorpherEvent]) {
-        let chains = clips.iter().map(|c| &c.fx).chain(tracks.iter().map(|t| &t.fx)).chain(morphers.iter().map(|m| &m.patch.video_fx));
-        for fx in chains {
-            out.extend(kt_fx::plan::run_shapes(fx));
+        let chains = clips
+            .iter()
+            .map(|c| (&c.fx, &c.fx_in))
+            .chain(tracks.iter().map(|t| (&t.fx, &t.fx_in)))
+            .chain(morphers.iter().map(|m| (&m.patch.video_fx, &m.patch.video_in)));
+        for (fx, fx_in) in chains {
+            out.extend(kt_fx::plan::run_shapes_in(fx, fx_in));
         }
     }
     let mut out = BTreeSet::new();

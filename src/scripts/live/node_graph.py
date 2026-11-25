@@ -135,6 +135,9 @@ def main(out):
         app.step("layer-window", "double click on the layer's box → the morpher's own window")
         for _ in range(3):
             app.key("Escape")
+        # three windows, three Esc: one left open publishes its own nodes under the same names, and the
+        # clicks below would go to it (found-defects 905)
+        app.expect(app.until(lambda: field(app, "fx.graph") is None), "three Esc closed the three windows")
 
         app.double_click(app.x_at(11 * SEC), app.lane_y("video", 0, frac=0.5))
         app.expect(app.until(lambda: field(app, "fx.graph") is not None and field(app, "fx.node.1") is not None),
@@ -147,11 +150,8 @@ def main(out):
         if node:
             app.expect(node["h"] <= 22 + 3 * 22 + 4 + 1, f"the ISP node stays small: {node['h']} px")
 
-        # the Viewer (fx-graph D11): the picture after the Geometry node, before the ISP. The step
-        # before opened the ISP's whole panel and the window lays the graph out again (detail or
-        # chips by the room left): the node is read once the program has settled, or the click lands
-        # where the node WAS — on empty canvas, where Ctrl+Shift+click turns the Viewer off (red on
-        # the first try of stage 22's finish run)
+        # the Viewer (fx-graph D11): the picture after the Geometry node, before the ISP; the node is
+        # read once the program has settled (the step before opened the ISP's whole panel)
         app.settle()
         geo = field(app, "fx.slot.0")
         if geo:

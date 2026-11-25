@@ -83,6 +83,15 @@ pub struct Notice {
     /// More text under a collapsed "Details" (the telemetry entry): the line stays calm and
     /// short, the rest is one click away.
     pub details: Option<String>,
+    /// A button under the line.
+    pub action: Option<NoticeAction>,
+}
+
+/// Where a notice's button leads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoticeAction {
+    /// Preferences → “Persistent cache”.
+    PersistentCache,
 }
 
 /// Window “what to name the inserted thing” (R.35 item 4).
@@ -264,8 +273,9 @@ pub struct KtApp {
     /// The shell windows of the previous frame that take Esc, bottom to top
     /// (shared-window-shell): Esc closes the LAST one — the window the person sees on top.
     pub(crate) shell_seen: Vec<egui::Id>,
-    /// The window `escape_action` picked; armed after `handle_keys`, closed by its `show`.
-    pub(crate) shell_esc: Option<egui::Id>,
+    /// The windows `escape_action` picked, one per press of the frame (found-defects 905); armed
+    /// after `handle_keys`, each closed by its `show`.
+    pub(crate) shell_esc: Vec<egui::Id>,
     /// What the double click of the CURRENT gesture did to the view (selection-copy-target, D3):
     /// a triple click sets the region over the event and undoes it — the FX window it opened
     /// closes, the reel it expanded collapses.
@@ -311,6 +321,10 @@ pub struct KtApp {
     /// Window drag started from the expanded state: first restore the
     /// window, StartDrag — on the NEXT frame (item 10 round 8, X11).
     pub pending_unmax_drag: bool,
+    /// The window has stood at a normal size in this run: the window manager knows one to restore.
+    pub(crate) window_was_normal: bool,
+    /// Frames since the start, up to [`crate::window_frame::STARTED`].
+    pub(crate) start_frames: u8,
     /// Where to scroll the timeline window on the next frame (item 11 round 9:
     /// jump to the stop point must show the cursor).
     pub pending_reveal: Option<i64>,
@@ -336,6 +350,8 @@ pub struct KtApp {
     pub tc_edit: Option<String>,
     /// The bottom row's group widths as last drawn in the row (`toolbar::draw_toolbar_strip`).
     pub(crate) tb_group_w: [f32; crate::toolbar::TB_GROUPS],
+    /// How far the wheel has slid a bottom row that does not fit (`v26.10` U10).
+    pub(crate) tb_scroll: f32,
     pub tc_edit_focus: bool,
     /// Project search palette (item 3 round 10).
     pub search_open: bool,
@@ -461,6 +477,8 @@ pub struct KtApp {
     /// Lock on the project file (item 352). `None` — the project is unnamed or
     /// busy with another copy: then `lock_holder` carries its process number.
     pub project_lock: Option<crate::project_lock::ProjectLock>,
+    /// Disk calls on their way (`disk.rs`).
+    pub(crate) disk_asks: Vec<crate::disk::DiskAsk>,
     /// Process number of the holder, if the project is busy not by us.
     pub lock_holder: Option<Option<u32>>,
     /// The question “the project is busy — save anyway?” is asked ONCE per
@@ -549,6 +567,8 @@ pub struct KtApp {
     /// stays empty: writing `.kt` under a foreign name is not allowed, and silently placing
     /// the file next to it is no better; the person chooses the name in the dialog.
     pub save_hint: Option<PathBuf>,
+    /// The file Save As leaves, while its dialog stands: the caches follow from its folder.
+    save_from: Option<PathBuf>,
     /// Requested READ of the system envelope buffer (R.61).
     ///
     /// There is NO LONGER a mirror of the buffer inside the program: it blocked the button on
@@ -637,6 +657,11 @@ pub struct KtApp {
     pub preset_save: Option<PresetSaveDialog>,
     /// “Project settings” window (R.62).
     pub settings_win: Option<crate::settings_window::SettingsWindow>,
+    /// The program stage's window and its light (loudness-norms).
+    pub program_win: bool,
+    pub program_lit: Option<std::time::Instant>,
+    /// "Match loudness…".
+    pub match_win: Option<crate::program_ui::MatchWin>,
     /// TRACK window (R.62): properties and chain. One per program — like the
     /// settings window; a second window for the same track is not opened.
     pub track_win: Option<crate::track_window::TrackWindow>,
@@ -719,6 +744,9 @@ pub struct KtApp {
     pub last_compose_retry: std::time::Instant,
     /// The ask on its way to the preview's thread: its number and (tick, size, content, project).
     pub preview_asked: Option<(u64, PreviewAsk)>,
+    /// The picture drawn in this frame is the one this frame asks for: its moment, size and state, whole
+    /// (the dump's `compose.current`: a scenario reads no pixel of the picture before it).
+    pub(crate) preview_current: bool,
     /// How long a frame waits for its composite, so that a fast one shows in this very frame.
     /// A bound and nothing more: past it the frame goes on with the old picture.
     pub compose_grace: std::time::Duration,
@@ -786,6 +814,10 @@ pub struct KtApp {
     /// The start, the Guide and the tour (welcome-window-and-tour): the state that lives
     /// BETWEEN projects. `replace_with` carries it across the in-place rebuild of File → New/Open.
     pub start: crate::welcome::Start,
+    /// Files that came back under a media with no edit of the model (`scene_rev`).
+    media_swaps: u64,
+    /// The persistent cache of the preview on the interface's side.
+    pub(crate) copies_ui: crate::copies_ui::CopiesUi,
 }
 
 impl KtApp {
@@ -887,6 +919,9 @@ impl KtApp {
     /// version is built on its own thread and its sources open on the media lane
     /// (`load_sources`), so making it never stands on the UI thread.
     fn build_player(project: &Project) -> (Player, Option<audio_out::AudioOutput>) {
+        // where a project's caches go when its own folder takes no files (project-cache-folder D4)
+        kt_media::cache_folder::set_data_root(&crate::journal::data_dir());
+        kt_media::cache_folder::on_notice(crate::wake::now);
         let (player, ring) = Player::new_deferred(project.clone());
         // the harness has no window device: the offline engine composes its frames
         if cfg!(test) {
@@ -912,18 +947,12 @@ impl KtApp {
     /// is FIFO, so a sync an edit posts during the load runs after it.
     fn load_sources(&mut self) {
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
-        // the disk tier of preview composites under the data folder (render-cache-disk D7); the harness
-        // keeps none
+        // the disk tier of preview composites in the project's cache folder (project-cache-folder D1b);
+        // the harness keeps none
         if !cfg!(test) {
-            self.player.set_render_cache(Some(kt_engine::render_cache::Config {
-                codec: std::sync::Arc::new(kt_media::segment::ffmpeg::FfmpegSegments::from_env()),
-                root: crate::journal::data_dir().join("render-cache"),
-                build: render_cache_build(),
-                base: base.clone(),
-                cap: kt_engine::render_cache::cap_from_env(),
-            }));
+            self.set_persistent_cache();
         }
-        let db = self.index_db_path();
+        let db = self.cache_folder();
         let doc = self.model.doc();
         let media: Vec<(MediaId, String, String)> = doc
             .media
@@ -1011,7 +1040,7 @@ impl KtApp {
             geom_dump_path: std::env::var("KT_GEOM_DUMP").ok(),
             geom_dumped_at: None,
             shell_seen: Vec::new(),
-            shell_esc: None,
+            shell_esc: Vec::new(),
             pending_double: None,
             // KT_DETACH_PREVIEW=1 — start with the preview detached (debugging)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
@@ -1028,6 +1057,8 @@ impl KtApp {
             follow_playhead: false,
             last_user_scroll: None,
             pending_unmax_drag: false,
+            window_was_normal: false,
+            start_frames: 0,
             pending_reveal: None,
             marker_edit: None,
             marker_edit_focus: false,
@@ -1039,6 +1070,7 @@ impl KtApp {
             lane_edit_focus: false,
             tc_edit: None,
             tb_group_w: [0.0; crate::toolbar::TB_GROUPS],
+            tb_scroll: 0.0,
             tc_edit_focus: false,
             search_open: false,
             search_focus: false,
@@ -1086,6 +1118,7 @@ impl KtApp {
             saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             recovery_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             project_lock: None,
+            disk_asks: Vec::new(),
             lock_holder: None,
             lock_override: false,
             ask: None,
@@ -1098,6 +1131,7 @@ impl KtApp {
             recovery_open: false,
             recovery_written: None,
             save_hint: None,
+            save_from: None,
             snap_line: None,
             preview_gen: (0, 0),
             snap_off: false,
@@ -1159,6 +1193,9 @@ impl KtApp {
             tl_hover_row: None,
             preset_save: None,
             settings_win: None,
+            program_win: false,
+            program_lit: None,
+            match_win: None,
             track_win: None,
             seq_name: None,
             publish_dialog: None,
@@ -1191,6 +1228,7 @@ impl KtApp {
             preview_catching_up: 0,
             last_compose_retry: std::time::Instant::now(),
             preview_asked: None,
+            preview_current: false,
             compose_grace: COMPOSE_GRACE,
             compose_retry_epoch: 0,
             compose_retry_gap: COMPOSE_RETRY_MIN,
@@ -1211,6 +1249,8 @@ impl KtApp {
             complete_composites: 0,
             reel_hash_cache: (None, Arc::new(HashMap::new())),
             start: Default::default(),
+            media_swaps: 0,
+            copies_ui: Default::default(),
         };
         // failure to open a file at startup is an ERROR, not a line for five
         // seconds (rule 16): the person reads it in the bell, when the hover hint
@@ -1312,7 +1352,11 @@ impl KtApp {
         let loudness_map: Arc<Mutex<crate::util::LoudnessMap>> =
             Arc::new(Mutex::new(Default::default()));
         let index = crate::util::IndexService::start(peaks.clone(), loudness_map.clone());
-        index.enqueue(Some(path.with_extension("ktindex.db")), media);
+        let cache = cache_folder_of(Some(path));
+        if let Some(c) = &cache {
+            index.open_cache(c.clone(), path.to_path_buf());
+        }
+        index.enqueue(cache, media);
         let ui_state = project.ui.clone();
         let mut app = KtApp {
             model: TimelineModel::new(project),
@@ -1349,7 +1393,7 @@ impl KtApp {
             geom_dump_path: std::env::var("KT_GEOM_DUMP").ok(),
             geom_dumped_at: None,
             shell_seen: Vec::new(),
-            shell_esc: None,
+            shell_esc: Vec::new(),
             pending_double: None,
             // KT_DETACH_PREVIEW=1 — start with the preview detached (debugging)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
@@ -1366,6 +1410,8 @@ impl KtApp {
             follow_playhead: false,
             last_user_scroll: None,
             pending_unmax_drag: false,
+            window_was_normal: false,
+            start_frames: 0,
             pending_reveal: None,
             marker_edit: None,
             marker_edit_focus: false,
@@ -1376,6 +1422,7 @@ impl KtApp {
             area_edit_focus: false,
             lane_edit_focus: false,
             tb_group_w: [0.0; crate::toolbar::TB_GROUPS],
+            tb_scroll: 0.0,
             tc_edit: None,
             tc_edit_focus: false,
             search_open: false,
@@ -1424,6 +1471,7 @@ impl KtApp {
             saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             recovery_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             project_lock: None,
+            disk_asks: Vec::new(),
             lock_holder: None,
             lock_override: false,
             ask: None,
@@ -1436,6 +1484,7 @@ impl KtApp {
             recovery_open: false,
             recovery_written: None,
             save_hint: None,
+            save_from: None,
             snap_line: None,
             preview_gen: (0, 0),
             snap_off: false,
@@ -1497,6 +1546,9 @@ impl KtApp {
             tl_hover_row: None,
             preset_save: None,
             settings_win: None,
+            program_win: false,
+            program_lit: None,
+            match_win: None,
             track_win: None,
             seq_name: None,
             publish_dialog: None,
@@ -1529,6 +1581,7 @@ impl KtApp {
             preview_catching_up: 0,
             last_compose_retry: std::time::Instant::now(),
             preview_asked: None,
+            preview_current: false,
             compose_grace: COMPOSE_GRACE,
             compose_retry_epoch: 0,
             compose_retry_gap: COMPOSE_RETRY_MIN,
@@ -1549,6 +1602,8 @@ impl KtApp {
             complete_composites: 0,
             reel_hash_cache: (None, Arc::new(HashMap::new())),
             start: Default::default(),
+            media_swaps: 0,
+            copies_ui: Default::default(),
         };
         // loop region of a loaded project — into the player at once (previously
         // sync happened only in on_region_changed, i.e. only on an EDIT of the region —
@@ -1636,6 +1691,13 @@ impl KtApp {
     /// Remember the workspace. Called where the program already writes:
     /// on project save and on exit — it does not need its own schedule.
     pub(crate) fn save_workspace(&mut self) {
+        if let Some((path, w)) = self.workspace_now() {
+            crate::user_store::save_workspace_at(&path, &w);
+        }
+    }
+
+    /// The workspace as it is now and the file it goes to; `None` — the file is newer than this build.
+    fn workspace_now(&mut self) -> Option<(std::path::PathBuf, crate::user_store::Workspace)> {
         // a file newer than our build — we do not touch it, but we must not stay silent:
         // otherwise panel widths “are not remembered” without any explanation
         if self.workspace.is_readonly() {
@@ -1644,7 +1706,7 @@ impl KtApp {
                 .clone()
                 .unwrap_or_else(|| crate::user_store::store_dir().join("workspace.json"));
             self.warn(crate::tf!(k::msg::WORKSPACE_READONLY, p.display()));
-            return;
+            return None;
         }
         self.workspace.meters_w = self.meters_w;
         self.workspace.set_view(
@@ -1655,10 +1717,8 @@ impl KtApp {
                 cursor: self.player.transport.playhead().0,
             },
         );
-        match &self.workspace_file {
-            Some(p) => crate::user_store::save_workspace_at(p, &self.workspace),
-            None => crate::user_store::save_workspace(&self.workspace),
-        }
+        let path = self.workspace_file.clone().unwrap_or_else(crate::user_store::workspace_path);
+        Some((path, self.workspace.clone()))
     }
 
     #[cfg(test)]
@@ -1885,6 +1945,18 @@ impl KtApp {
         // in each window separately the next agent would forget it
         // (rule 17).
         self.surrender_focus_on_outside_click(&ctx);
+        // the main window's own layer over its panels, under every window (window-chrome D1): a
+        // layer egui does not know as an area is painted in no promised order and hit under the panels
+        egui::Area::new(under_windows().id)
+            .order(under_windows().order)
+            .fixed_pos(egui::Pos2::ZERO)
+            .constrain(false)
+            .fade_in(false)
+            .sense(egui::Sense::hover())
+            .show(&ctx, |_| {});
+        // an area registered before the panels' root (egui's areas forgotten inside a frame, as the live
+        // rig does) would stay under the panels for good: the order is said each frame
+        ctx.move_to_top(under_windows());
         // the windows of the previous frame, top last: Esc picks from them (shared-window-shell)
         self.shell_seen = crate::window_shell::begin_frame(&ctx);
         let ui_zoom = self.start.controls.ui_zoom_keys_free();
@@ -1893,7 +1965,7 @@ impl KtApp {
         }
         self.key_clock.widen_clicks(&ctx);
         self.handle_keys(&ctx);
-        crate::window_shell::arm_esc(&ctx, self.shell_esc.take());
+        crate::window_shell::arm_esc(&ctx, std::mem::take(&mut self.shell_esc));
         // Speed-up by holding Space — EXACTLY once per frame (handle_keys when
         // the preview is detached is called twice, item 3 round 16).
         self.tick_space_boost(&ctx);
@@ -1907,6 +1979,15 @@ impl KtApp {
             self.play_dir_back = rate < 0.0;
         }
 
+        if self.start_frames < crate::window_frame::STARTED {
+            self.start_frames += 1;
+            if self.start_frames == crate::window_frame::STARTED {
+                crate::window_frame::adopt_start(&ctx);
+                crate::map_watch::start();
+            }
+            ctx.request_repaint();
+        }
+        self.window_was_normal |= crate::window_frame::note_normal(&ctx);
         // Item 10 round 8: the window was restored from maximized last frame —
         // now dragging may begin
         if self.pending_unmax_drag {
@@ -2036,6 +2117,8 @@ impl KtApp {
         self.draw_paste_names(&ctx);
         self.draw_preset_save(&ctx);
         self.draw_settings_window(&ctx);
+        self.draw_program_window(&ctx);
+        self.draw_match_window(&ctx);
         self.draw_prefs_window(&ctx);
         self.draw_controls_window(&ctx);
         self.draw_track_window(&ctx);
@@ -2155,8 +2238,11 @@ impl KtApp {
                 self.warn(crate::tf!(k::msg::INDEX_FAILED, e));
             }
         }
+        self.take_cache_notices();
+        self.take_camera();
         self.take_saved(std::time::Duration::ZERO);
         self.take_media(std::time::Duration::ZERO);
+        self.take_disk(std::time::Duration::ZERO);
         self.take_opening(std::time::Duration::ZERO);
         if let Some((snap_rev, rx)) = &self.autosave_rx
             && let Ok(res) = rx.try_recv()
@@ -2331,12 +2417,7 @@ impl KtApp {
                         ui.heading(tr(k::render::OVERWRITE_TITLE));
                         ui.add_space(6.0);
                         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                        let meta = std::fs::metadata(path).ok();
-                        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-                        let date = meta
-                            .and_then(|m| m.modified().ok())
-                            .map(|t| crate::journal::stamp_of(t)[..16].to_string())
-                            .unwrap_or_default();
+                        let (size, date) = self.render_setup.replaces.clone().unwrap_or_default();
                         ui.label(crate::tf!(
                             k::render::OVERWRITE_BODY,
                             name,
@@ -2437,6 +2518,14 @@ impl KtApp {
                                 ui.weak(format!("×{}", n.repeats));
                             }
                         });
+                        if let Some(NoticeAction::PersistentCache) = n.action {
+                            let r = ui.button(tr(k::prefs::CACHE_OPEN));
+                            crate::widgets::field_probe::note("notices.persistent_cache", r.rect);
+                            if r.clicked() {
+                                self.start.prefs_open = true;
+                                self.start.caches.show = true;
+                            }
+                        }
                         // the rest of a long notice — collapsed until asked for
                         if let Some(d) = &n.details {
                             let r = egui::CollapsingHeader::new(tr(k::win::DETAILS))
@@ -2501,13 +2590,10 @@ impl KtApp {
         // hint — last, over the status bar (item 1 round 9)
         self.draw_status_hint(&ctx);
 
-        // Glow overlay above the interface (item 8): the preview and the meters softly
-        // “glow” beyond the borders of their panels, without hindering reading of the UI.
+        // Glow over the panels, under the windows (item 8; `v26.10` W1): the preview and the meters
+        // softly “glow” beyond the borders of their panels, without hindering reading of the UI.
         if self.sw_render == Some(false) {
-            let fg = ui.ctx().layer_painter(egui::LayerId::new(
-                egui::Order::Foreground,
-                egui::Id::new("ambient-overlay"),
-            ));
+            let fg = ui.ctx().layer_painter(under_windows());
             // preview: a blurred texture slightly wider than the panel, very low alpha
             if let (Some(glow), true, false) =
                 (self.preview_glow_id(), self.preview_rect.is_finite(), self.preview_detached)
@@ -2670,7 +2756,7 @@ impl KtApp {
     /// The hint line — drawn LAST in the frame, over the status bar
     /// (item 1 round 9). The status bar, drawn as a panel second, long before the buttons,
     /// so reading `hover_hint` inside it is pointless — there it is always
-    /// None. Layer Foreground + interactable(false): a window drag from the status bar
+    /// None. A painter's layer (`under_windows` at rest, Foreground for a live line): a window drag from the status bar
     /// is not intercepted.
     fn draw_status_hint(&mut self, ctx: &egui::Context) {
         let strip = self.statusbar_rect;
@@ -2729,10 +2815,14 @@ impl KtApp {
             HintKind::Hover => egui::Color32::from_gray(205),
             HintKind::Idle => egui::Color32::from_gray(120),
         };
-        let painter = ctx.layer_painter(egui::LayerId::new(
-            egui::Order::Foreground,
-            egui::Id::new("status-hint"),
-        ));
+        // the resting line belongs to the main window, under every window; a live one answers the
+        // pointer or an action, which may be inside the window that covers the strip (window-chrome D1)
+        let layer = if kind == HintKind::Idle {
+            under_windows()
+        } else {
+            egui::LayerId::new(egui::Order::Foreground, egui::Id::new("status-hint"))
+        };
+        let painter = ctx.layer_painter(layer);
         let galley = painter.layout_no_wrap(text.clone(), egui::FontId::proportional(12.0), col);
         let x1 = strip.right() - 6.0;
         // a long hint quietly overwrites the metrics on the left — it is more important
@@ -3268,12 +3358,20 @@ impl KtApp {
     /// revision and the place being edited.
     pub(crate) fn scene_rev(&self) -> u64 {
         let place = self.model.editing().map_or(0, |m| m.0.wrapping_add(1));
-        self.model.revision().wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ place
+        (self.model.revision().wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ place).wrapping_add(self.media_swaps.rotate_left(17))
     }
 
-    /// Path of the sidecar index DB of the current project (None for unnamed).
-    pub(crate) fn index_db_path(&self) -> Option<std::path::PathBuf> {
-        self.project_path.as_ref().map(|p| p.with_extension("ktindex.db"))
+    /// A media's file came back with no edit: the effect cells' scene is another one, and its sources
+    /// are opened again.
+    fn media_swapped(&mut self) {
+        self.media_swaps += 1;
+        self.fx_thumbs.forget_scene();
+    }
+
+    /// The cache folder of the current project: beside it, an untitled one's under the user's data
+    /// folder (project-cache-folder D1, D4). A name only: the lanes open it.
+    pub(crate) fn cache_folder(&self) -> Option<std::path::PathBuf> {
+        cache_folder_of(self.project_path.as_deref())
     }
 
     /// Per-component maximum resolution over the project’s video sources
@@ -3331,7 +3429,7 @@ impl KtApp {
             .collect();
         let mut h = std::collections::hash_map::DefaultHasher::new();
         paths.hash(&mut h);
-        (h.finish(), paths, self.index_db_path())
+        (h.finish(), paths, self.cache_folder())
     }
 
     /// Esc cascade (item 11): windows → active drag → region+selection.
@@ -3362,7 +3460,7 @@ impl KtApp {
         // runs the action its kind declares (a tool closes and keeps its edits, a dialog
         // cancels). A progress window does not take Esc and is not in the list.
         if let Some(id) = self.shell_seen.pop() {
-            self.shell_esc = Some(id);
+            self.shell_esc.push(id);
             return;
         }
         // 2) cancel the active drag
@@ -4313,19 +4411,17 @@ impl KtApp {
         let p = path.clone();
         let (answer, reply) = kt_time::sched::Answer::new();
         media_lane().post(move |_| {
-            if let Some((fresh, text)) = write
-                && (fresh || !p.exists())
-            {
-                if let Some(d) = p.parent() {
-                    let _ = std::fs::create_dir_all(d);
+            // a lesson's copy is the program's own: its text is on its way to the disk and nobody waits
+            // for it there (found-defects 842: an fsync of one stood 31.8 s on a busy disk)
+            let text = match write {
+                Some((fresh, text)) if fresh || !crate::later::exists(&p) => {
+                    crate::later::write(&p, text.clone());
+                    Ok(text)
                 }
-                if let Err(e) = write_project_atomic(&p, &text) {
-                    reply.send(Err(ReadFail::Write(e.to_string())));
-                    crate::wake::now();
-                    return;
-                }
-            }
-            reply.send(read_project_text(&p).map_err(ReadFail::Read));
+                Some(_) => crate::later::read(&p).map_err(|e| e.to_string()),
+                None => read_project_text(&p),
+            };
+            reply.send(text);
             crate::wake::now();
         });
         self.opening = Some(Opening { path, then, answer });
@@ -4344,8 +4440,7 @@ impl KtApp {
         let Some(Opening { path, then, .. }) = self.opening.take() else { return };
         let text = match done {
             Ok(t) => t,
-            Err(ReadFail::Write(e)) => return self.warn(crate::tf!(k::msg::SAVE_FAILED, e)),
-            Err(ReadFail::Read(e)) => {
+            Err(e) => {
                 return match then {
                     OpenThen::Insert(_) => self.warn(format!("{}: {e}", path.display())),
                     OpenThen::Recovery(c) => self.warn(crate::tf!(k::msg::RECOVERY_FAILED, c.path.display(), e)),
@@ -4534,6 +4629,16 @@ impl KtApp {
         }
     }
 
+    /// Leave the program's own lesson copy (found-defects 842): its edits are kept, with no fsync and no
+    /// wait; a re-read of the copy sees them on their way (`later`).
+    pub(crate) fn keep_sandbox(&mut self, path: &Path) {
+        let ui = self.ui_state();
+        self.model.set_ui_state(Some(ui));
+        crate::later::write(path, project_text_of(&self.model.document(), &self.retained, path.parent()));
+        (self.dirty_content, self.dirty_ui) = (false, false);
+        self.drop_own_recovery();
+    }
+
     /// Remove the recovery file written by THIS copy.
     pub(crate) fn drop_own_recovery(&mut self) {
         if let Some(p) = self.recovery_written.take() {
@@ -4568,7 +4673,7 @@ impl KtApp {
             self.notices_unread += 1;
             return;
         }
-        self.notices.push_back(Notice { at, severity, text, repeats: 1, details });
+        self.notices.push_back(Notice { at, severity, text, repeats: 1, details, action: None });
         if self.notices.len() > 200 {
             self.notices.pop_front();
         }
@@ -4732,19 +4837,41 @@ impl KtApp {
     /// We do not show an error: the path is live, the command is sent every drag frame, and
     /// a badge on every frame would be noise — the gesture simply does not move further.
     pub fn apply_coalesced(&mut self, cmd: Command, gesture: u64) -> bool {
+        self.coalesced(vec![cmd], gesture).is_ok()
+    }
+
+    /// `apply_coalesced` of commands that only make sense together (a chain edit that moves slots, their
+    /// lists and their addresses); a refusal is said: it is one press, not a drag's frame.
+    pub fn apply_batch_coalesced(&mut self, cmds: Vec<Command>, gesture: u64) -> bool {
+        self.warn_shared_band(&cmds);
+        match self.coalesced(cmds, gesture) {
+            Err(e) => {
+                self.refuse_command(&e);
+                false
+            }
+            Ok(edited) => {
+                if edited {
+                    self.bump_clip_hw();
+                }
+                true
+            }
+        }
+    }
+
+    fn coalesced(&mut self, cmds: Vec<Command>, gesture: u64) -> Result<bool, kt_model::CommandError> {
         // Law P (R.53, item 412): a command that does not touch the plan has no
         // right to clone the project and rebuild the graphs. An edit of
         // generator parameters is `SetMediaPath`, whose addressee is the worker
         // of this media, not the renderers (otherwise every keypress in the
         // title field would stop the audio-render thread).
-        let touches_plan = cmd.touches_render_plan();
-        crate::telemetry::signal(crate::telemetry::Signal::Gesture(&cmd, gesture, &self.model));
-        match self.model.apply_coalesced(cmd, gesture) {
-            Err(_) => return false,
-            // an equal value written again (a window's frame re-sending what the model holds)
-            // is no edit: no revision, no project swap, no dirty mark (input-without-work)
-            Ok(false) => return true,
-            Ok(true) => {}
+        let touches_plan = cmds.iter().any(|c| c.touches_render_plan());
+        for cmd in &cmds {
+            crate::telemetry::signal(crate::telemetry::Signal::Gesture(cmd, gesture, &self.model));
+        }
+        // an equal value written again (a window's frame re-sending what the model holds)
+        // is no edit: no revision, no project swap, no dirty mark (input-without-work)
+        if !self.model.apply_batch_coalesced(cmds, gesture)? {
+            return Ok(false);
         }
         self.model_rev += 1;
         kt_time::work::bump(kt_time::work::Work::ModelEdit);
@@ -4753,7 +4880,7 @@ impl KtApp {
         }
         self.sync_media_sources();
         self.dirty_content = true;
-        true
+        Ok(true)
     }
 
     /// A command batch + restoration of the crossfade “handles” that this gesture kills
@@ -5039,7 +5166,7 @@ impl KtApp {
             let f = resolve_media_path(base, &k);
             (k, f)
         });
-        crate::listen::service().ask(self.index_db_path(), files.collect());
+        crate::listen::service().ask(self.cache_folder(), files.collect());
     }
 
     pub(crate) fn sync_media_sources(&mut self) {
@@ -5071,7 +5198,7 @@ impl KtApp {
             return;
         }
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
-        let db = self.index_db_path();
+        let db = self.cache_folder();
         let mut opens = Vec::new();
         for (id, path) in &cur {
             let known = self.media_paths.get(id).cloned();
@@ -5148,60 +5275,59 @@ impl KtApp {
 
     /// A generator's kind changed — in its window's gallery or from its bin card — as ONE history
     /// step: the media path, and every picture event's sound pair kept in step with the new kind
-    /// (generator-menu-one-item D2). A kind that sounds beside its picture (Sync flash) gives each
-    /// picture event of the media its sound event on audio track 1, linked to it, as the menu used
-    /// to; a kind with no sound takes the generator's sound events away (they would hold silence).
-    /// The window's gallery is the one way to a kind since kkt-26.11.20 A1.
+    /// (generator-menu-one-item D2). The window's gallery is the one way to a kind since kkt-26.11.20 A1.
     pub(crate) fn gen_kind_switch_cmds(&self, media: MediaId, kind: &kt_model::GeneratorKind) -> Vec<Command> {
         let set = Command::SetMediaPath { id: media, path: kt_model::gen_kind_path(kind) };
-        let sounds = kt_media::MediaSource::info(&kt_media::generator::GeneratorSource::new(kind.clone())).has_audio;
-        let clips = &self.model.project().clips;
-        let pictures: Vec<&ClipEvent> = clips.iter().filter(|c| c.media == media && c.kind == ClipKind::Video).collect();
-        let pair_of = |v: &ClipEvent| {
-            clips
+        self.with_gen_sound(media, None, kind, set)
+    }
+
+    /// A value edit of one generator event, as commands: the values, and its sound event brought or
+    /// taken when the edit switches its sound on or off (SMPTE's tone, Sync flash's beep — found-defects
+    /// 1000). `None` — the sound stays as it was: a plain `SetClipGen`.
+    pub(crate) fn gen_value_cmds(&self, id: ClipId, kind: &kt_model::GeneratorKind) -> Option<Vec<Command>> {
+        let sounds = |k: &kt_model::GeneratorKind| kt_media::generator::GeneratorSource::info_for(k).has_audio;
+        let c = self.model.clip(id)?;
+        if c.r#gen.as_ref().is_some_and(sounds) == sounds(kind) {
+            return None;
+        }
+        // edited through its sound half, which may be the one that goes: the picture takes the values
+        let picture = self
+            .model
+            .project()
+            .clips
+            .iter()
+            .find(|p| p.kind == ClipKind::Video && p.media == c.media && (p.id == id || (p.link_group.is_some() && p.link_group == c.link_group)))?
+            .id;
+        let set = Command::SetClipGen { id: picture, kind: Some(kind.clone()) };
+        Some(self.with_gen_sound(c.media, Some(picture), kind, set))
+    }
+
+    /// `set`, which gives `kind` to a generator's events — of one picture event (`only`: values live on
+    /// the event) or of every one of the media, in every reel (a kind change, "apply to all") — with
+    /// their sound events kept in step in the same step of history.
+    pub(crate) fn with_gen_sound(
+        &self,
+        media: MediaId,
+        only: Option<ClipId>,
+        kind: &kt_model::GeneratorKind,
+        set: Command,
+    ) -> Vec<Command> {
+        let sounds = kt_media::generator::GeneratorSource::info_for(kind).has_audio;
+        let sound = Command::SetGenSound {
+            media,
+            only,
+            sounds,
+            first_id: self.next_clip_id(),
+            first_group: self.next_group_id(),
+            strips: self
+                .model
+                .bands()
                 .iter()
-                .filter(|p| p.kind == ClipKind::Audio && p.media == media && p.link_group.is_some() && p.link_group == v.link_group)
-                .map(|p| p.id)
-                .collect::<Vec<_>>()
+                .map(|b| (b.base.get(LaneKind::Video), b.len.get(LaneKind::Video), b.base.get(LaneKind::Audio)))
+                .collect(),
         };
-        if !sounds {
-            // the sound halves go first: the media's new kind is no sound kind
-            let mut cmds: Vec<Command> =
-                pictures.iter().flat_map(|v| pair_of(v)).map(|id| Command::RemoveClip { id }).collect();
-            cmds.push(set);
-            return cmds;
-        }
-        let mut cmds = vec![set];
-        let (mut next_id, mut next_group) = (self.next_clip_id(), self.next_group_id());
-        for v in pictures.into_iter().filter(|v| pair_of(v).is_empty()) {
-            let group = v.link_group.unwrap_or_else(|| {
-                next_group += 1;
-                GroupId(next_group - 1)
-            });
-            let id = ClipId(next_id);
-            next_id += 1;
-            let a = ClipEvent {
-                id,
-                kind: ClipKind::Audio,
-                lane: 0,
-                link_group: Some(group),
-                fx: Vec::new(),
-                fx_auto: Vec::new(),
-                fx_bypass: Vec::new(),
-                fx_off: false,
-                opacity: 1.0,
-                geometry: Default::default(),
-                geometry_pos: 0,
-                geometry_auto: Vec::new(),
-                masks: Default::default(),
-                ..v.clone()
-            };
-            cmds.push(Command::AddClip(a));
-            if v.link_group.is_none() {
-                cmds.push(Command::LinkClips { ids: vec![v.id, id], group });
-            }
-        }
-        cmds
+        // a sound half goes before the values that silence it, and comes after the ones it copies
+        if sounds { vec![set, sound] } else { vec![sound, set] }
     }
 
     /// "Create a generator…" from Edit or the bin (kkt-26.11.20 A1: one item, by the track): the
@@ -5281,7 +5407,7 @@ impl KtApp {
         }
         let offline = self.offline.lock().unwrap().clone();
         let base = self.project_path.as_deref().and_then(|p| p.parent());
-        let db = self.project_path.as_deref().map(|p| p.with_extension("ktindex.db"));
+        let db = self.cache_folder();
         let back: Vec<(MediaId, String, String)> = self
             .model
             .project()
@@ -5767,7 +5893,7 @@ impl KtApp {
             return;
         };
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
-        let index = self.index_db_path();
+        let index = self.cache_folder();
         let path = resolve_media_path(base.as_deref(), &m.path);
         let rev = self.model_rev;
         let kind = crate::analysis::AnalysisKind::Loudness(id);
@@ -5840,6 +5966,8 @@ impl KtApp {
                     self.loudness.lock().unwrap().insert(media, (l, dbtp, lra));
                 }
             }
+            (_, O::Program(found)) => self.on_program_matched(found),
+            (_, O::Clips { matched, sound }) => self.on_clips_matched(matched, sound),
         }
     }
 
@@ -6233,6 +6361,11 @@ impl KtApp {
     pub(crate) fn replace_with(&mut self, mut app: KtApp) {
         self.queue_poster();
         std::mem::swap(&mut app.start, &mut self.start);
+        app.disk_asks.append(&mut self.disk_asks);
+        // the switch came with the store: the load above had none yet
+        if !cfg!(test) && app.cache_mode() != Default::default() {
+            app.set_persistent_cache();
+        }
         let mut old = std::mem::replace(self, app);
         // its lock goes at once (a close): the new project's claim, posted after the swap, must
         // not meet the closed one's on the same file
@@ -6305,7 +6438,9 @@ impl KtApp {
     /// project_path opens it itself); cancel returns the old path.
     pub fn save_as(&mut self) {
         let old = self.project_path.take();
+        self.save_from = old.clone();
         self.save();
+        self.save_from = None;
         if self.project_path.is_none() {
             self.project_path = old; // the user changed their mind
         }
@@ -6336,7 +6471,18 @@ impl KtApp {
                 self.project_path = Some(p.clone());
                 self.claim_project(&p);
                 // the index DB and thumbnails can now live next to the project
-                self.index.enqueue(Some(p.with_extension("ktindex.db")), {
+                // the caches follow the project (project-cache-folder D4, D6): the lanes and the preview
+                // go to the new folder now, what lies in the old one is carried on the index lane
+                let was = self.save_from.take();
+                let to = kt_media::cache_folder::beside(&p);
+                if let Some(from) = cache_folder_of(was.as_deref()) {
+                    self.index.carry_cache(from, to.clone(), was, p.clone());
+                }
+                self.thumbs.set_cache(Some(to.clone()));
+                if !cfg!(test) {
+                    self.set_persistent_cache();
+                }
+                self.index.enqueue(Some(to), {
                     let base = p.parent();
                     self.model
                         .project()
@@ -6992,7 +7138,7 @@ impl KtApp {
         // the file opens on the media lane (one-scheduler, row 148: FFmpeg's probe and the sidecar
         // stood on the UI thread, twice — once for the clip's length, once for the player); the
         // gesture lands when it answers (`take_media`)
-        let db = self.index_db_path();
+        let db = self.cache_folder();
         let (answer, reply) = kt_time::sched::Answer::new();
         let r = resolved.clone();
         media_lane().post(move |_| {
@@ -7037,7 +7183,7 @@ impl KtApp {
         // in the index DB — the resolved path (item 150: a raw relative path
         // gave the file a SECOND media_id in the cache next to the resolved one)
         self.index.enqueue(
-            self.project_path.as_ref().map(|p| p.with_extension("ktindex.db")),
+            self.cache_folder(),
             vec![(media_id, resolved.clone())],
         );
         self.note(crate::tf!(k::msg::ADDED, path));
@@ -7112,7 +7258,16 @@ impl KtApp {
                         index.push((id, path));
                         self.note(crate::tf!(k::msg::MEDIA_ONLINE, label));
                     }
-                    self.index.enqueue(self.index_db_path(), index);
+                    // what an audio-reactive generator hears of it, and the effect cells that show it
+                    // (found-defects 976, 977)
+                    for (id, _) in &index {
+                        if let Some(m) = self.model.doc().media.iter().find(|m| m.id == *id) {
+                            crate::listen::service().forget(&m.path);
+                        }
+                    }
+                    self.ask_listened();
+                    self.media_swapped();
+                    self.index.enqueue(self.cache_folder(), index);
                 }
                 _ => {}
             }
@@ -7216,7 +7371,7 @@ impl KtApp {
         let resolved = resolve_media_path(base.as_deref(), &path);
         // the file's passport from the media lane (one-scheduler, row 148); the clips land when it
         // answers
-        let db = self.index_db_path();
+        let db = self.cache_folder();
         let (answer, reply) = kt_time::sched::Answer::new();
         media_lane().post(move |_| {
             let info = open_source_indexed(&resolved, db.as_deref()).map(|s| s.info().clone());
@@ -7579,6 +7734,7 @@ impl KtApp {
             let old = std::mem::replace(&mut self.preview_buf, rgba);
             self.player.give_back_preview_buffer(old);
         }
+        self.preview_current = self.preview_asked.is_none() && self.preview_key == Some((key_now.0, key_now.1, true));
         if complete {
             self.incomplete_since = None;
         } else {
@@ -8213,6 +8369,8 @@ impl KtApp {
                 self.player.set_preview_quality(q_for(proj.width, proj.height, fracs[frac_idx]));
             }
             ui.separator();
+            self.draw_cache_switch(ui);
+            ui.separator();
             let sm = ui.checkbox(&mut self.smooth_scaling, tr(k::perf::SMOOTHING));
             self.hint(sm, tr(k::hint::SMOOTHING));
         });
@@ -8312,6 +8470,18 @@ impl KtApp {
                 cols[1].weak(b);
             }
         });
+        // a layer that reads its source more than once names its own cost (fx-graph-dag D2)
+        let reads: Vec<String> = self
+            .player
+            .video_read_rows()
+            .iter()
+            .map(|r| format!("#{} {}", kt_model::slice_origin(r.clip).unwrap_or(r.clip).0, crate::fx_editor::fx_display_name(&r.opens)))
+            .collect();
+        if !reads.is_empty() {
+            let r = ui.weak(crate::tf!(k::perf::READS, reads.len(), reads.join(", ")));
+            crate::widgets::field_probe::note("diag.reads", r.rect);
+            self.hint(r, tr(k::perf::READS_HINT));
+        }
         if let Some(r) = program {
             crate::widgets::field_probe::note("diag.memory", r.rect);
             self.hint(r, tr(k::perf::PROGRAM_HINT));
@@ -8332,16 +8502,7 @@ impl KtApp {
                 ui.weak(tr(k::perf::VIDEO_FX_NONE));
             }
         }
-        // the disk prerender (render-cache-disk): its hardware encoder, or why it writes nothing here
-        match self.player.render_cache().status() {
-            Some(Ok(enc)) if !enc.is_empty() => {
-                ui.weak(crate::tf!(k::perf::RENDER_CACHE_ON, enc));
-            }
-            Some(Err(why)) => {
-                ui.weak(crate::tf!(k::perf::RENDER_CACHE_OFF, why));
-            }
-            _ => {}
-        }
+        self.draw_cache_figures(ui);
         // what composing the preview costs (morpher-event-grid-cost, D1): the last frame and
         // the average of the last second — the number behind "the fps drops here"
         ui.weak(crate::tf!(
@@ -8959,6 +9120,9 @@ pub struct CoverageCache {
     stamp: Option<CoverageStamp>,
     /// Arc: a snapshot per frame — a clone of the pointer, not of the maps (item 1 of v1.4).
     pub per_clip: Arc<HashMap<ClipId, Vec<std::ops::Range<i64>>>>,
+    /// A row per read an event makes beyond its own (fx-graph-dag D2: a time kind in an arm), in
+    /// TIMELINE ticks: what is warm of the material that read walks over the event.
+    pub per_read: Arc<HashMap<ClipId, Vec<Vec<std::ops::Range<i64>>>>>,
     /// What plays without work (cached-range-plays), in timeline ticks: the moments whose final
     /// composite the executor keeps (`video`) and the frames whose final mix the audio render
     /// thread keeps (`audio`). The strips draw it bright over the decoded ranges.
@@ -9095,6 +9259,34 @@ pub fn media_display_name(path: &str) -> String {
         .file_name()
         .map(|f| f.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string())
+}
+
+impl KtApp {
+    /// What an event's window calls it (`v26.10` W3): a title's first words, a generator's kind, a
+    /// reel's name, a file's name — cut to fit a window's title.
+    pub(crate) fn event_name(&self, id: ClipId) -> String {
+        let p = self.model.project();
+        let Some(c) = self.model.clip(id) else { return String::new() };
+        let text = match &c.r#gen {
+            // a counter draws its time, not the typed text
+            Some(kt_model::GeneratorKind::Text { text, source: kt_model::TextSource::Static, .. }) => {
+                text.split_whitespace().collect::<Vec<_>>().join(" ")
+            }
+            _ => String::new(),
+        };
+        let name = if !text.is_empty() {
+            return crate::toolbar::cut_name(&text, 24);
+        } else if let Some(k) = &c.r#gen {
+            crate::gen_ui::kind_name(k).to_string()
+        } else {
+            match p.source(c.media) {
+                Some(kt_model::Source::Seq(s)) => crate::i18n::reel_display_name(&s.name).into_owned(),
+                Some(kt_model::Source::File(m)) => media_display_name(&m.path),
+                None => String::new(),
+            }
+        };
+        crate::toolbar::cut_name(&name, 40)
+    }
 }
 
 #[derive(Default)]
@@ -9260,7 +9452,8 @@ impl KtApp {
             p.cameras = cams;
         }
         let base = self.project_path.as_ref().and_then(|p| p.parent()).map(|p| p.to_path_buf());
-        let db = self.index_db_path();
+        let db = self.cache_folder();
+        self.reel_previews.set_project(self.project_path.clone());
         self.reel_previews.request(key, p, db, base);
     }
 
@@ -9346,6 +9539,10 @@ impl KtApp {
                 per_clip.insert(c.id, runs);
             }
             self.coverage_cache.per_clip = Arc::new(per_clip);
+            let per_read = self.read_coverage(view);
+            if *self.coverage_cache.per_read != per_read {
+                self.coverage_cache.per_read = Arc::new(per_read);
+            }
             let (video, pending) = self.player.final_video_runs();
             let fin = FinalRuns { video, audio: self.player.final_audio_runs() };
             if *self.coverage_cache.final_runs != fin {
@@ -9358,6 +9555,43 @@ impl KtApp {
             }
         }
         self.coverage_cache.per_clip.clone()
+    }
+
+    /// The rows of the events' reads in view (fx-graph-dag D2): each read asks the cache for the
+    /// frames IT reads, at its own decode quality; a layer's pieces give their parts of one row.
+    fn read_coverage(&self, view: (i64, i64)) -> HashMap<ClipId, Vec<Vec<std::ops::Range<i64>>>> {
+        let mut out: HashMap<ClipId, Vec<Vec<std::ops::Range<i64>>>> = HashMap::new();
+        let clips = &self.model.project().clips;
+        let mut last = (ClipId(u64::MAX), 0usize);
+        for r in self.player.video_read_rows() {
+            let n = if last.0 == r.clip { last.1 + 1 } else { 0 };
+            last = (r.clip, n);
+            let id = kt_model::slice_origin(r.clip).unwrap_or(r.clip);
+            let (t0, t1) = (r.start.0, r.end.0);
+            if t1 <= view.0 || t0 >= view.1 {
+                continue;
+            }
+            let Some(c) = clips.iter().find(|c| c.id == id) else { continue };
+            let (m0, m1) = r.material;
+            let runs = self.player.cache.coverage(
+                kt_engine::source_id(kt_engine::clip_source_addr(c)),
+                kt_cache::BurstKind::video(Some(r.quality)),
+                m0..m1.max(m0 + 1),
+            );
+            // the material the read walks, laid over the event's window
+            let at = |m: i64| t0 + ((m - m0) as i128 * (t1 - t0) as i128 / (m1 - m0).max(1) as i128) as i64;
+            let rows = out.entry(id).or_default();
+            if rows.len() <= n {
+                rows.resize(n + 1, Vec::new());
+            }
+            rows[n].extend(runs.into_iter().map(|g| at(g.start)..at(g.end)));
+        }
+        for rows in out.values_mut() {
+            for r in rows.iter_mut() {
+                *r = merge_runs(std::mem::take(r));
+            }
+        }
+        out
     }
 
     /// Clip names and the “suppress name” set (the pair partner) by model_rev.
@@ -9567,6 +9801,13 @@ fn dnd_pointer_pos(_ctx: &egui::Context) -> Option<egui::Pos2> {
 /// only when there is neither.
 pub fn dnd_keep_hover(hovering: bool, dropping: bool) -> bool {
     hovering || dropping
+}
+
+/// The layer of what the main window draws over its panels — the preview's and the meters' glow, the
+/// project's title and its crumbs, the resting status line: over every panel, under every tool window
+/// (`v26.10` W1, T9; window-chrome D1). Registered as an area each frame.
+pub(crate) fn under_windows() -> egui::LayerId {
+    egui::LayerId::new(egui::Order::Background, egui::Id::new("under-windows"))
 }
 
 /// The resize zone of a borderless window by position at the edge (item 22 of round 6, test 64):
@@ -10508,7 +10749,7 @@ enum MediaDone {
 pub struct Opening {
     path: PathBuf,
     then: OpenThen,
-    answer: kt_time::sched::Answer<Result<String, ReadFail>>,
+    answer: kt_time::sched::Answer<Result<String, String>>,
 }
 
 /// What a read project file becomes.
@@ -10529,13 +10770,6 @@ pub(crate) enum OpenThen {
     Recovery(RecoveryCandidate),
 }
 
-/// Why a project file did not come.
-pub(crate) enum ReadFail {
-    /// The lesson's copy could not be written.
-    Write(String),
-    Read(String),
-}
-
 /// Release a closed project off the UI thread (scheduler-followups D4, row 270): its player joins
 /// the build, render and prefetch threads and each decoder's last span, and its recovery write (an
 /// unsaved project the rig leaves) is a write. A thread of its own, not a lane: a decoder's last
@@ -10550,7 +10784,7 @@ fn release(old: KtApp) {
 
 /// The media gestures' lane: class `Answer` (the person waits for the clip), one open at a time
 /// in the order asked.
-fn media_lane() -> &'static kt_time::sched::LaneRef {
+pub(crate) fn media_lane() -> &'static kt_time::sched::LaneRef {
     static L: std::sync::OnceLock<kt_time::sched::LaneRef> = std::sync::OnceLock::new();
     L.get_or_init(|| kt_time::sched::Lane::open("media", kt_time::sched::Class::Answer))
 }
@@ -10586,7 +10820,7 @@ thread_local! {
     static MEDIA_GRACE: std::cell::Cell<Option<std::time::Duration>> = const { std::cell::Cell::new(None) };
 }
 
-fn media_grace() -> std::time::Duration {
+pub(crate) fn media_grace() -> std::time::Duration {
     MEDIA_GRACE.with(|g| g.get()).unwrap_or(ANSWER_GRACE)
 }
 
@@ -10628,7 +10862,7 @@ pub(crate) fn set_save_grace(d: Option<std::time::Duration>) {
 }
 
 /// Ctrl+S's lane: class `Answer`, so it never waits behind background work or for playback.
-fn save_lane() -> &'static kt_time::sched::LaneRef {
+pub(crate) fn save_lane() -> &'static kt_time::sched::LaneRef {
     static L: std::sync::OnceLock<kt_time::sched::LaneRef> = std::sync::OnceLock::new();
     L.get_or_init(|| kt_time::sched::Lane::open("save", kt_time::sched::Class::Answer))
 }
@@ -10852,6 +11086,9 @@ impl KtApp {
         }
         self.perf.last_sample = std::time::Instant::now();
         let ord = std::sync::atomic::Ordering::Relaxed;
+        if self.perf.diag_open {
+            self.sample_copies();
+        }
 
         // saturating: recreating the player zeroes the counters of the new cache,
         // while perf.last_* holds the cumulatives of the old one — a bare subtraction gave
@@ -11429,6 +11666,12 @@ impl eframe::App for KtApp {
             let ended = rx.recv_timeout(std::time::Duration::from_secs(5)).is_ok();
             record("autosave", since, ended);
         }
+        // what a gesture asked of the disk just before (an export) is waited for, within a bound
+        if !self.disk_asks.is_empty() {
+            let since = std::time::Instant::now();
+            self.take_disk(CLOSE_RECOVERY_WAIT);
+            record("disk", since, self.disk_asks.is_empty());
+        }
         // a Ctrl+S still writing finishes first: its outcome decides the asterisk below. What
         // waited for it (an open, a lesson) has no window to happen in any more
         self.after_save = None;
@@ -11441,23 +11684,66 @@ impl eframe::App for KtApp {
         // Unsaved work goes to the recovery file; saved work carries its own recovery file
         // away with it, so that the next start does not offer
         // to restore what is already in the project.
-        self.save_workspace();
+        // Every disk call of the close runs on a thread and is waited for with a bound, and the trace
+        // names the wait (found-defects 831): on a saturated disk an fsync or a rename stands for tens of
+        // seconds in the kernel, and the close stood with it, at no load, unnamed
         if self.dirty_content || self.dirty_ui {
             self.model.set_ui_state(Some(self.ui_state()));
-            self.write_recovery_now();
-        } else {
-            self.drop_own_recovery();
+            let target = self.recovery_target();
+            let json = self.project_text(&self.model.document(), target.parent());
+            let (guard, rev) = (self.recovery_rev.clone(), self.model_rev);
+            let path = target.clone();
+            let failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let f = failed.clone();
+            close_write("recovery", CLOSE_RECOVERY_WAIT, move || {
+                if let Err(e) = write_project_guarded(&guard, &path, rev, &json) {
+                    crate::journal::log("WARN", &format!("recovery write failed: {} ({e})", path.display()));
+                    f.store(true, std::sync::atomic::Ordering::Release);
+                }
+            });
+            // the drop's write is for an app that never came here: after this one it repeated it, both
+            // fsyncs on this thread, and stood on the guard of one still running. A failed one is tried
+            // once more there
+            if !failed.load(std::sync::atomic::Ordering::Acquire) {
+                self.recovery_on_drop = false;
+                self.recovery_written = Some(target);
+            }
+        } else if let Some(p) = self.recovery_written.take() {
+            close_write("recovery-removed", CLOSE_WAIT, move || {
+                let _ = std::fs::remove_file(p);
+            });
         }
         // the work is safe (the recovery written; the lock goes with the app): from here the exit is
         // bounded, whatever is still busy (close-while-busy, kkt-26.11.18 T1)
         kt_time::shutdown::mark(kt_time::trace::shutdown::DURABLE, "recovery");
         #[cfg(not(test))]
         crate::exit_watch::arm(crate::exit_watch::EXIT_BOUND, crate::exit_watch::end_now);
+        // a convenience, and the exit is bounded by now: it goes beside the poster's wait
+        let until = std::time::Instant::now() + CLOSE_WAIT;
+        let workspace = self.workspace_now().and_then(|(path, w)| {
+            let write = move || {
+                crate::user_store::save_workspace_at(&path, &w);
+                // its write goes through the small files' thread: the join below waits for the file
+                crate::later::flush(CLOSE_WAIT);
+            };
+            std::thread::Builder::new().name("close-workspace".into()).spawn(write).ok()
+        });
+        // the effects' pass times measured since the last write: the exit hook no longer touches the disk
+        // (found-defects 972)
+        #[cfg(not(test))]
+        let passes = std::thread::Builder::new().name("close-passes".into()).spawn(kt_gpu::flush_pass_times).ok();
         // closing a named project renders its poster (D5): one frame, within a budget
         self.queue_poster();
         let since = std::time::Instant::now();
         let ended = crate::welcome::wait_posters(std::time::Duration::from_secs(3));
         record("poster", since, ended);
+        if let Some(h) = workspace {
+            kt_time::shutdown::join("workspace", h, until);
+        }
+        #[cfg(not(test))]
+        if let Some(h) = passes {
+            kt_time::shutdown::join("pass-times", h, until);
+        }
         // past its budget the poster stops: it would hold the offline engine's park and the GPU exit
         // hook past the exit's bound (found-defects 791)
         if !ended {
@@ -11481,9 +11767,35 @@ impl eframe::App for KtApp {
         // after the recovery write (durability first): the clean-close event, within a
         // fixed budget; a dead network looks exactly like no telemetry
         crate::telemetry::signal(crate::telemetry::Signal::Exit);
+        // the workspace, the records and the journal's last lines (found-defects 833)
+        crate::later::flush(std::time::Duration::from_secs(1));
+        crate::journal::flush(std::time::Duration::from_secs(1));
         // what the close did is in the file before the drops join threads (a clean exit flushed
         // nothing, and the owner's trace ended a second before his close)
-        kt_time::trace::flush();
+        note_trace_flush();
+    }
+}
+
+/// The trace's tail is in its file, or the journal says it is not (found-defects 918).
+fn note_trace_flush() {
+    if !kt_time::trace::flush() {
+        crate::journal::log("TRACE", "the last records are not written: the disk did not take them in time");
+        crate::journal::flush(std::time::Duration::from_millis(300));
+    }
+}
+
+/// How long the close waits for a write nobody loses by.
+const CLOSE_WAIT: std::time::Duration = if cfg!(test) { kt_time::TEST_WAIT } else { kt_time::shutdown::WAIT };
+/// How long it waits for the unsaved work's recovery file, as for a Ctrl+S being written.
+const CLOSE_RECOVERY_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// A disk call of the close, on a thread of its own, waited for at most `bound` and recorded as `who`:
+/// past it the call is left to end with the process. `true` — it ended.
+pub(crate) fn close_write(who: &'static str, bound: std::time::Duration, f: impl FnOnce() + Send + 'static) -> bool {
+    let until = std::time::Instant::now() + bound;
+    match std::thread::Builder::new().name(format!("close-{who}")).spawn(f) {
+        Ok(h) => kt_time::shutdown::join(who, h, until),
+        Err(_) => false,
     }
 }
 
@@ -11647,6 +11959,9 @@ pub fn run() -> eframe::Result {
                 None => KtApp::new_empty(Some(tr(k::msg::OPEN_A_PROJECT).to_string())),
             };
             app.start.store = store;
+            if app.cache_mode() != Default::default() {
+                app.set_persistent_cache();
+            }
             app.load_controls(offer_controls);
             app.note_recent();
             // R.49 item 353: unsaved work no longer “replaces the project if
@@ -11686,7 +12001,9 @@ pub fn run() -> eframe::Result {
     // the app and its threads are dropped (each join bounded): the drops' records reach the file
     // before the C exit hooks run (close-while-busy)
     kt_time::shutdown::mark(kt_time::trace::shutdown::RETURNED, "eframe");
-    kt_time::trace::flush();
+    note_trace_flush();
+    // a window that never opened says why in the journal, and nothing else flushes it
+    crate::journal::flush(std::time::Duration::from_secs(1));
     ran
 }
 
@@ -11807,7 +12124,15 @@ impl KtApp {
                 if window_buttons {
                     self.draw_window_buttons(ui);
                 }
-                self.draw_meters(ui);
+                // the program stage under the meters (loudness-norms)
+                let all = ui.available_rect_before_wrap();
+                let (meters, row) = all.split_top_bottom_at_y(all.bottom() - crate::program_ui::PROGRAM_H);
+                if self.model.editing().is_some() {
+                    self.draw_meters(ui);
+                    return;
+                }
+                ui.scope_builder(egui::UiBuilder::new().max_rect(meters), |ui| self.draw_meters(ui));
+                ui.scope_builder(egui::UiBuilder::new().max_rect(row.shrink(1.0)), |ui| self.draw_program_row(ui));
             });
         // the drag strip — already OUTSIDE the panel: the panel itself took the space for it,
         // so the right edge of the remaining space is its left edge.
@@ -11955,10 +12280,15 @@ impl KtApp {
     /// The export body by path — for the menu item and for the live scenario.
     pub(crate) fn export_otio_to(&mut self, dst: &Path) {
         let out = kt_otio::save_project(&self.model.document(), &self.retained, dst.parent());
-        match write_project_atomic(dst, &out) {
-            Ok(()) => self.note(crate::tf!(k::msg::EXPORTED, dst.display().to_string())),
-            Err(e) => self.warn(crate::tf!(k::msg::SAVE_FAILED, e)),
-        }
+        // two fsyncs: off the UI thread, the notice when it is done (found-defects 840)
+        let dst = dst.to_path_buf();
+        self.disk(
+            move || write_project_atomic(&dst, &out).map(|()| dst.display().to_string()),
+            |app, done| match done {
+                Ok(p) => app.note(crate::tf!(k::msg::EXPORTED, p)),
+                Err(e) => app.warn(crate::tf!(k::msg::SAVE_FAILED, e)),
+            },
+        );
     }
 
 }
@@ -12078,10 +12408,13 @@ impl KtApp {
     }
 }
 
-/// The build salt of the disk tier (render-cache-disk D1): the program's build and the FFmpeg it decodes
-/// with — another of either may be another picture of the same plan.
-fn render_cache_build() -> String {
-    format!("{} avcodec {:?}", kt_version::FULL, kt_media::ffmpeg::backend_info().map(|b| b.avcodec_version))
+/// The cache folder of a project file; an untitled project's lies under the user's data folder.
+pub(crate) fn cache_folder_of(project: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+    match project {
+        // an unnamed recovery lies in the user's data folder: its project is untitled
+        Some(p) if !p.starts_with(crate::journal::data_dir()) => Some(kt_media::cache_folder::beside(p)),
+        _ => kt_media::cache_folder::untitled(),
+    }
 }
 
 #[cfg(test)]

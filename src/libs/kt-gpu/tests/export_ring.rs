@@ -215,7 +215,46 @@ fn t2298_an_export_device_keeps_the_uploads_of_the_frames_in_flight() {
         export.execute_once(&plan, &mut a).unwrap();
         assert_eq!(export.last_stages().upload_bytes, 0, "read again at once, not uploaded at {t:?}");
     }
-    assert!(preview.uploads_held() > (ring + 1) * most, "scene guard: the preview's cache holds more ({} of {uploaded_total})", preview.uploads_held());
+    // the preview's cache on a card holds more; on a CPU device it is bounded too (t3606)
+    if !preview.info().software {
+        assert!(preview.uploads_held() > (ring + 1) * most, "scene guard: the preview's cache holds more ({} of {uploaded_total})", preview.uploads_held());
+    }
+}
+
+/// t3606 (cache-audit cut 3): on a device of type CPU the preview's upload cache keeps the uploads of
+/// the frame being resolved and the one before — its textures are the process's memory, a second copy
+/// of the decoded frames — so it never holds more than two frames' layers, and a frame composed again
+/// at once (a pause) is not uploaded again.
+#[test]
+fn t3606_a_cpu_device_keeps_two_frames_of_uploads() {
+    use kt_cache::{BurstCache, CacheConfig};
+    kt_plugins_builtin::install();
+    let Some(preview) = kt_gpu::test_engine() else { return };
+    if !preview.info().software {
+        eprintln!("skipped: a card keeps its upload cache");
+        return;
+    }
+    let p = kt_model::demo::demo_project(kt_model::demo::DemoSources::Synth);
+    let q = Quality { width: 320, height: 180 };
+    let ts: Vec<Tick> = (0..24).map(|i| Tick(90_000 * 3 + i * 3_000)).collect();
+    let video = VideoRenderer::new(&p);
+    let cache = BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: 512 << 20 });
+    let mut srcs: std::collections::HashMap<_, _> = sources(&p).into_iter().collect();
+    for (media, pts, dq) in ts.iter().flat_map(|t| video.layers_at(*t, q)) {
+        if let Some(s) = srcs.get_mut(&media) {
+            let f = s.read_video_frame(pts, Some(dq)).unwrap();
+            cache.insert_video(kt_engine::source_id(media), Some(dq), kt_engine::video_cache_idx(pts), f.into());
+        }
+    }
+    let most = ts.iter().map(|t| video.layers_at(*t, q).len()).max().unwrap();
+    let mut out = Vec::new();
+    for t in &ts {
+        let plan = video.frame_plan(&cache, *t, q);
+        preview.execute_once(&plan, &mut out).unwrap();
+        assert!(preview.uploads_held() <= 2 * most, "at {t:?}: {} uploads held, two frames read at most {}", preview.uploads_held(), 2 * most);
+        preview.execute_once(&plan, &mut out).unwrap();
+        assert_eq!(preview.last_stages().upload_bytes, 0, "a pause's frame again: not uploaded at {t:?}");
+    }
 }
 
 /// t2960 (export-readback D1): the ring's bound is its bytes over the frame — more than three 1080p

@@ -106,6 +106,10 @@ NO QUOTES: no web access in this spec session (2026-11-20) for outside quotes; e
 Take it: a viewer zoom (Fit, 25–400 %) and pan with a pasteboard of outlines and handles, and handle kinds
 declared on passport rows (point exists; radius, angle, quad added) so every effect gets on-screen control.
 
+Design `preview-canvas-and-gizmos` revision 2 (2026-11-24): Space stays play, Ctrl+0 stays the interface zoom, Fit is Shift+0;
+handles are declared on the six built-in effects whose rows are places on the frame (the note's "every `_x`/`_y` pair" is
+today one pair, Radial Blur's).
+
 ## Sources
 
 - `docs/ktprompts/kkt-26.11.01b.txt` line 10; `docs/user-feedback.md` "the second list" (B9 taken: "zoom and

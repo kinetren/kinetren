@@ -1,26 +1,28 @@
 # Design: subtitles-and-text-editing
 
-> DESIGN ONLY, revision 1 (2026-11-20), base `ec30cb02`. Q1–Q3 in `proposal.md`; the defaults follow
-> the recommended options.
+> DESIGN ONLY, revision 2 (2026-11-25), base `fc60a5d9`. Q1–Q3 decided (A11). Implementation-ready: stage A needs nothing unmerged;
+> stage B takes the Library's `speech-*` rows and the font packs from `download-library` (its stages 2 and 4).
+
+## D0. What revision 1 said and the code contradicts
+
+1. **`LaneKind::Subtitle`, a fifth kind.** 65 places match the four kinds; mute, solo, lock, order, opacity, effects, masks, copy of rows,
+   `SetLaneOrder`, bands, OTIO rows all exist per VIDEO track. A subtitle track is a video track with captions in place of events (D5): it has
+   its row in the composite order, its opacity, its chain and its masks with no new code, and a person sees a track like any other.
+2. **`SUB_TAG`, a new kind of source.** A generator event has an address, a state, a retune lane, an identity on disk and procedural time.
+   The captions of a track resolve to ONE synthetic generator event (D7); the one thing added is "nothing at this tick".
+3. **"One word per line … `{"t0":…}`".** The file is serde's pretty JSON: an object is a line per field, 6 000 words would be 36 000 lines. A word is
+   one STRING (D1).
+4. **The download card pattern, 2.2 and 2.6**: the Library (`download-library`) now; a feature's `library_line`.
+5. **Markers**: pauses are `pause-detection`; fillers stay here.
+6. **`kt-text` "gets a cluster range"**: the reveal weights exist per cluster (`lib.rs:518–530`), the highlight joins them.
+7. **The Text panel "beside the bin"**: the bin is one column (`draw_bin_column`) with its header; a tab strip is added there, the width limit untouched.
+8. Since `frame-format-variants` (designed) titles in another shape wrap and keep their short side: captions use the same `wrap_lines`.
 
 ## Context
 
-Read on `ec30cb02`:
-
-- **Titles** (`GeneratorKind::Text`, R.52/R.59): values on the event, rendered by kt-text — a pure
-  function (params, W, H) → RGBA with the vendored Noto Sans (`src/libs/kt-text/assets/`), harfrust
-  shaping, no time inside (animation arrives as `reveal` / `offset` numbers). The source of a generator
-  is addressed `GEN_TAG | event id` and lives under a MediaWorker (law P, kt-engine CLAUDE.md).
-- **Markers** are identified by tick (`normalize` dedups by `t`), names share one namespace with areas
-  (`DuplicateName`): unfit for a thousand caption lines (F-TXT-004).
-- **Tracks** are objects (R.62 B); `LaneKind` = Video | Audio | Morph | Camera.
-- **Keys glued to material** (`AutoKey.t` = material tick, R.33): the rule a word's time follows.
-- **The peak pyramid** in the sidecar (`docs/media-index.md`): silence detection without decode
-  (invariant 8).
-- **Downloads on a click**: the FFmpeg download on Windows (F-MED-007,
-  `src/apps/kt-app/src/ffmpeg_setup.rs`): pinned URL + sha256, a card, a progress bar, no network
-  otherwise.
-- **Ripple**: change `ripple-and-trim-modes` (`ops::ripple_plan`) — text deletion uses it.
+`GeneratorKind::Text` and `GenState` (`genmedia.rs`), `GeneratorSource` (`generator.rs`), `gen_sources` (`video.rs:3031`), `Player::update_gen`, kt-text
+(`render_rgba`, clusters, reveal), `Track` (`project.rs:3111`), `resolve_reel`, `links::resolve_derived`, `clip_material_at`/`clip_timeline_at`,
+`AudioSeries` jobs and the `analysis` lane, `pause-detection`, `ripple-and-trim-modes` (`ripple_plan`, `amend_batch`), `download-library`.
 
 ## Goals / Non-Goals
 
@@ -34,26 +36,23 @@ its leaves' text).
 ## D1. The transcript belongs to the media, in material time
 
 ```text
-Project.transcripts: Vec<Transcript>          // empty = not written
-Transcript { media: MediaId, lang: String, engine: String, words: Vec<Word> }
-Word { t0: Tick, t1: Tick, text: String, conf: u8, para: bool }   // t in MATERIAL ticks
+Project.transcripts: Vec<Transcript>                         // empty = not written
+Transcript { media: MediaId, lang, engine: String, words: Vec<Word> }
+Word { t0, t1: Tick /* material */, conf: u8, para, edited: bool, text }
 ```
-
-An event shows the words whose `[t0, t1)` lies in its material window (the warp's span for a slowed
-event: `clip_material_at` maps both ways). A split, trim, move, reverse or speed change needs no edit of
-words — the REPRESENTATION keeps them in sync, as for keys (R.33). A morpher layer that swaps the
-source shows the swapped media's words. Editing a word's text = `SetWord { media, index, text }`;
-merging/splitting words keeps the times. In the `.kt` file one word per line (git-friendly, the R.70
-rule): `{"t0":…,"t1":…,"w":"…"}`.
+In the file a word is a string: `"1234500 1267800 92 p Привет"` (`p` paragraph, `e` edited): one line each, a retyped word is one line of `git diff`.
+An event shows the words of its material window through `clip_timeline_at` (trims, reverse, warp): no edit of an event touches a word. A morpher that swaps
+the source shows the swapped file's. An instance of a composition shows its leaves' text (the panel reads the resolved reel). Commands `SetTranscript`,
+`SetWord`, `MergeWords`, `SplitWord`, `RemoveTranscript`; content, undo, one media one transcript per language.
 
 ## D2. Recognition (Q1 a)
 
-- Component: whisper.cpp shared library (pinned version, per-platform build with sha256) and a ggml
-  model, downloaded on a click into the data dir, loaded with `dlopen` (the kt-ffmpeg loader pattern; the
-  binary links nothing, invariant 10's spirit). Absent → the menu item opens the download card.
+- Component: whisper.cpp's shared library (`speech-runtime`) and a ggml model (`speech-model`), items of the Library (`download-library`), loaded
+  with `dlopen` by a new crate `kt-speech` (the kt-ffmpeg loader pattern; the binary links nothing). `KT_SPEECH_DIR` gives a folder to tests and
+  to a person with a build of their own. Absent → the `library_line` with the size and the button.
 - Job: an offline source of the media (invariant 5's offline conditions), audio decoded and resampled to
   16 kHz mono (swresample), fed in 30 s windows with word timestamps on; results mapped from sample
-  index to material ticks (`ticks = samples × 90000 / 16000`, exact: 45/8). Class `Background`, paused
+  index to material ticks (`ticks = samples × 90000 / 16000`, exact: 45/8). On the `speech` lane, class `Background`, paused
   while playing, cancellable, progress per window. Threads: half the cores.
 - Recognition output is DATA once stored: invariant 11 is about renders, and a stored transcript renders
   the same everywhere. Re-running recognition replaces the words only after confirmation if any word was
@@ -70,17 +69,16 @@ a cut between events shows as a thin bar, a gap as "· · ·" with its length.
 - **Click** a word → seek to its timeline start. **Drag** over words → `Project.region` = their span.
 - **Search**: a box in the head; hits are counted ("3 / 17"), Enter/Shift+Enter step and seek, hits are
   drawn as ticks on the ruler (one mesh, rebuilt only when the query or the revision changes).
-- **Delete** with words selected → the region cut with ripple (one rule, `ripple_plan`), one undo step;
-  the scope is the auto-ripple scope or "affected tracks" when the mode is off — the text gesture is an
-  explicit command, so rule 20 holds.
+- **Delete** with words selected → the region cut with ripple (`ripple_plan`, its scope that of the mode, else the track), one undo step; until
+  `ripple-and-trim-modes` is in, Delete cuts with a gap and says so.
 - **Retype**: double-click a word edits its text (a transcript edit, not a cut).
 - Layout uses the shared text widgets; a 40-minute interview (~6 000 words) is laid out once per revision
   and per width into galleys cached by (revision, width), drawn by clipping to the visible rows.
 
 ## D4. Pauses and fillers → markers
 
-"Mark pauses…" (min length, threshold dB): walks the peak pyramid of the audio events in timeline order,
-marks spans below threshold as range markers named "pause"; "Mark fillers": words matching a per-language
+Pauses are the change `pause-detection` (2026-11-24): a detector that learns the recording's floor, since the owner asks
+for noisy sound too (v26.10 line 89); the Text panel's "Pauses…" opens its window. "Mark fillers": words matching a per-language
 list (in the i18n catalogue, editable in Settings) as range markers "filler". Marker names are made
 unique by `unique_name` (the area/marker namespace rule). Nothing is cut; a "Cut all pause markers" item
 is an explicit ripple of the named ranges.
@@ -88,17 +86,18 @@ is an explicit ripple of the named ranges.
 ## D5. The subtitle track and captions
 
 ```text
-LaneKind::Subtitle                          // the fifth kind; rows like any track
-Track.sub: Option<SubTrack { style: SubStyle, captions: Vec<Caption> }>
-Caption { id: CaptionId, start: Tick, duration: Tick, text: String, words: Vec<(Tick, Tick)> }
-SubStyle { family, size_px, color, outline, box, align, pos_y, margin, highlight: Option<Color> }
+Track.sub: Option<SubTrack>                                    // legal on a VIDEO track with no events
+SubTrack { style: SubStyle, captions: Vec<Caption> }           // sorted, not overlapping
+Caption { id: CaptionId, start, duration: Tick, text, words: Vec<(u16 /* cluster */, Tick, Tick)> }
+SubStyle { family, font_pack, bold, size, color, outline, box, align, pos_y, margin, highlight: Option<Color>, max_chars, max_lines }
 ```
-
-Captions are TIMELINE-timed items (not material): a caption is what is shown, an edit decision. They
-move with ripple like any time-anchored object (`ripple_plan` gains them). `Create captions from text`
-builds them from the transcript words visible in a range: break at a paragraph, a pause ≥ 0.5 s, the
-max characters per line (default 42) and max 2 lines, max 6 s; words' timeline times kept in `words` for
-the karaoke highlight. Captions on one subtitle track do not overlap (validate), adjacent ones may abut.
+Timeline-timed items: a caption is an edit decision. `validate`: events and captions do not share a track; captions do not overlap. The row of the track
+draws caption boxes; selection, drag, trims, Delete and copy act on them as on events (`TlEntity::Caption`: t253's table demands its verbs). Ripple moves them
+(`ripple_plan` gains `Caption`; the other way round if it lands second), a region crops copies of them, a split of the track's neighbours does not touch them.
+`Create captions from text` makes them from the words visible in a range: a break at a paragraph, at a pause ≥ 0.5 s, at `max_chars` (42) × `max_lines`
+(2), at 6 s; lines broken by `kt_text::wrap_lines` at 0.9 of the width; each word's cluster and timeline times are kept for the highlight. Re-creating replaces
+nothing: a new track.
+Commands: `AddCaption`, `SetCaption`, `RemoveCaption`, `SetSubStyle`, `SetTrackSub` (make and unmake), with the row's lock.
 
 ## D6. SRT / WebVTT
 
@@ -110,13 +109,15 @@ Import puts a new subtitle track; a file with overlapping cues imports into as m
 
 ## D7. Burn-in through the one plan
 
-A visible subtitle track is a layer of the frame plan at its row position: a procedural source
-`SUB_TAG | track id` (a new address range beside `GEN_TAG`, the `const _` order guard extended), whose
-frame at tick `t` is kt-text's rasterization of the active caption(s) with the style, and the highlight
-fraction of the word under `t` (passed as a cluster range + colour — kt-text gets no time). The source is
-procedural (`MediaInfo.fps == None`), so it is not prefetched, has no frame grid floor, and its content
-serial changes with the track's revision. Preview and export compose it by the same plan (invariant 7).
-A caption-free tick has no layer (no cost).
+`resolve_reel` adds ONE synthetic event per audible-by-eye subtitle track: kind `GeneratorKind::Captions(Arc<CaptionSet>)` (internal: not in the list of
+kinds, not in the file), start = the first caption, duration to the last, lane = the track's, id = `caption_event(track)` (a reserved range, as
+`slice_id` has one; `validate` refuses a model id in it). So the composite order, the track's opacity, blend, chain and masks, the prefetch, the address
+`GEN_TAG | id`, the retune of a typed letter and the identity on disk are the generator's.
+- `kt_media::generator::render_at(Captions, pts)`: the active caption by bisection → `text_params` of its style → kt-text, with `highlight: Option<(cluster
+  range, colour)>` beside `reveal` (the branch without it is the former bytes); cached by (caption, highlighted word, size).
+- **Nothing between captions**: `VideoClip.holes: Option<Arc<[TickRange]>>` from the set; `active_at` is false in a hole, so there is no layer and no upload.
+- In a format of another shape (`frame-format-variants`) the size follows the short side and the margin the style's fraction.
+- An entered composition has its own subtitle tracks, composed inside it.
 
 ## D8. Export
 
@@ -127,8 +128,7 @@ transcripts in `metadata["kt"]`; the OTIO export also writes `<name>.srt` per su
 
 ## D9. Format, versions
 
-`.kt`: `transcripts` and subtitle tracks raise the file to the next free version by content
-(`version_for`: `has_transcripts() || has_subtitle_tracks()`). A project without them is byte-identical.
+`.kt`: `transcripts`, `Track.sub` and a style's font pack raise the file to the next free version by content. A project without them is byte-identical.
 kt-otio envelope: the next `KT_META_VERSION` by content. Rows in "What OTIO export loses".
 
 ## D10. Class walk — "a long list drawn every frame"
@@ -138,7 +138,7 @@ kt-otio envelope: the next `KT_META_VERSION` by content. Rows in "What OTIO expo
 | Text panel | 6 000 words per frame | galleys cached by (revision, width), clip to view |
 | ruler search ticks | thousands of marks | one mesh per (query, revision) |
 | snap targets (`snap_targets`) | captions as snap points would allocate per call | captions join the snap set through the timeline's event index, not a per-call `Vec` |
-| subtitle track row | hundreds of caption boxes | the existing `EventPaint` replay on hover frames |
+| subtitle track row | hundreds of caption boxes | an index per track (bisection), the `EventPaint` replay on hover frames |
 | marker band with pause markers | hundreds of range markers | existing band, its own cost (checked by the hover-static live step) |
 | the subtitle source | a rasterization per frame | memo by (caption id, highlight word, size); a static caption is drawn once |
 

@@ -8,10 +8,10 @@ textures, intermediates, memos and readbacks SHALL be `Rgba8Uint` or `Rgba16Floa
 
 In a 16-bit plan:
 - the core passes (geometry, resample, layer mix, the crossfade, masks, premultiply, the composite) SHALL
-  run in float;
+  run in float; the tone map wherever one is needed SHALL be one curve from 1000 cd/m² to the SDR white, never of the frame's own brightest pixel;
 - the 8-bit shaders and their bytes SHALL be unchanged;
-- the display SHALL present HDR on an HDR monitor wherever the system gives an HDR surface (an extended
-  linear or HDR10 colour space): the linear picture without a tone map, rolled off above the monitor's
+- where the project has a 16-bit composition the display SHALL present HDR on an HDR monitor wherever the system gives an HDR surface (an extended
+  linear or HDR10 colour space), the interface at the SDR white: the linear picture without a tone map, rolled off above the monitor's
   peak. Elsewhere it SHALL tone-map by BT.2390 to the monitor's SDR white, and the display's facts SHALL
   name which.
 
@@ -50,3 +50,8 @@ Why: kkt-26.11.20b line 10 ("HDR на HDR-монитор сразу"); kkt-26.11
 - **WHEN** a heavy 16-bit moment is prerendered with a forced 10-bit HEVC encoder, and with only an 8-bit encoder available
 - **THEN** the first stores a Main10 PQ segment whose restored picture is within the codec's tolerance of the composite; the second writes nothing and names why
 - **TEST** t3897 (`src/libs/kt-engine/tests/render_cache.rs`)
+
+#### Scenario: A person who asked for nothing sees nothing change
+- **WHEN** an 8-bit project is opened on a double of an HDR monitor, a 16-bit one after it, and the window moves to an SDR monitor and back
+- **THEN** the first keeps the SDR surface and its bytes; the second takes the HDR surface, the interface's white is the system's, and each move names the surface in the facts; a screenshot is the SDR rendition in all of them
+- **TEST** t4155 (`src/apps/kt-app/src/layout_tests.rs`)

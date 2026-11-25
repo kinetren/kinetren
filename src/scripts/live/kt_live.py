@@ -328,6 +328,8 @@ class Live:
         self._poked = 0.0
         # a direct read of a point is accepted only after reconciliation with the reference
         self._direct_px = None
+        # no pixel was read since the last gesture (`picture`)
+        self._gestured = True
         # OBSERVED frame step: under four workers the software render goes
         # noticeably slower than alone, and all waits must stretch
         # together with it. Fixed thresholds are exactly the
@@ -452,6 +454,10 @@ class Live:
         now = geometry()
         if any(abs(now[k] - want[k]) > 4 for k in ("x", "y", "w", "h")):
             win = the_window(what="the stand's window")
+            # a scenario that left it MAXIMIZED (a resize to nearly the screen does, under openbox): the
+            # window manager ignores a configure of a maximized window, and the next scenario measured a
+            # picture a third larger (`masks` after `node_graph_branch`, found-defects 908)
+            unmaximize(win)
             win.configure(x=want["x"], y=want["y"], width=want["w"], height=want["h"])
             probe.d.sync()
             self._raised = False
@@ -851,6 +857,12 @@ class Live:
             _poll(0.05)
         raise Failure("the program did not give the geometry (KT_GEOM_DUMP)")
 
+    def small_files_written(self, timeout=60.0):
+        """The program's own small files (start.json, tour.json, the recent list, the workspace) are on
+        disk: it writes them off its frame, and a verdict read right after a gesture read the file
+        before the gesture's write (found-defects 841)."""
+        return self.until(lambda: self.geom().get("small_files") == 0, timeout=timeout)
+
     def x_at(self, tick):
         """Screen x for a timeline tick."""
         g = self.geom()
@@ -961,6 +973,7 @@ class Live:
         exactly that blindness, for the removal of which the round was opened.
         """
         _t0 = time.time()
+        self._gestured = True
         if self._wait_gesture(mark, timeout=max(2.0, 12.0 * self._dt)):
             if os.environ.get("KT_LIVE_DEBUG_WAIT"):
                 print(f"      [waited] {what}: {time.time() - _t0:.2f} s", file=sys.stderr)
@@ -1526,6 +1539,23 @@ class Live:
         self.click_probe(cell, what or f"the {tag} cell")
         self.expect(self.wait_gone(cell), f"the gallery closed after picking {tag}")
 
+    def wait_probe_still(self, name, looks=3):
+        """A probe's rectangle the same in `looks` dumps in a row. A scroll GLIDES: a wheel sent while it
+        does turns over whatever has slid under the pointer by then, and an automation graph takes it and
+        zooms the timeline's view (found-defects 833: the view at 6.8 s and the event's first key out of
+        it); a click aimed at a gliding rectangle hits its neighbour."""
+        last, same = None, 0
+
+        def still():
+            nonlocal last, same
+            r = next((f for f in self.geom().get("fields", []) if f["param"] == name), None)
+            at = r and (r["x"], r["y"], r["w"], r["h"])
+            same = same + 1 if at is not None and at == last else 0
+            last = at
+            return same >= looks
+
+        return self.until(still)
+
     def scroll_probe_into_view(self, name, anchor, what=None, tries=12, below=None):
         """Scroll the wheel over the widget `anchor` until the rectangle `name` is in the visible part
         (bottom below the edge — scroll down; top above it — scroll up). The edge is `below`:
@@ -1550,6 +1580,7 @@ class Live:
             # the anchor could have slid past the edge — the wheel turns at a VISIBLE point
             ay = min(max(a["y"] + a["h"] / 2, 4), h - 4)
             self.wheel(win["x"] + int(a["x"] + a["w"] / 2), win["y"] + int(ay), ticks)
+            self.wait_probe_still(name)
         self.expect(False, what or f"“{name}” could not scroll into the window")
         return False
 
@@ -1614,11 +1645,44 @@ class Live:
         self._direct_px = False
         return False
 
+    def picture(self):
+        """The picture of the last gesture is on screen (found-defects 845).
+
+        A program reads a click in one frame and draws its picture in a later one, once the composite
+        came: a pixel read between the two is the former moment's (`fade` read 1.5 s at 0.2 s). The program
+        says when the picture drawn is the one it asks for (`compose.current`); the frame after the
+        dump that says so is the one on screen. Playing, no picture stands: the read is the caller's."""
+        if not self._gestured or getattr(self, "geom_path", None) is None:
+            return
+        first = self._frame_now() + 1
+        ready = []
+
+        def current():
+            g = self.geom()
+            if g.get("playing"):
+                return True
+            ready[:] = [g] if g["frame"] >= first and g.get("compose", {}).get("current") else []
+            return bool(ready)
+
+        if not self.until(current, timeout=120.0):
+            print("   note: the preview's picture did not come; the pixel is read as it stands", flush=True)
+        elif not ready:
+            return
+        self.wait_frame(1, what="the frame after the picture's", soft=True)
+        self._gestured = False
+
     def pixel(self, x, y):
         """Color of the screen pixel (r, g, b) — “what a person sees”."""
+        self.picture()
         if self._pixel_path():
             return self._pixel_direct(x, y)
         return self._pixel_shot(x, y)
+
+    def picture_box(self, xy, half):
+        """The picture's box around a point (`half` = width, height), an image: letters are thin, and a single
+        pixel between two of them says nothing of a change (`nestparam`)."""
+        self.picture()
+        return screen_image().crop((xy[0] - half[0], xy[1] - half[1], xy[0] + half[0], xy[1] + half[1]))
 
     def ink_box(self, xy, half=60, step=6):
         """The brightest pixel of the SQUARE around the point — one screen snapshot.
@@ -1628,6 +1692,7 @@ class Live:
         stroke, and hitting it with the center of the preview is a lottery, and a lottery
         is not a test (the rule “assert the consequence”).
         """
+        self.picture()
         x0, y0 = xy[0] - half, xy[1] - half
         n = 2 * half // step
         if self._pixel_path():
@@ -1679,6 +1744,7 @@ class Live:
         R.68: the “settled” wait is also tied to the program’s frames —
         `settle` seconds of sleep are replaced by a wait for a pair of frames, and between
         pixel reads a frame is waited for (softly: the picture may also have frozen)."""
+        self.picture()
         self.wait_frame(2, what="frames before reading a settled pixel", soft=True)
         prev = None
         # WE WAIT BY THE CLOCK, but do not sleep: the frame is drawn before the
@@ -2023,6 +2089,22 @@ def pattern_media(out_dir, name, seconds, fps=30, size="640x360"):
         check=True,
     )
     return path
+
+
+def unmaximize(win):
+    """Ask the window manager to take the maximized state off the window."""
+    from Xlib import X
+    from Xlib.protocol import event
+
+    d = probe.d
+    root = d.screen().root
+    atom = d.intern_atom
+    data = (32, [0, atom("_NET_WM_STATE_MAXIMIZED_HORZ"), atom("_NET_WM_STATE_MAXIMIZED_VERT"), 1, 0])
+    # the client window carries the state, not the frame the window manager put it in
+    for w in [win] + list(win.query_tree().children):
+        ev = event.ClientMessage(window=w, client_type=atom("_NET_WM_STATE"), data=data)
+        root.send_event(ev, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask)
+    d.sync()
 
 
 def geometry():

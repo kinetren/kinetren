@@ -55,7 +55,7 @@ fn t2127_the_player_prewarms_what_the_project_reaches_when_it_changes() {
     let src = SyntheticSource::new(Tick(600_000), AudioPattern::Silence);
     let mut p = project();
     let (player, _ring) = Player::new(p.clone(), vec![(MediaId(1), Box::new(src))]);
-    let exec = Arc::new(Recorder { info: GpuBackendInfo { name: "rec".into(), backend: "Test".into(), software: true }, asked: Mutex::default(), runs: Mutex::default() });
+    let exec = Arc::new(Recorder { info: GpuBackendInfo { name: "rec".into(), backend: "Test".into(), software: true, driver: String::new() }, asked: Mutex::default(), runs: Mutex::default() });
     player.set_video_gpu(Some(exec.clone()));
     let asked = || exec.asked.lock().unwrap().clone();
     assert_eq!(asked(), [vec!["glow".to_string()]], "the executor is told the project's effects when it arrives");
@@ -87,7 +87,7 @@ fn t2196_the_player_prewarms_the_run_shapes() {
     p.tracks[0].fx = vec![FxInstance::plugin("color_grade").unwrap(), FxInstance::plugin("posterize").unwrap(), FxInstance::plugin("vignette").unwrap()];
     let (player, _ring) = Player::new(p.clone(), vec![(MediaId(1), Box::new(src))]);
     let exec = Arc::new(Recorder {
-        info: GpuBackendInfo { name: "rec".into(), backend: "Test".into(), software: true },
+        info: GpuBackendInfo { name: "rec".into(), backend: "Test".into(), software: true, driver: String::new() },
         asked: Mutex::default(),
         runs: Mutex::default(),
     });
@@ -117,4 +117,28 @@ fn t2196_the_player_prewarms_the_run_shapes() {
     assert_eq!(runs().len(), 2, "an edit without a new run asked the executor");
     let shapes = kt_engine::prewarm::run_shapes(&p);
     assert_eq!(shapes.len(), 2);
+}
+
+/// Test t3242 (fx-graph-dag D3, 2.6; capability `video-plan`): a chain that branches is prewarmed as it
+/// runs — its ids hold the Merge, its run shapes are those of each arm between the graph's steps (not a
+/// run across the arms that no frame draws), a dangling slot brings none, and the line keeps its own.
+#[test]
+fn t3242_a_branched_chain_is_prewarmed_arm_by_arm() {
+    use kt_model::fx_graph::{FxIn, SlotInputs};
+    kt_plugins_builtin::install();
+    let fx = |id: &str| FxInstance::plugin(id).unwrap();
+    let mut p = project();
+    // color_grade, posterize (the first arm) | duotone, vignette (the second, from the Source) | merge
+    p.tracks[0].fx = vec![fx("color_grade"), fx("posterize"), fx("duotone"), fx("vignette"), FxInstance::Merge { mode: MergeMode::default(), mix: 0.5 }];
+    let line = kt_engine::prewarm::run_shapes(&p);
+    assert_eq!(line, [vec!["color_grade", "posterize", "duotone", "vignette"]].into());
+    let src = SlotInputs { main: FxIn::Source, ..Default::default() };
+    p.tracks[0].fx_in = vec![SlotInputs::default(), SlotInputs::default(), src, SlotInputs::default(), SlotInputs { main: FxIn::Slot(1), second: Some(FxIn::Prev), matte: None }];
+    p.validate().unwrap();
+    assert_eq!(kt_engine::prewarm::run_shapes(&p), [vec!["color_grade", "posterize"], vec!["duotone", "vignette"]].into());
+    assert!(kt_engine::prewarm::effect_ids(&p).contains("merge"));
+    // the first arm taken off the Merge: it dangles and brings no run
+    p.tracks[0].fx_in[4] = SlotInputs { main: FxIn::Prev, second: None, matte: None };
+    p.validate().unwrap();
+    assert_eq!(kt_engine::prewarm::run_shapes(&p), [vec!["duotone", "vignette"]].into());
 }

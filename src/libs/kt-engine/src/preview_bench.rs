@@ -36,6 +36,10 @@ pub struct BenchOptions {
     /// free). Counted from the first sound, not from Play: a start waits for its sound, and under
     /// load that wait (a renderer being built) took most of a window counted from Play.
     pub loop_for: Option<Duration>,
+    /// Play on past `loop_for` until a frame was shown, up to this guard: a test that asks whether a loop
+    /// comes to show frames waits for that, not for ten seconds of a machine whose speed it does not
+    /// know (found-defects 966).
+    pub first_shown_by: Option<Instant>,
     /// Keep what the output device played (f32 stereo interleaved), for a WAV and a test.
     pub capture: bool,
     /// How long the device takes to open on Play before its first callback (play-start-and-prefetch
@@ -56,6 +60,7 @@ impl Default for BenchOptions {
             free_running: false,
             hash_frames: false,
             loop_for: None,
+            first_shown_by: None,
             capture: false,
             device_open: Duration::ZERO,
         }
@@ -293,6 +298,7 @@ pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -
             sounding = Some(Instant::now());
         }
         match o.loop_for {
+            Some(_) if r.shown == 0 && o.first_shown_by.is_some_and(|by| Instant::now() < by) => {}
             Some(d) if sounding.is_some_and(|s| s.elapsed() >= d) => break,
             // a start that never sounds does not hold the bench forever
             Some(d) if sounding.is_none() && started.elapsed() >= d + Duration::from_secs(60) => break,

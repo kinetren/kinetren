@@ -102,7 +102,8 @@ def main(out):
         app.click_probe(cap, "the key of Split")
         app.key("q")
         app.settle()
-        app.expect(wait_for(lambda: stored(store).get("controls") and len(stored(store)["controls"]) > 11), "the new key reached the store")
+        app.small_files_written()
+        app.expect(len(stored(store).get("controls") or "") > 11, "the new key reached the store")
         app.step("assigned", "Split is on Q now: the cap shows it, the reset arrow appeared")
         app.click_probe(cap, "the key of Split again")
         app.key("m")
@@ -115,6 +116,7 @@ def main(out):
         app.settle()
         app.click_probe("controls.take", "Take it from there")
         app.settle()
+        app.expect(app.small_files_written(), "what the program asked to write is written")
         code = stored(store)["controls"]
         app.step("code", "the code under the tiles carries the change")
         app.click_probe("controls.code_copy", "Copy")
@@ -132,8 +134,9 @@ def main(out):
         # ---- a wrong code, then the right one ----
         app.click_probe("controls.reset", "back to the style as it comes")
         app.settle()
-        factory = wait_for(lambda: stored(store).get("controls") if stored(store).get("controls") != code else None)
-        app.expect(factory, "the reset reached the store")
+        app.expect(app.small_files_written(), "the reset is written")
+        factory = stored(store).get("controls")
+        app.expect(factory and factory != code, "the reset reached the store")
         app.scroll_probe_into_view("controls.code_input", "controls.customize", below="controls.close")
         app.click_probe("controls.code_input", "the code field")
         wrong = ("1" if code[0] != "1" else "2") + code[1:]
@@ -142,6 +145,7 @@ def main(out):
         app.click_probe("controls.code_apply", "Apply")
         app.settle()
         app.step("code-refused", "a typo: the error says so, nothing changed")
+        app.small_files_written()
         app.expect(stored(store).get("controls") == factory, "a wrong code changed the store")
         app.click_probe("controls.code_input", "the code field")
         app.key("ctrl+a")

@@ -2,7 +2,8 @@
 //! from it. t2981, t2982, t2984, t2985 (t2980 and t2983 are unit tests of `render_cache.rs`). The
 //! player tests skip without a wgpu adapter.
 
-use kt_engine::render_cache::{Config, FileIds, disk_key};
+use kt_engine::render_cache::{Config, DiskKey, DiskStore, Made, disk_key};
+use kt_media::cache_folder::{self, Folder};
 use kt_engine::{Player, PresentOptions, VideoRenderer};
 use kt_media::{MediaSource, Quality};
 use kt_model::demo::{DemoSources, demo_project};
@@ -87,16 +88,37 @@ fn renderer(p: &Project) -> VideoRenderer {
     VideoRenderer::new_with_facts(p, &facts)
 }
 
-fn key(p: &Project, cache: &kt_cache::BurstCache, t: Tick, q: Quality) -> u64 {
-    let video = renderer(p);
-    let files = FileIds::read(&p.media, None);
-    let (plan, leaves) = video.probe_durable(cache, t, q);
-    disk_key(&plan, &leaves, &files)
+/// What this build makes with one decoder.
+fn made() -> Made {
+    Made::of(60)
+}
+
+fn key(p: &Project, cache: &kt_cache::BurstCache, t: Tick, q: Quality) -> DiskKey {
+    key_made(p, cache, t, q, &made())
+}
+
+fn key_made(p: &Project, cache: &kt_cache::BurstCache, t: Tick, q: Quality, made: &Made) -> DiskKey {
+    disk_key(&renderer(p).probe_plan(cache, t, q), made).expect("every source has a durable name")
+}
+
+/// What the player's workers tell its cache when the project opens: a file by what it is on disk, a
+/// generator by its values.
+fn adopt(p: &Project, cache: &kt_cache::BurstCache) {
+    for m in &p.media {
+        let Ok(md) = std::fs::metadata(&m.path) else { continue };
+        let text = format!("{}|{:?}", md.len(), md.modified().unwrap());
+        cache.adopt(kt_engine::source_id(m.id), kt_cache::SourceIdent::of(&text));
+    }
+    for (addr, st) in kt_engine::gen_sources(p) {
+        cache.adopt(kt_engine::source_id(addr), kt_media::factory::open_gen(&st).identity().unwrap());
+    }
 }
 
 /// Test t2981 (render-cache-disk D1): the durable key is the same from two renderers over two frames
 /// caches with their own serials, decoded or not; an effect parameter, the file's modification time, a
-/// generator's value and the quality each give another key; another build is another folder.
+/// generator's value, the quality, the decoder's major, the composite code's version, a kernel's version
+/// or WGSL text each give another key, and the device class another folder; a build that changes none of
+/// them keeps the key.
 #[test]
 fn t2981_the_durable_key_survives_a_process_and_follows_the_picture() {
     kt_plugins_builtin::install();
@@ -107,6 +129,8 @@ fn t2981_the_durable_key_survives_a_process_and_follows_the_picture() {
     let t = Tick(30_000);
     let fresh = || kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let (c1, c2) = (fresh(), fresh());
+    adopt(&p, &c1);
+    adopt(&p, &c2);
     // the second cache's serials move: frames of another source inserted first
     let video = renderer(&p);
     for i in 0..5 {
@@ -130,26 +154,222 @@ fn t2981_the_durable_key_survives_a_process_and_follows_the_picture() {
     assert_eq!(key(&p, &c2, t, Q), k, "a decoded frame does not move the key");
     // what the picture is made of
     assert_ne!(key(&scene(&file, "AAAA", 1.2), &c1, t, Q), k, "an effect parameter");
-    assert_ne!(key(&scene(&file, "AAAB", 1.1), &c1, t, Q), k, "a generator's value");
+    let retitled = scene(&file, "AAAB", 1.1);
+    // the renderer is ahead of the source: while the retune waits, the picture is the old values'
+    assert_eq!(key(&retitled, &c1, t, Q).key, k.key, "the old frames' name until the source is retuned");
+    let c3 = fresh();
+    adopt(&retitled, &c3);
+    assert_ne!(key(&retitled, &c3, t, Q), k, "a generator's value");
     assert_ne!(key(&p, &c1, t, Quality { width: 192, height: 108 }), k, "the quality");
     let f = std::fs::File::options().write(true).open(&file).unwrap();
     f.set_modified(std::time::SystemTime::now() - Duration::from_secs(3600)).unwrap();
     drop(f);
-    assert_ne!(key(&p, &c1, t, Q), k, "the file's modification time");
-    // another build is another folder
+    assert_eq!(key(&p, &c1, t, Q), k, "the decoder still has the file it opened");
+    adopt(&p, &c1);
+    assert_ne!(key(&p, &c1, t, Q), k, "the file's modification time, once it is opened again");
+    // a source whose name dies with the process, and one nothing is known of: no key on disk
+    let probe = |c: &kt_cache::BurstCache| disk_key(&renderer(&p).probe_plan(c, t, Q), &made());
+    c2.adopt(kt_engine::source_id(MediaId(2)), kt_cache::SourceIdent::once());
+    assert_eq!(probe(&c2), None, "a placeholder's picture is never on disk");
+    assert_eq!(probe(&fresh()), None);
+    // what makes it: the plan's key stays, the salt moves, and the frame is a miss
+    let k = key(&p, &c1, t, Q);
+    for (what, m) in [
+        ("the decoder's major", Made { decoder: 61, ..made() }),
+        ("the composite code", Made { composite: made().composite ^ 1, ..made() }),
+        ("the decode's conversion", Made { pixels: made().pixels + 1, ..made() }),
+    ] {
+        let other = key_made(&p, &c1, t, Q, &m);
+        assert!(other.key == k.key && other.salt != k.salt, "{what}");
+    }
+    // a kernel that runs in the plan: another source (a release that changed it), another WGSL text; a
+    // kernel that does not run changes nothing. Asked over the registry the key reads
+    let with = |id: &str| {
+        let mut q = p.clone();
+        q.clips[1].fx.push(FxInstance::plugin(id).unwrap());
+        key(&q, &c1, t, Q).salt
+    };
+    let reg = kt_plugin_api::installed().unwrap();
+    use kt_plugin_api::Family;
+    assert_ne!(reg.source(Family::Fx, "vhs"), 0, "the assembler names every plugin's source");
+    assert_ne!(reg.source(Family::Fx, "vhs"), reg.source(Family::Fx, "blur"), "of its own crate");
+    assert_ne!(with("vhs"), k.salt, "a kernel that runs is in the salt");
+    assert_ne!(with("vhs"), with("blur"));
+    assert_ne!(with("vhs"), with("halftone"), "two kernels of one crate are two texts");
+    // another device class is another folder of the same cache, and neither touches the other
     let root = tempfile::tempdir().unwrap();
     let raw = || std::sync::Arc::new(kt_engine::render_cache::RawSegments) as std::sync::Arc<dyn kt_engine::render_cache::SegmentCodec>;
-    let a = kt_engine::render_cache::DiskStore::open(root.path(), "build 1", "dev", 1 << 20, raw()).unwrap();
-    let a_dir = a.dir().to_path_buf();
-    let b = kt_engine::render_cache::DiskStore::open(root.path(), "build 2", "dev", 1 << 20, raw()).unwrap();
-    assert_ne!(a_dir, b.dir(), "another build's folder");
-    assert!(!a_dir.exists(), "the older build's folder is removed when the new one opens");
+    let folder = Folder::open(&root.path().join("kinetren-cache")).unwrap();
+    let a = DiskStore::open(folder.clone(), "card|Vulkan|mesa 24", None, raw()).unwrap();
+    let mut seg = a.begin(4, 4, 30).unwrap();
+    seg.push(k, &[9; 64]).unwrap();
+    a.commit(seg, true).unwrap();
+    let b = DiskStore::open(folder, "card|Vulkan|mesa 25", None, raw()).unwrap();
+    assert!(a.dir() != b.dir() && a.contains(k) && !b.contains(k), "another driver's frames are never read");
+}
+
+/// Test t3808 (project-cache-folder D1b): `COMPOSITE_PATH_VERSION` follows the code that makes a
+/// composite's pixels outside the kernels: it is the hash of the files `composite-path.txt` names as they
+/// are now, every shader of kt-gpu and every file of the list is there, and a file that executes a plan is
+/// not missing from it.
+#[test]
+fn t3808_the_composite_paths_version_follows_its_code() {
+    let libs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let list = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("composite-path.txt")).unwrap();
+    let named: Vec<&str> = list.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    fn all(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let mut v: Vec<_> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()).collect();
+        v.sort();
+        for p in v {
+            if p.is_dir() {
+                all(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs" || x == "wgsl") {
+                out.push(p);
+            }
+        }
+    }
+    for n in &named {
+        let p = libs.join(n);
+        assert!(p.exists(), "composite-path.txt names {n}, which is not there");
+        if p.is_dir() { all(&p, &mut files) } else { files.push(p) }
+    }
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for f in &files {
+        for line in std::fs::read_to_string(f).unwrap().lines() {
+            let l = line.trim();
+            if !l.is_empty() && !l.starts_with("//") {
+                for b in l.bytes().chain(*b"\n") {
+                    h = (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3);
+                }
+            }
+        }
+    }
+    assert_eq!(h, kt_engine::render_cache::COMPOSITE_PATH_VERSION, "the version is not the hash of the files: {named:?}");
+    // a file of the executor, the planner or the conversions that reads or writes pixels
+    let has = |f: &str| named.iter().any(|n| f == *n || f.starts_with(&format!("{n}/")));
+    for f in [
+        "kt-gpu/src/engine.rs",
+        "kt-gpu/src/compiled.rs",
+        "kt-gpu/src/shaders/composite.wgsl",
+        "kt-gpu/src/shaders/geom_fused.wgsl",
+        "kt-fx/src/plan.rs",
+        "kt-fx/src/geom.rs",
+        "kt-engine/src/yuv.rs",
+        "kt-engine/src/transitions.rs",
+    ] {
+        assert!(has(f), "{f} makes pixels and is not in composite-path.txt");
+    }
+    let mut shaders = Vec::new();
+    for c in ["kt-gpu", "kt-engine", "kt-fx", "kt-media", "kt-text", "kt-plugin-api"] {
+        all(&libs.join(c).join("src"), &mut shaders);
+    }
+    for s in shaders.iter().filter(|p| p.extension().is_some_and(|x| x == "wgsl")) {
+        assert!(files.contains(s), "{} is a shader outside composite-path.txt", s.display());
+    }
+}
+
+/// Test t3833 (project-cache-folder D1, D3): each project's frames lie in its own cache folder; a folder
+/// whose cap is smaller than its loop replaces its oldest segments as the loop is written, the other
+/// folder is untouched, and the bars draw only what is still there.
+#[test]
+fn t3833_each_projects_frames_lie_in_its_own_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = |n: &str| cache_folder::beside(&dir.path().join(n).join("film.kt"));
+    std::fs::create_dir_all(dir.path().join("a")).unwrap();
+    std::fs::create_dir_all(dir.path().join("b")).unwrap();
+    let Some((a, moments)) = player(&folder("a"), 0.57) else { return };
+    prerender(&a, &moments);
+    // it comes to rest, its open segment committed: a drop leaves a thread that is still busy behind
+    // (found-defects 980)
+    a.render_cache().set_heavy_for_tests(Some(u64::MAX));
+    a.render_cache().kick();
+    let deadline = kt_time::test_deadline();
+    while !a.render_cache().settled() {
+        assert!(Instant::now() < deadline, "the first player's prerender never came to rest");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    drop(a);
+    let files = |root: &std::path::Path| -> Vec<String> {
+        let mut v = Vec::new();
+        for f in walk(root) {
+            if f.extension().is_some_and(|x| x == "idx") {
+                v.push(f.file_name().unwrap().to_string_lossy().into_owned());
+            }
+        }
+        v.sort();
+        v
+    };
+    let held = files(&folder("a"));
+    assert!(!held.is_empty() && folder("a").join("results/v3").is_dir(), "the frames are the folder's: {held:?}");
+
+    // the second project: room for a few frames of its loop only
+    let small = Folder::open(&folder("b")).unwrap();
+    small.set_protect_for_tests(Some(Duration::ZERO));
+    let frame = 160 * 90 * 4;
+    let Some((b, _)) = player(&folder("b"), 0.58) else { return };
+    // a segment of three frames and a bit fits; the prerender writes run after run
+    small.set_cap(8 * frame);
+    for t in &moments {
+        b.note_preview_cost(*t, 1_000_000_000, (160, 90));
+    }
+    b.render_cache().kick();
+    let deadline = kt_time::test_deadline();
+    while small.counts(cache_folder::Tenant::Frames).2 == 0 {
+        assert!(Instant::now() < deadline, "nothing was replaced: {:?}", small.known_sizes());
+        b.render_cache().kick();
+        for k in 0..40 {
+            b.note_preview_cost(Tick(moments[0].0 + k * b.video_grid().frame_step()), 1_000_000_000, (160, 90));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // the frame being written now is on the disk before the count
+    let used: u64 = small.sizes().values().map(|v| v.0).sum();
+    assert!(used <= 9 * frame + 1024, "the folder grew past its cap: {used}");
+    assert_eq!(files(&folder("a")), held, "the other project's frames were touched");
+    // what the bars draw is there
+    let (runs, _) = b.final_video_runs();
+    for t in runs.iter().flat_map(|r| (r.start..r.end).step_by(b.video_grid().frame_step() as usize)) {
+        if b.kept_picture_reader(Tick(t))().is_none() {
+            // dropped since the bars were asked: they must not draw it now
+            let (now, _) = b.final_video_runs();
+            assert!(!now.iter().any(|r| r.contains(&t)), "the bars draw a dropped moment {t}");
+        }
+    }
+}
+
+fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        if e.path().is_dir() { out.extend(walk(&e.path())) } else { out.push(e.path()) }
+    }
+    out
+}
+
+/// Test t3834 (project-cache-folder D5): the folder the former builds kept every project's frames in is
+/// deleted; nothing else of the user's data is.
+#[test]
+fn t3834_the_former_store_is_deleted() {
+    let data = tempfile::tempdir().unwrap();
+    let old = data.path().join("render-cache/v2-0123456789abcdef/ff");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::write(old.join("x.idx"), b"old").unwrap();
+    std::fs::create_dir_all(data.path().join("recovery")).unwrap();
+    for _ in 0..2 {
+        kt_engine::render_cache::remove_former(data.path());
+    }
+    assert!(!data.path().join("render-cache").exists());
+    assert!(data.path().join("recovery").exists());
 }
 
 const MOMENTS: i64 = 6;
 
 /// A player over the demo project with the tier at `root`, its loop of `MOMENTS` moments.
 fn player(root: &std::path::Path, opacity: f32) -> Option<(Player, Vec<Tick>)> {
+    player_by(root, opacity, std::sync::Arc::new(kt_engine::render_cache::RawSegments))
+}
+
+fn player_by(root: &std::path::Path, opacity: f32, codec: std::sync::Arc<dyn kt_media::segment::SegmentCodec>) -> Option<(Player, Vec<Tick>)> {
     kt_plugins_builtin::install();
     let gpu = kt_gpu::test_engine()?;
     let mut p = demo_project(DemoSources::Synth);
@@ -162,12 +382,12 @@ fn player(root: &std::path::Path, opacity: f32) -> Option<(Player, Vec<Tick>)> {
     player.set_preview_quality(Quality { width: 160, height: 90 });
     player.set_video_gpu(Some(gpu));
     player.render_cache().set_heavy_for_tests(Some(1));
+    player.render_cache().set_read_wait_for_tests(Some(kt_time::TEST_WAIT));
     player.set_render_cache(Some(Config {
-        codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
+        codec,
         root: root.to_path_buf(),
-        build: "test build".into(),
-        base: None,
-        cap: 1 << 30,
+        made: kt_engine::render_cache::Made::of(60),
+        cap: None,
     }));
     let grid = player.video_grid();
     let step = grid.frame_step();
@@ -186,6 +406,16 @@ fn prerender(player: &Player, moments: &[Tick]) {
     while !moments.iter().all(|t| player.disk_picture(*t).is_some()) {
         assert!(Instant::now() < deadline, "the prerender never wrote the moments: {:?}", player.render_cache().counts());
         std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Wait until the writes of `n` moments are in the trace: a picture is found on disk before its record
+/// is made (found-defects 975).
+fn told(player: &Player, n: usize) {
+    let deadline = kt_time::test_deadline();
+    while player.render_cache().counts().0 < n as u64 {
+        assert!(Instant::now() < deadline, "the writes were never told: {:?}", player.render_cache().counts());
+        std::thread::sleep(Duration::from_millis(5));
     }
 }
 
@@ -230,6 +460,80 @@ fn t2982_a_prerendered_moment_plays_from_disk_after_a_restart() {
         .count();
     assert!(restores >= 1, "the moment came from disk");
     assert!(b.render_cache().counts().1 >= 1);
+}
+
+/// A disk that stands: a segment opens only once `free` says so.
+struct Standing {
+    free: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    stood: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl kt_media::segment::SegmentCodec for Standing {
+    fn codec(&self) -> &str {
+        "raw"
+    }
+    fn writer(&self, path: &std::path::Path, w: u32, h: u32, fps: u32) -> Result<Box<dyn kt_media::segment::SegmentWriter>, String> {
+        kt_engine::render_cache::RawSegments.writer(path, w, h, fps)
+    }
+    fn reader(&self, path: &std::path::Path, fps: u32) -> Result<Box<dyn kt_media::segment::SegmentReader>, String> {
+        self.stood.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut g = self.free.0.lock().unwrap();
+        while !*g {
+            g = self.free.1.wait(g).unwrap();
+        }
+        drop(g);
+        kt_engine::render_cache::RawSegments.reader(path, fps)
+    }
+    fn extension(&self) -> &str {
+        "rgba"
+    }
+}
+
+/// Test t3252 (gpu-waits-named, found-defects 835): a preview does not stand on a disk call. The segment
+/// of a moment on disk opens only when the test lets it: the frame goes on without it and is composed,
+/// the frames after it ask the disk nothing while that read stands, and once the disk answers the late
+/// picture is kept and the next moment comes from disk again.
+#[test]
+fn t3252_a_standing_disk_holds_no_displayed_frame() {
+    let root = tempfile::tempdir().unwrap();
+    let Some((a, moments)) = player(root.path(), 0.62) else { return };
+    prerender(&a, &moments);
+    drop(a);
+    let free = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let stood = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let codec = std::sync::Arc::new(Standing { free: free.clone(), stood: stood.clone() });
+    let Some((b, _)) = player_by(root.path(), 0.62, codec) else { return };
+    let rc = b.render_cache();
+    rc.set_read_wait_for_tests(Some(Duration::from_millis(1)));
+    let deadline = kt_time::test_deadline();
+    let compose = |t: Tick| {
+        while !matches!(b.present_preview(t, PresentOptions::default()), Some((_, true))) {
+            assert!(Instant::now() < deadline, "the moment never came complete on a standing disk");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    b.seek(moments[0]);
+    compose(moments[0]);
+    while stood.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+        assert!(Instant::now() < deadline, "the disk was never asked");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // asked with no bound now: a frame that still asked would stand for good
+    rc.set_read_wait_for_tests(Some(kt_time::TEST_WAIT));
+    compose(moments[1]);
+    compose(moments[2]);
+    assert_eq!(rc.counts().1, 0, "a picture came off a disk that stands");
+    *free.0.lock().unwrap() = true;
+    free.1.notify_all();
+    while rc.counts().1 == 0 {
+        assert!(Instant::now() < deadline, "the late picture was not kept");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    while rc.counts().1 < 2 {
+        assert!(Instant::now() < deadline, "the disk answers and nothing comes from it");
+        assert!(matches!(b.present_preview(moments[4], PresentOptions::default()), Some((_, true))) || rc.counts().1 < 2);
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 /// Test t2984 (render-cache-disk D4): the prerender composes nothing while input keeps coming, writes
@@ -315,7 +619,7 @@ fn t2989_no_encoder_composes_nothing() {
         fn writer(&self, _: &std::path::Path, _: u32, _: u32, _: u32) -> Result<Box<dyn kt_engine::render_cache::SegmentWriter>, String> {
             Err("no hardware encoder opens".into())
         }
-        fn reader(&self, _: &std::path::Path) -> Result<Box<dyn kt_engine::render_cache::SegmentReader>, String> {
+        fn reader(&self, _: &std::path::Path, _: u32) -> Result<Box<dyn kt_engine::render_cache::SegmentReader>, String> {
             Err("none".into())
         }
     }
@@ -324,9 +628,8 @@ fn t2989_no_encoder_composes_nothing() {
     p.set_render_cache(Some(Config {
         codec: std::sync::Arc::new(NoEncoder),
         root: root.path().to_path_buf(),
-        build: "test build".into(),
-        base: None,
-        cap: 1 << 30,
+        made: kt_engine::render_cache::Made::of(60),
+        cap: None,
     }));
     let rc = p.render_cache();
     let items = kt_time::trace::testing::capture(|| {
@@ -395,11 +698,13 @@ fn t3201_a_heavy_run_is_one_segment_from_its_start() {
     p.set_render_cache(Some(Config {
         codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
         root: root.path().to_path_buf(),
-        build: "test build".into(),
-        base: None,
-        cap: 1 << 30,
+        made: kt_engine::render_cache::Made::of(60),
+        cap: None,
     }));
-    let items = kt_time::trace::testing::capture(|| prerender(&p, &moments));
+    let items = kt_time::trace::testing::capture(|| {
+        prerender(&p, &moments);
+        told(&p, moments.len());
+    });
     let stores: Vec<(u64, u64)> = kt_time::trace::testing::recs(&items)
         .iter()
         .filter(|r| r.ev == kt_time::trace::Ev::RenderCache as u16 && r.aux == kt_time::trace::render_cache::STORE)
@@ -499,7 +804,7 @@ impl kt_media::segment::SegmentCodec for Nv12Segments {
             rgba: self.rgba.clone(),
         }))
     }
-    fn reader(&self, path: &std::path::Path) -> Result<Box<dyn kt_media::segment::SegmentReader>, String> {
+    fn reader(&self, path: &std::path::Path, _fps: u32) -> Result<Box<dyn kt_media::segment::SegmentReader>, String> {
         Ok(Box::new(Nv12Reader(std::fs::File::open(path).map_err(|e| e.to_string())?)))
     }
 }
@@ -517,9 +822,8 @@ fn t3317_a_segment_is_written_from_planes() {
     p.set_render_cache(Some(Config {
         codec: std::sync::Arc::new(Nv12Segments { planes: planes.clone(), rgba: rgba.clone() }),
         root: root.path().join("nv12"),
-        build: "test build".into(),
-        base: None,
-        cap: 1 << 30,
+        made: kt_engine::render_cache::Made::of(60),
+        cap: None,
     }));
     prerender(&p, &moments);
     assert_eq!(rgba.load(std::sync::atomic::Ordering::Relaxed), 0, "no RGBA frame reached the encoder");
@@ -561,9 +865,8 @@ fn t3600_a_run_known_by_one_moment_is_one_segment() {
     p.set_render_cache(Some(Config {
         codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
         root: root.path().to_path_buf(),
-        build: "test build".into(),
-        base: None,
-        cap: 1 << 30,
+        made: kt_engine::render_cache::Made::of(60),
+        cap: None,
     }));
     let items = kt_time::trace::testing::capture(|| {
         p.render_cache().kick();
@@ -572,6 +875,7 @@ fn t3600_a_run_known_by_one_moment_is_one_segment() {
             assert!(Instant::now() < deadline, "the prerender never wrote the run: {:?}", p.render_cache().counts());
             std::thread::sleep(Duration::from_millis(20));
         }
+        told(&p, moments.len());
     });
     let stores: Vec<(u64, u64)> = kt_time::trace::testing::recs(&items)
         .iter()
@@ -585,4 +889,211 @@ fn t3600_a_run_known_by_one_moment_is_one_segment() {
         .collect();
     assert_eq!(holding.len(), 1, "the run is one segment; written (first tick, moments): {stores:?}");
     assert!((holding[0].0 as i64) < moments[0].0, "it starts before the run's first moment: {stores:?}");
+}
+
+/// Where a test stops a disk, or a decoder.
+#[derive(Default)]
+struct Gate(std::sync::Mutex<bool>, std::sync::Condvar, std::sync::atomic::AtomicUsize);
+
+impl Gate {
+    fn pass(&self) {
+        self.2.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        let mut open = self.0.lock().unwrap();
+        while !*open {
+            open = self.1.wait(open).unwrap();
+        }
+    }
+    fn open(&self) {
+        *self.0.lock().unwrap() = true;
+        self.1.notify_all();
+    }
+    fn met(&self) -> usize {
+        self.2.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+/// Raw segments whose reads wait for the gate.
+struct GatedSegments(std::sync::Arc<Gate>);
+struct GatedReader(std::sync::Arc<Gate>, Box<dyn kt_media::segment::SegmentReader>);
+
+impl kt_media::segment::SegmentReader for GatedReader {
+    fn frame(&mut self, index: u32, w: u32, h: u32, out: &mut Vec<u8>) -> Result<(), String> {
+        self.0.pass();
+        self.1.frame(index, w, h, out)
+    }
+}
+
+impl kt_media::segment::SegmentCodec for GatedSegments {
+    fn codec(&self) -> &str {
+        "raw"
+    }
+    fn writer(&self, path: &std::path::Path, w: u32, h: u32, fps: u32) -> Result<Box<dyn kt_media::segment::SegmentWriter>, String> {
+        kt_engine::render_cache::RawSegments.writer(path, w, h, fps)
+    }
+    fn reader(&self, path: &std::path::Path, fps: u32) -> Result<Box<dyn kt_media::segment::SegmentReader>, String> {
+        Ok(Box::new(GatedReader(self.0.clone(), kt_engine::render_cache::RawSegments.reader(path, fps)?)))
+    }
+    fn extension(&self) -> &str {
+        "rgba"
+    }
+}
+
+/// A source that never gives a frame: what it shows comes from the disk or not at all.
+struct Stuck(Box<dyn MediaSource>, std::sync::Arc<Gate>);
+
+impl MediaSource for Stuck {
+    fn info(&self) -> &kt_media::MediaInfo {
+        self.0.info()
+    }
+    fn identity(&self) -> Option<kt_media::SourceIdent> {
+        self.0.identity()
+    }
+    fn read_audio_burst(&mut self, idx: i64) -> Result<kt_media::AudioBurst, kt_media::MediaError> {
+        self.0.read_audio_burst(idx)
+    }
+    fn read_video_frame(&mut self, p: Tick, q: Option<Quality>) -> Result<kt_media::VideoFrame, kt_media::MediaError> {
+        self.1.pass();
+        self.0.read_video_frame(p, q)
+    }
+    fn keyframe_before(&self, p: Tick) -> Option<Tick> {
+        self.0.keyframe_before(p)
+    }
+}
+
+/// Test t3614 (render-cache-disk D3, found-defects 979): the disk answers a displayed frame late, after an
+/// edit elsewhere and after the new state's moments were looked up: the moment stays bright. The answer wrote
+/// the state it was ASKED at over the newer one, and nothing looked it up again.
+#[test]
+fn t3614_a_late_read_does_not_dim_the_moment() {
+    let root = tempfile::tempdir().unwrap();
+    let Some((a, moments)) = player(root.path(), 0.43) else { return };
+    prerender(&a, &moments);
+    a.render_cache().set_heavy_for_tests(Some(u64::MAX));
+    a.render_cache().kick();
+    let deadline = kt_time::test_deadline();
+    let wait = |what: &str, ok: &dyn Fn() -> bool| {
+        while !ok() {
+            assert!(Instant::now() < deadline, "{what}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
+    wait("the first player never rested", &|| a.render_cache().settled());
+    let p = (*a.project()).clone();
+    drop(a);
+
+    // the same project again: nothing in memory, the decoders stand, and so does the disk
+    let (disk, decoders) = (std::sync::Arc::new(Gate::default()), std::sync::Arc::new(Gate::default()));
+    let sources: Vec<(MediaId, Box<dyn MediaSource>)> = p
+        .media
+        .iter()
+        .map(|m| {
+            let s = kt_media::factory::open_pseudo(&m.path).unwrap().unwrap();
+            (m.id, Box::new(Stuck(s, decoders.clone())) as Box<dyn MediaSource>)
+        })
+        .collect();
+    let (b, _ring) = Player::new(p.clone(), sources);
+    b.set_preview_quality(Quality { width: 160, height: 90 });
+    b.set_video_gpu(Some(kt_gpu::test_engine().unwrap()));
+    b.render_cache().set_heavy_for_tests(Some(u64::MAX));
+    b.render_cache().set_read_wait_for_tests(Some(Duration::from_millis(50)));
+    b.set_render_cache(Some(Config {
+        codec: std::sync::Arc::new(GatedSegments(disk.clone())),
+        root: root.path().to_path_buf(),
+        made: kt_engine::render_cache::Made::of(60),
+        cap: None,
+    }));
+    b.seek(moments[0]);
+    b.render_cache().kick();
+    wait("the bars never drew the disk's moments", &|| bright(&b, &moments) == moments.len());
+    // the displayed frame asks the disk, and goes on without it
+    let _ = b.present_preview(moments[0], PresentOptions { glow: false });
+    wait("the displayed frame asked nothing of the disk", &|| disk.met() > 0);
+
+    // an event far from the moments is edited: the new state's moments are looked up
+    let mut q = p;
+    let end = moments[moments.len() - 1];
+    let far = q.clips.iter_mut().find(|c| c.kind == ClipKind::Video && (c.start > end || c.start + c.duration <= moments[0])).expect("scene guard: an event elsewhere");
+    far.opacity = 0.11;
+    b.set_project(q);
+    b.wait_built();
+    wait("the edit elsewhere dimmed the moments", &|| bright(&b, &moments) == moments.len());
+
+    disk.open();
+    wait("the late read never came", &|| b.render_cache().counts().1 > 0);
+    // what it wrote is written before its count is seen by a second look
+    for _ in 0..10 {
+        assert_eq!(bright(&b, &moments), moments.len(), "the late answer dimmed its moment");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    decoders.open();
+}
+
+/// A source whose name dies with the process, as a placeholder's.
+struct Unnamed(Box<dyn MediaSource>);
+
+impl MediaSource for Unnamed {
+    fn info(&self) -> &kt_media::MediaInfo {
+        self.0.info()
+    }
+    fn read_audio_burst(&mut self, idx: i64) -> Result<kt_media::AudioBurst, kt_media::MediaError> {
+        self.0.read_audio_burst(idx)
+    }
+    fn read_video_frame(&mut self, p: Tick, q: Option<Quality>) -> Result<kt_media::VideoFrame, kt_media::MediaError> {
+        self.0.read_video_frame(p, q)
+    }
+    fn keyframe_before(&self, p: Tick) -> Option<Tick> {
+        self.0.keyframe_before(p)
+    }
+}
+
+/// Test t4115 (durable-moment-key D2, found-defects 1062): memory and disk name a moment alike. A moment is
+/// prerendered; a restart shows it from disk under the moment's own present key; its file replaced by
+/// another under the same media id, the old picture is not shown; a moment with a frame whose name dies
+/// with the process (a placeholder's) is neither written nor asked of the store.
+#[test]
+fn t4115_memory_and_disk_name_a_moment_alike() {
+    let root = tempfile::tempdir().unwrap();
+    let Some((a, moments)) = player(root.path(), 0.71) else { return };
+    prerender(&a, &moments);
+    drop(a);
+    let Some((b, _)) = player(root.path(), 0.71) else { return };
+    let t = moments[3];
+    b.seek(moments[0]);
+    b.play();
+    assert!(matches!(b.present_preview(t, PresentOptions::default()), Some((_, true))), "from disk on the first ask");
+    b.pause();
+    assert!(b.render_cache().counts().1 >= 1, "restored");
+    // the next ask finds it in the memo by the key every plan of the moment has (the producer may restore
+    // other moments meanwhile)
+    let items = kt_time::trace::testing::capture(|| {
+        assert!(matches!(b.present_preview(t, PresentOptions::default()), Some((_, true))));
+    });
+    let again = kt_time::trace::testing::recs(&items)
+        .iter()
+        .filter(|r| r.ev == kt_time::trace::Ev::RenderCache as u16 && r.aux == kt_time::trace::render_cache::RESTORE && r.a == t.0 as u64)
+        .count();
+    assert_eq!(again, 0, "read from disk again: it was kept under another key");
+
+    // every source replaced by one that decodes something else under the same ids
+    let p = demo_project(DemoSources::Synth);
+    for m in &p.media {
+        b.replace_media(m.id, kt_media::factory::open_pseudo("synth:dc:0.5").unwrap().unwrap());
+    }
+    assert!(b.disk_picture(t).is_none(), "the old picture answers for the replaced file");
+    // and one that has no name outside this process
+    for m in &p.media {
+        b.replace_media(m.id, Box::new(Unnamed(kt_media::factory::open_pseudo("synth:ramp").unwrap().unwrap())));
+    }
+    let written = b.render_cache().counts().0;
+    for t in &moments {
+        b.note_preview_cost(*t, 1_000_000_000, (160, 90));
+    }
+    b.render_cache().kick();
+    let deadline = kt_time::test_deadline();
+    while !b.render_cache().settled() {
+        assert!(Instant::now() < deadline, "the prerender never settled");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(moments.iter().all(|t| b.disk_picture(*t).is_none()), "an unnamed source's picture is on disk");
+    assert_eq!(b.render_cache().counts().0, written);
 }

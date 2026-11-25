@@ -1,6 +1,19 @@
 # Design: title-word-effects
 
-> DESIGN ONLY, revision 2 (2026-11-22), base `9f506fd5`: the owner's B8 — many ranges from the start (D1, D7).
+> DESIGN ONLY, revision 3 (2026-11-25), base `fc60a5d9`: the owner's B8 (D7), checked against the merged tree. Implementation-ready; it needs nothing of
+> `magic-wand-mask` (D8).
+
+## D0. What revision 2 said and the code contradicts
+
+1. **"Animators by characters/words/lines (F-TXT-006)".** There are none: a title has `reveal`, `reveal_soft`, `offset_x/y` (clusters, whole block). The coverage follows those.
+2. **"A raster-made shape exists in the design of `magic-wand-mask`".** Its revision 2 gives CONTOURS to the one polyline rasterizer. Contours would be wrong here: an anti-aliased edge pixel of
+   alpha `a` split by a coverage `c ≈ a` leaves `a(1 − c)` of the sharp letter outside the effect, a visible outline around the blurred word. A letter's pixel belongs to ONE group whole: an
+   id map (D1), binary.
+3. **"At the plan's raster".** The title's frame is made by its source at the layer's decode size, before the Geometry node. The map is made at that size and read through the mask space's
+   inverse (`MaskSpace`), nearest.
+4. **`MaskOpKind::Isolate { from }` "with two passes the GPU has"**: the matte pass and the mix exist; in a graph arm the op is of the line (`ClipMaskPlan::of_line`). Both are taken.
+5. **Counters**: a shown value is made from the moment (`text-counter-source`): `from..to` are offsets of the shown string; `every` is refused there (the text changes every frame).
+6. The mask list's coverage is memoized by raster (`rasterize_cached`); this one by (generator state, pts, size) in kt-media, one entry per group set.
 
 ## Context
 
@@ -13,14 +26,10 @@
 
 ## D1. The text-range shape
 
-`MaskShape::TextRange { ranges: Vec<TextSpan> }`, `TextSpan { from: u32, to: u32, text: String, every: bool }` — char offsets into the title's shown text
-(the source's value for a counter: offsets apply to the shown string), the selected text kept for `every` and for
-naming. Legal on the masks of a title event's picture and its slots; refused elsewhere, named.
-
-Coverage: kt-text lays the title out for the frame exactly as it draws it (the same shaped runs, positions, crawl
-offset and animator transforms) and rasterizes only the glyphs whose cluster index is in the range (all matches when
-`every`), into an R8 coverage at the plan's raster; feather and expansion of the mask apply as to any shape.
-Deterministic: integer rasterization, the same layout function.
+`MaskShape::TextRange { spans: Vec<TextSpan> }`, `TextSpan { from, to: u32 /* chars */, text: String, every: bool }`; legal on the picture masks and slot masks of a title event, refused elsewhere, named.
+`kt_text::id_map(&TextParams, groups: &[Vec<Range>], w, h) -> Vec<u8>`: the same layout as `render_rgba`; a pixel's value is the group of the glyph with the most ink there (fill, outline and shadow are the glyph's, the plate is nobody's), 0 —
+none. Ties go to the later glyph. `kt_media::generator::title_groups(state, pts, w, h, masks)` keeps the last few maps. The mask's coverage is the indicator of its group; `feather` and `expansion` by the distance transform kt-text has for
+the outline; modes and opacity as for any shape.
 
 ## D2. The isolate mode
 
@@ -67,6 +76,11 @@ range's glyph boxes while the mask is selected.
 | reel instance | a layer inside | public parameters (R.59) | exists |
 | audio event | a time range | split + chain | exists |
 | subtitles (change) | a word in time (karaoke) | the highlight | same range idea, own change |
+
+## D8. What may start before its dependencies
+
+`magic-wand-mask` shares only the file (`mask.rs`, the `MaskShape` enum): the two do not run side by side, in either order. **Now**: `kt_text::id_map` with t3942/t4246 (kt-text alone), and `Isolate` in the
+plan and the executor with an ordinary shape (t3944 with a rectangle). After `shared-events`: the shape, the span edits (1.2), the field.
 
 ## D6. Idle
 

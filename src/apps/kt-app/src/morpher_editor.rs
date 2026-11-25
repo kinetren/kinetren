@@ -251,10 +251,13 @@ impl KtApp {
         // media names for the morph-slot label
         let media_names: Vec<(MediaId, String)> =
             self.model.project().media.iter().map(|m| (m.id, m.path.clone())).collect();
+        // the layer and where it starts; the number is in the body (`v26.10` W3)
+        let row = self.row_label(kt_model::LaneKind::Morph, orig.lane);
+        let at = crate::util::format_timecode(orig.start, self.model.project().settings.fps);
         let title = if is_batch {
-            crate::tf!(k::mrph::TITLE_BATCH, ed.id.0)
+            crate::tf!(k::mrph::TITLE_BATCH, row, at)
         } else {
-            crate::tf!(k::mrph::TITLE, ed.id.0)
+            crate::tf!(k::mrph::TITLE, row, at)
         };
         let mut ev = orig.clone();
         let mut changed = false;
@@ -294,6 +297,9 @@ impl KtApp {
         // the request about the axis: the lock is one per program (R.40 item 15)
         let mut axis_req = crate::automation::AxisReq::default();
         let mut need_selection = false;
+        // a gesture the graph refused; one of a chain that branches (fx-graph-dag D8)
+        let mut graph_refused: Option<String> = None;
+        let mut wires = false;
         // everything the layer’s automation needs (R.38 item 13)
         let playhead = self.player.transport.playhead();
         let frame_step = 90_000 / self.model.project().settings.fps.max(1) as i64;
@@ -323,7 +329,7 @@ impl KtApp {
             place: crate::fx_thumbs::Place::Morph(ed.id),
             t: kt_time::Tick(pv_tick),
             base: self.project_path.as_ref().and_then(|p| p.parent()).map(|p| p.to_path_buf()),
-            index_db: self.index_db_path(),
+            index_db: self.cache_folder(),
         };
         let pv_decode = crate::fx_thumbs::decode_orders_allowed(ed.opened_at.elapsed());
         let shown = crate::window_shell::Shell::new(
@@ -455,6 +461,8 @@ impl KtApp {
                 // splits them back by `FxInstance::class()`.
                 let (mut fx, mut bypass, mut auto, split) = merge_chains(&ev.patch);
                 let mut src_on = !ev.patch.src_off;
+                let mut links = kt_model::fx_strip::links_of(&ev.patch.video_in, ev.patch.video_fx.len(), 0);
+                links.extend(kt_model::fx_strip::links_of(&ev.patch.audio_in, ev.patch.audio_fx.len(), ev.patch.video_fx.len()));
                 let mut pv = crate::fx_thumbs::PickerCtx::for_scene(pv_svc, pv_scene.clone(), pv_decode);
                 let ch = crate::node_editor::chain_graph(
                     ui,
@@ -483,6 +491,7 @@ impl KtApp {
                         keys: Vec::new(),
                         lane_of: None,
                         master2: None,
+                        links: &mut links,
                         viewer: false,
                     },
                     // BOTH kinds: a patch carries a video and an audio chain, and the one strip
@@ -508,7 +517,17 @@ impl KtApp {
                 if ch.any() {
                     ev.patch.src_off = !src_on;
                     split_chains(&mut ev.patch, &fx, &bypass, &auto, split);
+                    if ch.wires {
+                        let of: Vec<u8> = fx.iter().map(|f| u8::from(f.is_audio())).collect();
+                        ev.patch.video_in = kt_model::fx_strip::wiring_of(&links, &of, 0);
+                        ev.patch.audio_in = kt_model::fx_strip::wiring_of(&links, &of, 1);
+                        // a gesture of a chain that branches is a step of its own (fx-graph-dag D8)
+                        wires = true;
+                    }
                     changed = true;
+                }
+                if let Some(why) = ch.refused {
+                    graph_refused = Some(why);
                 }
                 // STRENGTH and FADES of the layer (R.38 item 12, verbatim: “the morpher has no
                 // way to apply fade and opacity — the plan is not
@@ -678,6 +697,7 @@ impl KtApp {
                     {
                         revert = true;
                     }
+                    crate::widgets::entity_number(ui, ed.id.0);
                 });
                 });
             });
@@ -736,8 +756,15 @@ impl KtApp {
         }
         ev.enabled = enabled;
         changed |= ev.enabled != orig.enabled;
+        if let Some(why) = graph_refused {
+            self.refuse(why);
+        }
         if changed && ev != orig {
-            self.apply_coalesced(Command::SetMorpher(ev), ed.gesture);
+            if wires {
+                self.apply_batch(vec![Command::SetMorpher(ev)]);
+            } else {
+                self.apply_coalesced(Command::SetMorpher(ev), ed.gesture);
+            }
         }
 
         // requests of the strip for presets (R.48): the strip only puts them there —

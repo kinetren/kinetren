@@ -50,16 +50,30 @@ every copy of an event writes its whole chain with every curve.
 
 ## Questions to the owner
 
-**Q1. What "does not hang" means at a million events.** Your words: "сотни тысяч - миллион … не должен вешать
-систему". Today nobody has opened more than 41 357 events; an edit there costs 10.9 ms on the UI thread.
-- (a) **Release build, 1 M events: opening ≤ 10 s with the window responsive meanwhile; any edit, scroll or zoom
-  ≤ 16 ms on the UI thread; saving in the background** (*recommended*: what the measurement is judged against).
-- (b) The same with opening ≤ 2 s, which likely needs a file read in parts (only the visible middle first).
+(Q70, Q71 of `docs/owner-checks.md`; re-read against `fc60a5d9`, 2026-11-25.)
 
-**Q2. References for chains only, or for whole events too?** Your words: "chain-эффектов тоже можно сделать
-ссылочными, или даже все скопированные события ссылать". A copied event differs from its source by its position,
-and often by its source and in-point; its chain is what weighs (100 effects with curves against about ten lines of
-its own).
-- (a) **Chains only (with their curves), for events, tracks and morpher patches** (*recommended*: the weight is
-  there; an event's own lines stay readable in `git diff`).
-- (b) Also an "event template" table: the shared fields of copies written once, each copy writing only what differs.
+**Your items whole** (`docs/ktprompts/v26.10.txt` lines 97 and 99): "a. как можно быстрее индексируемо парсером (условно проект на 10млн элементов не должен вешать систему если мы смотрим только серединку проекта, да даже если
+отзумили весь проект - все должно достаточно хитро работать, вероятно - как random-stream, может быть я бред полный говорю)." and "c. как можно меньше копипасты внутри файла, надо может-быть механизм ссылок ввести
+для вложенных композиций? чтобы поменьше оно места сжирало. Ну и идя дальше - если представим что я взял одно событие, навешал 100 эффектов и скопировал 1000 раз и не менял события - то chain-эффектов тоже можно
+сделать ссылочными, или даже все скопированные события ссылать". Your answers of 2026-10-30 (`docs/user-feedback.md`): question 3 "сотни тысяч - миллион, нужен замер, чтобы поискать узкие места …"; question 4 "п.А. …
+если я 10тыс раз поставлю событие с 100 одинаковыми эффектами …".
+
+**Now**: the largest project measured has 41 357 events: an edit there cost 10.9 ms on the interface's thread (`shared-events`, being built, removes that). A file is read whole, twice over in memory. From the fixtures: an event's own
+text is about 240 bytes (12 lines), an effect 106, a curve of four keys 525.
+
+| Events | File without effects | One effect with a curve each |
+|---|---|---|
+| 100 000 | 24 MB | 87 MB |
+| 1 000 000 | 240 MB | 870 MB |
+
+**Q70 (Q1). What must a million events do, by which the measurement is judged?**
+- (a) **Opening up to 10 s with the window alive; any edit, scroll or zoom, also zoomed all the way out, within 16 ms; saving behind** (*recommended*): reachable with the file as it is (240 MB is read in one pass).
+- (b) The same with opening up to 2 s: 240 MB cannot be read and checked whole in that; the file needs a section index and the program a model that loads the middle first and the rest behind ("random-stream"). It is the
+  same work you describe in "a.", about twice as large, and the file stays text but gets an index at its end that a hand edit invalidates (it is then rebuilt at the next opening).
+- (c) Only measure now; set the numbers after seeing them. Nothing is promised until then.
+
+**Q71 (Q2). What is written once in the file: chains, or whole copied events too?** Your example, 10 000 copies of an event with 100 effects (ten with curves), computed:
+- today: 161 MB, 7.5 million lines;
+- (a) **chains (with curves) once, each event its own 12 lines and a reference** (*recommended*): 2.9 MB, 130 000 lines; changing one copy's chain changes a few lines of `git diff`;
+- (b) also the repeated fields of events once: about 1.0 MB, 45 000 lines; an event in the file is then "template 7 + start 1234": reading a diff, or merging two people's edits, needs the template beside it, and
+  moving the template's field moves lines of everybody who uses it.

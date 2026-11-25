@@ -944,7 +944,7 @@ fn t849_cli_prints_the_ffmpeg_search_report() {
             .arg("ffmpeg")
             .env("KINETREN_FFMPEG_DIR", &empty)
             .env("KINETREN_FFMPEG_SYSTEM", system)
-            .env("XDG_DATA_HOME", dir.join("xdg"))
+            .env("KINETREN_DATA_DIR", dir.join("data"))
             .output()
             .unwrap()
     };
@@ -1204,7 +1204,7 @@ fn t964_cli_names_the_hardware_encoding_devices() {
         c.arg("ffmpeg")
             .env("KT_DRI_DIR", &dri)
             .env_remove("KINETREN_VAAPI_DEVICE")
-            .env("XDG_DATA_HOME", dir.join("xdg"));
+            .env("KINETREN_DATA_DIR", dir.join("data"));
         if probe {
             c.arg("--probe-encoders");
         }
@@ -1288,7 +1288,7 @@ impl FakeVa {
             .env("LD_PRELOAD", &self.driver)
             .env("LIBVA_DRIVERS_PATH", &self.dir)
             .env("LIBVA_DRIVER_NAME", "ktfake")
-            .env("XDG_DATA_HOME", self.dir.join("xdg"));
+            .env("KINETREN_DATA_DIR", self.dir.join("data"));
         c
     }
 
@@ -1453,7 +1453,7 @@ fn t1603_the_file_streams_equal_the_serial_export() {
         let out = dir.join(name);
         let r = cli()
             .args(["export", project.to_str().unwrap(), out.to_str().unwrap(), "libx264", "--encoder-threads", "1", how])
-            .env("XDG_DATA_HOME", dir.join("xdg"))
+            .env("KINETREN_DATA_DIR", dir.join("data"))
             .output()
             .unwrap();
         let all = format!("{}{}", String::from_utf8_lossy(&r.stdout), String::from_utf8_lossy(&r.stderr));
@@ -1552,7 +1552,7 @@ fn t2808_kt_cli_export_writes_what_its_flags_ask() {
     let run = |extra: &[&str]| {
         let mut a = vec!["export", project.to_str().unwrap(), out.to_str().unwrap(), "libx264"];
         a.extend_from_slice(extra);
-        let r = cli().args(&a).env("XDG_DATA_HOME", dir.join("xdg")).output().unwrap();
+        let r = cli().args(&a).env("KINETREN_DATA_DIR", dir.join("data")).output().unwrap();
         (r.status.success(), format!("{}{}", String::from_utf8_lossy(&r.stdout), String::from_utf8_lossy(&r.stderr)))
     };
     let (ok, all) = run(&["--container", "mkv", "--audio", "flac", "--set", "keyint=1", "--set", "title=Demo", "--fps", "25"]);
@@ -1598,10 +1598,10 @@ fn mosh_case(src: &std::path::Path) -> kt_model::Project {
         reversed: false,
         fx,
         fx_bypass: vec![],
-        fx_in: vec![],
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     let mut p = Project::new(ProjectSettings {
         fps: 30,
@@ -1664,5 +1664,50 @@ fn t3821_one_device_crosses_nothing_over_a_loop() {
     let Some((rendered_one, crossed_one)) = run(true) else { return };
     assert_eq!(crossed_one, 0, "one device crosses nothing (frames rendered: {rendered_one})");
     eprintln!("t3821: two devices rendered {rendered}, crossed {crossed}; one device rendered {rendered_one}, crossed 0");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test 3722 (own-data-dir, found-defects 829): a run of kt-cli out of the build directory — a test, a
+/// bench, a script, a developer's hand — leaves nothing in the person's data directory; only reading
+/// it stays (the trace, the locks, the FFmpeg choice).
+#[test]
+fn t3722_a_run_of_ours_writes_nothing_into_the_persons_directory() {
+    kt_plugins_builtin::install();
+    let dir = std::env::temp_dir().join(format!("kt-cli-t3722-{}", std::process::id()));
+    let home = dir.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let run = |args: &[&str]| {
+        let o = cli()
+            .args(args)
+            .env("HOME", &home)
+            .env_remove("XDG_DATA_HOME")
+            .env_remove("KINETREN_DATA_DIR")
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
+    };
+    let project = dir.join("demo.kt");
+    let wav = dir.join("demo.wav");
+    run(&["demo", project.to_str().unwrap()]);
+    run(&["render", project.to_str().unwrap(), wav.to_str().unwrap()]);
+    run(&["pause-scan", project.to_str().unwrap(), "20", "--size", "64x36"]);
+    if cfg!(target_os = "linux") {
+        let real = home.join(".local/share");
+        assert!(!real.exists(), "a run of ours wrote into the person's directory: {real:?}");
+        let data = kt_dirs::cargo_target_of(std::path::Path::new(&kt_cli_exe()), &|p| p.exists()).expect("a build of ours");
+        assert!(data.join("run-data").is_dir(), "what it keeps lies in the build directory");
+    }
+    // the sources: the person's directory is named only where it is read
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    for (file, reads) in [("main.rs", 1), ("trace_query.rs", 1)] {
+        let Ok(text) = std::fs::read_to_string(src.join(file)) else { continue };
+        assert_eq!(text.matches("kt_dirs::data_dir(").count(), reads, "{file}: a write goes to `kt_dirs::tool_dir()`");
+    }
+    if let Ok(rd) = std::fs::read_dir(&src) {
+        for e in rd.flatten().filter(|e| e.file_name() != "main.rs" && e.file_name() != "trace_query.rs") {
+            let text = std::fs::read_to_string(e.path()).unwrap_or_default();
+            assert!(!text.contains("kt_dirs::data_dir("), "{:?} names the person's directory", e.path());
+        }
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }

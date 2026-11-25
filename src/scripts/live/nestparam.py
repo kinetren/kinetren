@@ -28,7 +28,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, geometry, poll_step, project_with_clips, require_tools  # noqa: E402
+from kt_live import images_differ, Live, geometry, poll_step, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -433,7 +433,7 @@ def main(out):
         # the cursor goes to the second issue, we remember the frame
         app.click(app.x_at(second[0] + app.seconds(1)), app.ruler_y())
         app.settle()
-        before_px = app.pixel_settled(app.preview_center())
+        app.picture()
         app.shot("before-amount")
 
         app.click(sx, y)
@@ -446,16 +446,16 @@ def main(out):
             "amount handle is not in the head of the strip",
         )
         app.click_probe(f"inst.value.{amount}", "amount field of the second broadcast")
+        # both with the window open and the event selected: the frame over the picture is in both. The title
+        # stands in the box, clear of the window
+        box = lambda: app.picture_box(app.preview_center(), (110, 40))
+        before = box()
         for ch in ["ctrl+a", "0", "period", "9"]:
             app.key(ch)
         app.key("Return")
-        app.settle()
+        changed = app.until(lambda: images_differ(before, box()) > 50)
         app.shot("after-amount")
-        after_px = app.pixel_settled(app.preview_center(), differs_from=before_px)
-        app.expect(
-            after_px != before_px,
-            f"frame of the second broadcast did not change from the blur handle: {before_px} → {after_px}",
-        )
+        app.expect(changed, "the frame of the second broadcast changed from the blur handle")
         saved = app.saved_project()
         sets = override_sets(saved.doc)
         app.expect(

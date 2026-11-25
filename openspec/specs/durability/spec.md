@@ -391,6 +391,27 @@ any `kinotrain` folder found there.
 - **THEN** the results are `$XDG_DATA_HOME/kinetren`, `~/.local/share/kinetren`, the temp directory (with a warning), `%APPDATA%\kinetren\data` with downloads under `%LOCALAPPDATA%\kinetren`, and the temp directory (with a warning); the `kinotrain/` folder in the working directory is untouched in every case
 - **TEST** t851 (`src/libs/kt-dirs/tests/dirs.rs`)
 
+### Requirement: A run of ours has a data directory of its own
+A tool of ours (kt-cli) run out of a cargo build directory — by a test, a bench, a script, a live scenario or a hand —
+SHALL keep what it writes (the compiled pipelines, the measured pass times, the caches of projects whose folder takes
+none) in `<target>/run-data`, whatever `XDG_DATA_HOME` and `HOME` say; an explicit `KINETREN_DATA_DIR` SHALL win, and an
+installed kt-cli SHALL share the program's directory. It SHALL only READ the person's directory (the trace, the locks,
+the FFmpeg choice). A program started by a live rig (`KT_LIVE_CTL`, `KT_GEOM_DUMP`) without a data directory of its own
+SHALL refuse to start, naming the variable.
+
+Why: found-defects 829 — tests and hand runs wrote the owner's measured pass times (a debug build on a loaded machine)
+and twelve cache folders into his data directory while his program was not running.
+
+#### Scenario: kt-cli out of the build directory
+- **WHEN** kt-cli of the build directory makes, renders and scans a project with a home of its own and no variables set
+- **THEN** nothing appears in that home's `.local/share`; the build directory holds `run-data`; no source of kt-cli names the person's directory but the two that read it
+- **TEST** t3722 (`src/apps/kt-cli/tests/cli.rs`)
+
+#### Scenario: The rule
+- **WHEN** executables of a build directory, of a nextest archive and installed ones are asked, with and without `KINETREN_DATA_DIR`; and a rig starts a program with and without a directory of its own
+- **THEN** the first two give `<target>/run-data`, the installed the program's directory, the variable wins; the rig without one is named
+- **TEST** t3721 (`src/libs/kt-dirs/tests/dirs.rs`)
+
 ### Requirement: Atomic replace on Windows survives a briefly held target
 On Windows the rename step of `kt_otio::write_atomic` SHALL replace the project with
 `MoveFileExW(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)` and SHALL retry on a
@@ -447,7 +468,7 @@ The user store SHALL keep, outside every project and in the per-user data direct
 projects list (path, name, last-opened time, the template it was made from), bounded to 12 entries,
 newest first, with "Clear the list" in the welcome window; one poster image per recent entry, stored
 under the data directory's own posters folder and keyed by the project's path, NEVER written next to
-the project or into its sidecar index; the person's project templates (name, frame width and height,
+the project or into its media index; the person's project templates (name, frame width and height,
 frame rate), saved from Project settings with "Save as template…"; the tour progress (finished steps
 per lesson); and the start choice ("Show the welcome window at start"). The poster SHALL be rendered
 by the offline path — its own short-lived sources, a finite cancellable job, never during playback —
@@ -459,9 +480,9 @@ recent list once. Each record SHALL follow the store's existing rules: a broken 
 tests the store lives in memory or in the directory the test names.
 Why: the welcome window (capability `ui-reach`) needs a list that F-HLP-027 found missing ("exactly
 one path is stored, and it is invisible"), with a limit and a "clear" (UI rule 20: nothing grows by
-itself); a poster in the project's folder or sidecar would make the program write files the person
-did not ask for into his project tree, and the reel-preview disk tier lives in the sidecar precisely
-because it is the project's content cache, not the program's (R.58). Templates were the fifth
+itself); a poster in the project's folder would make the program write files the person
+did not ask for into his project tree; the one thing the program writes there is the cache folder (the owner,
+kkt-26.11.20 A14), and the reel previews lie in it because they are the project's content cache, not the program's (R.58). Templates were the fifth
 between-projects record F-HLP-027 deferred to the shared store (first-wave conclusion 2).
 
 #### Scenario: The recent list is bounded, keeps a missing file and never touches the project tree
@@ -470,7 +491,7 @@ between-projects record F-HLP-027 deferred to the shared store (first-wave concl
   cleared; separately the store starts with only a `last_project` value in the eframe storage;
   separately a broken `recent.json` and one of version 99 are read
 - **THEN** the list holds the 12 newest, newest first; each has a poster file under the data
-  directory's posters folder and no new file appears in any project folder or sidecar; the deleted
+  directory's posters folder and no new file appears in any project folder but its cache folder; the deleted
   project stays listed with its path and is reported missing; "Clear" empties the list and removes
   the posters it owned; the `last_project` start yields a list of one; the broken file is moved to
   `.broken` and the list starts empty; the version-99 file is read and left unwritten
@@ -881,13 +902,19 @@ system, past six seconds.
 Closing the window or File → Quit SHALL end the process within a bound whatever the program is doing (a
 loop catching up, a stream history walking, the render-ahead producer, a decoder span, GPU or compute
 work in flight). `on_exit` SHALL first do the durability work, each wait bounded (the autosave in flight
-5 s, a Ctrl+S being written 30 s, the recovery file); from then on the rest of the exit (the poster, the
-offline engine's park, telemetry's last event, the drops that join threads, eframe's teardown, the C exit
+5 s, a Ctrl+S being written 30 s, the recovery file 30 s); from then on the rest of the exit (the workspace's
+record, the poster, the offline engine's park, telemetry's last event, the drops that join threads, eframe's teardown, the C exit
 hooks) SHALL take at most `EXIT_BOUND` (8 s): past it a watcher records what was still waited for,
 flushes the trace and ends the process with `_exit(0)`. Every owner's drop joins its threads with a bound
 (`kt_time::shutdown`, 2 s) and leaves a thread past it behind; the replaced app of File → Open/New is
-released the same way on its `app-drop` thread.
-Why: close-while-busy (kkt-26.11.18 T1): the owner closed the window while a loop caught up and had to
+released the same way on its `app-drop` thread. Every disk call of the close SHALL run off the UI thread, be waited
+for with a bound and be named in the trace; a record of conveniences (the workspace, the cache folder's stamps) SHALL
+be written with no fsync, and the stamps not at the close but at the rest after playing: a process cannot end while a
+thread of it stands in a disk call of the kernel. For the same reason a thread stopped by the process's end starts no
+disk call: an open prerender segment and an unfinished source copy are left as they are for the next open's sweep, and
+the exit hook writes nothing.
+Why: found-defects 831 — on a saturated disk the workspace's two fsyncs held a paused close for 21 s at no load, and
+the stamps' rename held the end of a process that had returned for 20 s. Close-while-busy (kkt-26.11.18 T1): the owner closed the window while a loop caught up and had to
 kill the process; the player's drop joined a prefetch pass that walked a Datamosh history for up to 37 s,
 and the decoder, the sound device's thread, the effect cells and kt-gpu's exit hook waited with no bound.
 
@@ -901,6 +928,24 @@ and the decoder, the sound device's thread, the effect cells and kt-gpu's exit h
 - **THEN** with the end the last step runs, the status stays 7 and the library's destructor never runs; without it the destructor runs and the step does not. The end is registered after every native library the program loads: each GPU device (kt-gpu `errors::watch`, so llvmpipe's libLLVM and a card driver's statics), FFmpeg's libraries, the first hardware (libva) device, the first sound device; its last steps are the GPU's background work waited for, the trace and C's stdio flushed (found-defects 784/785, 695, 172)
 - **TEST** t3600 (`src/libs/kt-time/tests/end.rs`)
 
+#### Scenario: A disk call of the close is bounded and named
+- **PATH** edit a clip → the window's cross → "Do not save" → the window goes and the process ends, whatever the disk does; the trace names each disk call of the close
+- **WHEN** a disk call of the close never ends, and a program with unsaved work is closed
+- **THEN** the call is left behind at its bound and named; the close writes the recovery, says the work is safe, and only then writes the workspace, with no fsync on the UI thread
+- **TEST** t3609 (`src/apps/kt-app/src/reach_tests.rs`)
+
+#### Scenario: The exit hook waits after the close began, and under the watcher
+- **WHEN** the close begins (background GPU work starts nothing more and an engine's build stops between two pipelines) while a piece of background GPU work is still up and the exit watcher fires in a moment
+- **THEN** the hook waits for it once, ends a second before the watcher, names it as left, and writes nothing to the disk; the pass times are written in the close, on a thread; with no watcher its bound is 10 s
+- **TEST** t3610 (`src/libs/kt-gpu/tests/exit_hook.rs`)
+- **TEST** t3604 (`src/libs/kt-gpu/tests/exit_begins.rs`)
+
+#### Scenario: A process that ends leaves the segment being prerendered
+- **PATH** rest on a heavy moment until the prerender writes it → the window's cross → the process ends with no wait for the segment; the trace (`kt-cli trace … summary`) says how many moments were left and what they cost
+- **WHEN** the process ends while the prerender's thread stands in a frame of an open segment
+- **THEN** the segment is not finished and no manifest is written, the trace names its moments and their device time, and the next open removes the file; a project closed in a running program keeps its segment
+- **TEST** t3611 (`src/libs/kt-engine/tests/close_segment.rs`)
+
 #### Scenario: A stuck exit is forced and names what it waited for
 - **WHEN** the exit's watcher passes its bound while a wait of the close left a thread behind
 - **THEN** a forced-exit record names that thread, the trace is flushed, and only then the process ends
@@ -911,3 +956,28 @@ and the decoder, the sound device's thread, the effect cells and kt-gpu's exit h
 - **THEN** each process ends within 15 s of the close (a software rasterizer in Xvfb), by itself (no forced exit), and its trace names the close
 - **PATH** open the heavy project paused on its loop → the window's cross → the window goes and the process ends; again playing the loop's first laps → the cross → the process ends; again playing → File → Quit → the process ends
 - **TEST** t2954 live scenario `src/scripts/live/close_busy.py`
+
+### Requirement: The journal and the store's small files wait for no disk on the UI thread
+A line of `kt-app.log` SHALL be stamped when it is said and written by a thread of its own, in order; the
+workspace, the recent list, the templates, the tour's progress and the start choice SHALL be written by a
+thread of their own, the newest text of a file replacing one still waiting, and a read of such a file
+SHALL see what is on its way. The exit, a panic and a forced exit SHALL wait for them within a bound.
+Why: found-defects 833 — a locked track's refusal held a frame for 5.2 s on a busy disk, and the hint it
+had to show came and went inside that frame.
+
+#### Scenario: A line is said while the disk answers nothing
+- **WHEN** the disk stands and more lines are said than the journal keeps waiting; then the disk answers
+- **THEN** every call returns; the file has the lines in order and says how many were dropped
+- **TEST** t3727 (`src/apps/kt-app/src/journal.rs`)
+
+#### Scenario: A small file is saved while the disk answers nothing
+- **WHEN** a file is being written on a standing disk and another is saved twice; then the disk answers
+- **THEN** the saves return, a read gives the newest text, and the file gets that text once, synced since
+  the older one had to be
+- **TEST** t3728 (`src/apps/kt-app/src/later.rs`)
+
+#### Scenario: The refusal of a locked track is read at once
+- **WHEN** an event of a locked track is dragged
+- **PATH** lock the lower track → drag its event: it stays, and the status line names V2 and its lock at once
+- **THEN** the status line names the track
+- **TEST** live `track` (`src/scripts/live/track.py`)

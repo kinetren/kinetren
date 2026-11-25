@@ -32,6 +32,8 @@ pub const AREA_SAVE: &str = "\u{E69C}"; // selection-plus (keep the region, R.35
 pub const UNDO: &str = "\u{E08A}"; // arrow-u-up-left
 pub const REDO: &str = "\u{E08C}"; // arrow-u-up-right
 pub const RENDER: &str = "\u{E8C2}"; // film-slate
+pub const CAMERA: &str = "\u{E10E}"; // camera
+pub const DISK: &str = "\u{E29E}"; // hard-drive (the cache on disk, persistent-cache)
 pub const SAVE: &str = "\u{E248}"; // floppy-disk
 pub const FX: &str = "\u{E2DE}"; // lightning (clip with effects)
 pub const WARN: &str = "\u{E4E0}"; // warning (E4DE was a voicemail — item 1 of round 8)
@@ -74,6 +76,7 @@ pub const CAT_STEREO: &str = "\u{E69A}"; // selection
 pub const CAT_MODULATION: &str = "\u{E6A2}"; // sparkle
 pub const CAT_DELAY: &str = "\u{E1EC}"; // diamond
 pub const CAT_DYNAMICS: &str = "\u{E000}"; // pulse
+pub const MERGE: &str = "\u{E280}"; // git-merge: the picker's Merge row (fx-graph-dag)
 pub const CAT_TIMESTRETCH: &str = "\u{E1A0}"; // clock-counter-clockwise
 
 /// Vendored fonts: the name in egui and the bytes. The order here is the fallback order,

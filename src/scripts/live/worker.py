@@ -137,8 +137,35 @@ class Screen:
         if shutil.which("openbox"):
             wm = open(os.path.join(self.out, f"openbox{self.display.lstrip(':')}.log"), "w")
             self.procs.append(subprocess.Popen(["openbox"], stdout=wm, stderr=wm))
-            time.sleep(0.5)
+            self.wait_wm()
         return self
+
+    def wait_wm(self):
+        """The window manager takes a window (found-defects 830, 954): openbox DROPS a request to be shown
+        that comes while it starts, for good. Half a second was the wait for that; on a machine at load
+        300 its start lasted past the first programs' windows on three screens at once, which then
+        waited ten minutes for a window nobody would ever show."""
+        from Xlib import X
+        from Xlib import display as xdisplay
+        d = xdisplay.Display(self.display)
+        root = d.screen().root
+        w = root.create_window(0, 0, 50, 50, 0, d.screen().root_depth, X.InputOutput, X.CopyFromParent)
+        w.set_wm_class("kt-wm-probe", "kt-wm-probe")
+        end, ask = time.time() + 600.0, 0.0
+        try:
+            while time.time() < end:
+                if time.time() >= ask:
+                    w.map()
+                    d.sync()
+                    ask = time.time() + 0.5
+                if w.query_tree().parent.id != root.id:
+                    return
+                time.sleep(0.02)
+            raise SystemExit(f"openbox on {self.display} took no window in ten minutes")
+        finally:
+            w.destroy()
+            d.sync()
+            d.close()
 
     def __exit__(self, *exc):
         for p in self.procs:

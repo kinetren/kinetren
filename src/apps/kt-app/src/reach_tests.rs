@@ -212,8 +212,6 @@ const NOT_FROM_UI: &[(&str, &str)] = &[
     // fx-graph-dag v2a: the model, the file and the OTIO door carry a chain's wiring; the node
     // editor's branch gestures that send these arrive with v2d (task 4.2 removes both rows), and v2a
     // is merged only together with the stages that run and draw a graph
-    ("SetFxIn", "the node editor's wire gestures arrive with fx-graph-dag v2d"),
-    ("SetTrackFxIn", "the track window's wire gestures arrive with fx-graph-dag v2d"),
 ];
 
 /// Test 252 (R.38): there are no orphaned commands.
@@ -2709,6 +2707,8 @@ const WINDOWS: &[(&str, &str)] = &[
     ("track_window", "object track: name, level, switches, chain and ducking"),
     ("env_fit", "field matching on envelope paste — a question that must be answered before the paste"),
     ("project_settings", "project settings: frame size, frame rate, alignment rule"),
+    ("kt_program", "the stage on the master: its gain, what was measured, Match the program — it is watched while the edit plays, and the meters column is 64 points wide (loudness-norms)"),
+    ("kt_match_loudness", "what the chosen events are: dialogue, music, effects or a number — answered before their levels move (loudness-norms)"),
     ("kt_render_settings", "export parameters: filled in before the start and checked at once"),
     ("kt_render_progress", "export progress: it runs for minutes and can be cancelled"),
     ("kt_analysis", "progress of background analyses — the same for loudness, sync and ducking"),
@@ -3036,6 +3036,10 @@ pub(crate) fn window_openers() -> Vec<(&'static str, OpenWin, Closes)> {
             app.open_track_window(id);
         }), Closes::Action),
         ("project_settings", OpenWin::By(|h| h.state_mut().open_project_settings()), Closes::Action),
+        ("kt_program", OpenWin::By(|h| h.state_mut().program_win = true), Closes::Action),
+        ("kt_match_loudness", OpenWin::By(|h| {
+            h.state_mut().match_win = Some(crate::program_ui::MatchWin { ids: vec![ClipId(1)], pick: 0, number: -14.0 });
+        }), Closes::Action),
         ("kt_notices", OpenWin::By(|h| h.state_mut().notices_open = true), Closes::Titlebar { title: || crate::i18n::tr(crate::i18n::k::win::NOTICES_TITLE).to_string(), why: "the message log is closed by the title cross: the list has no action of its own" }),
         ("kt_search", OpenWin::By(|h| h.state_mut().search_open = true), Closes::Titlebar { title: || crate::i18n::tr(crate::i18n::k::win::SEARCH_TITLE).to_string(), why: "search is closed by the title cross: the list of finds lives as long as one walks through it" }),
         ("kt_diag", OpenWin::By(|h| h.state_mut().perf.diag_open = true), Closes::Titlebar { title: || crate::i18n::tr(crate::i18n::k::win::DIAG_TITLE).to_string(), why: "diagnostics is closed by the title cross: it is a developer window with no actions" }),
@@ -4658,9 +4662,9 @@ fn t819_the_import_door_takes_legacy_old_and_foreign_and_yields_a_project() {
     use egui_kittest::kittest::Queryable;
     let dir = r70_dir("t819");
 
-    // three entrances; the legacy fixture is COPIED: an import opens the sidecar
-    // `<source>.ktindex.db` next to the source, and in place it rewrote the committed
-    // fixtures/demo.ktindex.db* (tests do not write into the tree)
+    // three entrances; the legacy fixture is COPIED: an import opens the cache
+    // folder next to the source, and in place it would write into the committed fixtures
+    // (tests do not write into the tree)
     let legacy = dir.join("demo.ktproj");
     std::fs::write(&legacy, include_str!("../../../fixtures/demo.ktproj")).unwrap();
     let old = dir.join("old_v5.otio");
@@ -5268,7 +5272,7 @@ fn press_esc(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>) {
 }
 
 /// A click at a screen point (press and release in one frame batch).
-fn click_at(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>, pos: egui::Pos2) {
+pub(crate) fn click_at(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>, pos: egui::Pos2) {
     h.event(egui::Event::PointerMoved(pos));
     h.event(egui::Event::PointerButton {
         pos,
@@ -5451,6 +5455,80 @@ fn t920_esc_closes_the_top_window_first() {
     assert!(app.model.project().region.is_none(), "with no window Esc clears the region");
     assert!(app.selected.is_empty(), "with no window Esc clears the selection");
     assert!(app.model.project().loop_enabled, "the loop stays armed (item 3 of round 11)");
+}
+
+/// Test t3291 (shared-window-shell, found-defects 905): two presses of Esc read in ONE frame close two
+/// windows, the top one and the one under it. Both were taken off the stack, only the second was told,
+/// so the window ON TOP stayed and the next Esc went past it (live `node_graph`, finish-23c).
+#[test]
+fn t3291_two_esc_in_one_frame_close_two_windows() {
+    let mut h = crate::layout_tests::harness_sized(1600.0, 900.0);
+    crate::layout_tests::owner_morpher_scene(&mut h);
+    if let Some(ed) = h.state_mut().morph_editors.first_mut() {
+        ed.open = false;
+    }
+    h.step();
+    h.state_mut().open_fx_editor(kt_model::ClipId(1));
+    h.step();
+    h.step();
+    h.state_mut().open_morph_editor(kt_model::MorphId(1));
+    h.step();
+    h.step();
+    let open = |h: &egui_kittest::Harness<'static, crate::app::KtApp>| {
+        (h.state().fx_editors.iter().any(|e| e.open), h.state().morph_editors.iter().any(|e| e.open))
+    };
+    assert_eq!(open(&h), (true, true), "scene: the FX window and the morpher window over it");
+    // a slow frame reads both presses at once
+    for pressed in [true, false, true, false] {
+        // into the frame's own input: `Harness::event` gives every event a frame of its own
+        h.input_mut().events.push(egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+    h.step();
+    assert_eq!(open(&h), (false, false), "two Esc in one frame did not close both windows");
+}
+
+/// Test t3241 (shared-window-shell, found-defects 905): presses of Esc in two frames running close two
+/// windows. A window closed in a frame still stood in that frame's list, so the next frame's Esc went
+/// to it and was lost: the window under it stayed (live `node_graph` again, three Esc for three windows).
+#[test]
+fn t3241_esc_in_two_frames_running_closes_two_windows() {
+    let mut h = crate::layout_tests::harness_sized(1600.0, 900.0);
+    crate::layout_tests::owner_morpher_scene(&mut h);
+    if let Some(ed) = h.state_mut().morph_editors.first_mut() {
+        ed.open = false;
+    }
+    h.step();
+    h.state_mut().open_fx_editor(kt_model::ClipId(1));
+    h.step();
+    h.step();
+    h.state_mut().open_morph_editor(kt_model::MorphId(1));
+    h.step();
+    h.step();
+    let open = |h: &egui_kittest::Harness<'static, crate::app::KtApp>| {
+        (h.state().fx_editors.iter().any(|e| e.open), h.state().morph_editors.iter().any(|e| e.open))
+    };
+    assert_eq!(open(&h), (true, true), "scene: the FX window and the morpher window over it");
+    for _ in 0..2 {
+        for pressed in [true, false] {
+            h.input_mut().events.push(egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        h.step();
+    }
+    h.step();
+    assert_eq!(open(&h), (false, false), "the second frame's Esc did not close the window under the first");
 }
 
 /// `f32` steps over a range (only for the probe above).
@@ -6428,6 +6506,7 @@ fn welcome_project(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
 ///   start again → the last project opens directly, no window
 #[test]
 fn t986_welcome_window_templates_recent_whats_new_and_the_switch() {
+    crate::alone::own_process!();
     // the lesson sandbox is built by kt_model::demo, which uses plugin effects (one test per process)
     crate::plugins::install();
     use crate::i18n::{k, tr};
@@ -6771,10 +6850,12 @@ fn no_teaching_layer_over_the_ui() {
 
     // (2) the closed list of layers above the window layer, by the sources
     const LAYERS: &[&str] = &[
-        "ambient-overlay",
+        // a LIVE status line: the answer to the pointer or an action, which may be in the window
+        // covering the strip; the resting line is under the windows (window-chrome D1)
         "status-hint",
-        "project-title",
+        // the speed read-out beside the pointer while the playback speed is dragged
         "speed-drag-overlay",
+        // the inline fields typed in place, one at a time
         "bin-group-name",
         "marker-name-edit",
         // the marker's note typed at its flag (marker-notes), the same inline field as its name
@@ -6821,6 +6902,9 @@ fn no_teaching_layer_over_the_ui() {
         }
     }
     assert!(seen.len() >= 6, "the layer scan found too little — it is broken: {seen:?}");
+    for name in LAYERS {
+        assert!(seen.iter().any(|s| s == name), "“{name}” is in the list and in no source: a row that allows nothing");
+    }
 
     // (3) at run time, with the lessons panel open on every step of every lesson
     let mut h = crate::layout_tests::harness_sized(1440.0, 860.0);
@@ -7984,6 +8068,36 @@ fn t2305_next_lesson_opens_when_the_copy_is_written() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Test t3266 (found-defects 842; capability `durability`): Next lesson waits for no disk. With the save
+/// lane held — a disk that answers nothing — the next lesson is open in the frames of a click, the copy's
+/// edits are read back where it opens again. The live walk stood 31.8 s on the copy's fsync.
+#[test]
+fn t3266_next_lesson_waits_for_no_disk() {
+    crate::alone::own_process!();
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    let (mut h, dir) = lesson_at("t3266", 1, 4);
+    let path = h.state().project_path.clone().unwrap();
+    let r = kt_model::Region { start: Tick(20 * 90_000), end: Tick(30 * 90_000) };
+    h.state_mut().model.set_region(Some(r));
+    h.state_mut().toggle_loop();
+    h.step();
+    h.step();
+    assert!(h.state().dirty_content || h.state().dirty_ui, "the scene has nothing to lose — the test proves nothing");
+    let (go, hold) = std::sync::mpsc::channel::<()>();
+    crate::app::save_lane().post(move |_| drop(hold.recv()));
+    h.get_by_label(tr(k::lessons::NEXT)).click();
+    for _ in 0..3 {
+        h.step();
+    }
+    assert_eq!(h.state().start.lessons.lesson, 2, "lesson 2 waits for the disk");
+    assert!(h.state().saving.is_none() && h.state().ask.is_none());
+    let kept = crate::app::KtApp::open(&path).expect("the lesson-1 copy reads").model.project().region;
+    assert_eq!(kept.map(|r| r.start), Some(r.start), "the lesson-1 copy lost its edits");
+    drop(go);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// t1219 (camera-isp-simulation 3.2; capability `video-fx`): the camera effect's window is its
 /// pipeline. A person adds "Camera ISP" from the picker by typing; the window shows the blocks of the
 /// chain in order (source, lens, sensor, the ISP's raw front, demosaic, lens correction, colour, YUV),
@@ -8267,4 +8381,310 @@ fn t1637_a_track_is_reordered_by_its_header() {
     h.step();
     h.step();
     assert_eq!(names(&h), [c, a, b], "the drag from above the badges");
+}
+
+/// Test 3940 (window-chrome, `v26.10` W3): an event's windows are titled by the event, and its number is
+/// in the body — effects of one event, of a pair, of a title; a transition; a morpher.
+/// - **PATH** double-click the interview event → the window's title reads "interview.mp4 — Effects" →
+///   "#1" in grey beside "Video" at the head of its chain → hover the copy icon → the status bar says "Copy the chain"
+#[test]
+fn t3940_an_event_window_says_which_event_it_edits() {
+    use crate::i18n::k;
+    use kt_model::{ClipId, ClipKind};
+    let mut h = crate::layout_tests::harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(kt_model::MediaRef::new(kt_model::MediaId(1), "/footage/interview.mp4"));
+        let text = kt_model::parse_gen_path(&kt_model::gen_kind_path(&kt_model::GeneratorKind::default_text())).unwrap();
+        p.media.push(kt_model::MediaRef::new(kt_model::MediaId(2), kt_model::gen_kind_path(&text)));
+        let mut v = crate::layout_tests::sample_clip(ClipId(1));
+        (v.media, v.kind, v.lane, v.link_group) = (kt_model::MediaId(1), ClipKind::Video, 0, Some(kt_model::GroupId(1)));
+        let mut a = v.clone();
+        (a.id, a.kind) = (ClipId(2), ClipKind::Audio);
+        let mut alone = v.clone();
+        (alone.id, alone.link_group, alone.start) = (ClipId(3), None, v.start + v.duration);
+        let mut t = alone.clone();
+        (t.id, t.media, t.start) = (ClipId(4), kt_model::MediaId(2), alone.start + alone.duration);
+        t.r#gen = Some(match text {
+            kt_model::GeneratorKind::Text { .. } => {
+                let mut k = text;
+                if let kt_model::GeneratorKind::Text { text, .. } = &mut k {
+                    *text = "Chapter one:\nthe river and the far bank".into();
+                }
+                k
+            }
+            k => k,
+        });
+        p.clips.extend([v, a, alone, t]);
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+    }
+    h.step();
+    let title_of = |h: &mut AppHarness, id: u64| {
+        h.state_mut().fx_editors.clear();
+        h.step();
+        h.state_mut().open_fx_editor(ClipId(id));
+        for _ in 0..3 {
+            h.step();
+        }
+        let texts: Vec<String> = painted_texts(h).into_iter().map(|t| t.src).collect();
+        assert!(texts.iter().any(|t| t.contains(&format!("#{id}"))), "the event's number is in the body: {texts:?}");
+        texts
+    };
+    let has = |texts: &[String], want: String| assert!(texts.contains(&want), "no “{want}” in {texts:?}");
+    has(&title_of(&mut h, 3), crate::tf!(k::fx::TITLE, "interview.mp4"));
+    has(&title_of(&mut h, 1), crate::tf!(k::fx::TITLE_PAIR, "interview.mp4"));
+    has(&title_of(&mut h, 4), crate::tf!(k::fx::TITLE, "Chapter one: the river …"));
+    for lang in crate::i18n::Lang::ALL {
+        crate::i18n::set_lang(lang);
+        for t in [crate::tf!(k::fx::TITLE, "n"), crate::tf!(k::fx::TITLE_PAIR, "n"), crate::tf!(k::trn::TITLE_EDGE, "n")] {
+            assert!(t.starts_with("n "), "{lang:?}: the name leads the title: {t}");
+        }
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+}
+
+/// Test 3941 (window-chrome, `v26.10` T7, T8): copy and paste of a chain are icons that say their name
+/// in the status bar; the chain's fold has no indent strip.
+/// - **PATH** double-click the event → hover the copy icon → the status bar says "Copy the chain…"
+#[test]
+fn t3941_copy_and_paste_are_icons_that_say_their_name() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    let mut h = crate::layout_tests::r72_transport_scene();
+    let id = h.state().model.project().clips[0].id;
+    assert!(h.state_mut().apply(kt_model::Command::SetFx { id, fx: vec![kt_model::FxInstance::all()[0].clone()] }));
+    h.state_mut().open_fx_editor(id);
+    for _ in 0..3 {
+        h.step();
+    }
+    // the scene's synthetic file is refused once, in the status line
+    h.state_mut().status = None;
+    let on = h.get_by_label(tr(k::fx::CHAIN_ON)).rect().left();
+    let done = h.get_by_label(tr(k::fx::DONE)).rect().left();
+    assert!((on - done).abs() < 12.0, "the chain starts at the body's left edge, with no strip: {on} against {done}");
+    // and past the window's resize edge, or the edge takes the click on what stands at its left
+    let win = h.ctx.memory(|m| m.area_rect(egui::Id::new(("fx", h.state().fx_editors[0].clip)))).unwrap();
+    let grab = h.ctx.global_style().interaction.resize_grab_radius_side;
+    assert!(on > win.left() + grab + 2.0, "the chain starts inside the window's resize edge: {on} in {win:?}");
+    for (name, icon) in [(k::fx::COPY_CHAIN, crate::icons::COPY), (k::fx::PASTE_CHAIN, crate::icons::CLIPBOARD)] {
+        let name = tr(name);
+        let at = h.get_by_label(name).rect();
+        let drawn = painted_texts(&h);
+        assert!(drawn.iter().any(|t| t.src == icon && at.contains_rect(t.rect)), "{name}: drawn as its icon");
+        assert!(drawn.iter().all(|t| t.src != name), "{name}: no text button");
+        h.hover_at(at.center());
+        h.step();
+        h.step();
+        assert!(h.state().status_line_shown.0.starts_with(name), "{name}: {:?}", h.state().status_line_shown);
+    }
+}
+
+/// Test t3609 (durability, found-defects 831): a disk call of the close that never ends is left behind at
+/// its bound and named in the trace; a close of unsaved work writes its recovery, says it is safe, and only
+/// then writes the workspace — a convenience, with no fsync on the UI thread.
+#[test]
+fn t3609_a_disk_call_of_the_close_is_bounded_and_named() {
+    use kt_time::trace::{Ev, shutdown};
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let items = kt_time::trace::testing::capture(|| {
+        assert!(!crate::app::close_write("t3609-stuck", std::time::Duration::from_millis(30), move || {
+            let _ = rx.recv();
+        }));
+        assert!(crate::app::close_write("t3609-quick", kt_time::TEST_WAIT, || ()));
+    });
+    let _ = tx.send(());
+    let recs = kt_time::trace::testing::recs(&items);
+    let left = |who: &str| recs.iter().find(|r| r.ev == Ev::Shutdown as u16 && r.aux == kt_time::trace::name(who)).map(|r| r.b);
+    assert_eq!((left("t3609-stuck"), left("t3609-quick")), (Some(1), Some(0)), "each wait is named, left or ended");
+
+    let dir = std::env::temp_dir().join(format!("kt-t3609-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().project_path = Some(dir.join("film.kt"));
+    h.state_mut().workspace_file = Some(dir.join("workspace.json"));
+    h.state_mut().dirty_content = true;
+    let synced = kt_time::block::here();
+    let items = kt_time::trace::testing::capture(|| eframe::App::on_exit(h.state_mut()));
+    assert_eq!(kt_time::block::here(), synced, "the close waited for an fsync on the UI thread");
+    let recs = kt_time::trace::testing::recs(&items);
+    let at = |who: &str, id: u64| recs.iter().position(|r| r.ev == Ev::Shutdown as u16 && r.id == id && r.aux == kt_time::trace::name(who));
+    let (wrote, safe, conv) = (at("recovery", shutdown::WAIT), at("recovery", shutdown::DURABLE), at("workspace", shutdown::WAIT));
+    assert!(wrote.is_some() && wrote < safe && safe < conv, "recovery, safe, workspace: {wrote:?} {safe:?} {conv:?}");
+    assert!(dir.join("workspace.json").is_file());
+    let left: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    assert!(left.iter().any(|n| n.contains("recovery")), "{left:?}");
+    h.state_mut().dirty_content = false;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test t3447 (persistent-cache D1, D2): a heavy range prepared on disk stays bright after a title beside it
+/// is moved, and the title's old and new moments are dim; the Diagnostics window lists the store's two kinds
+/// with their sizes, reads and writes; the switch beside the quality is remembered and, at "Off", nothing of
+/// the store is read.
+/// - **PATH** play the heavy range, pause 2 s → the coverage bar turns bright → drag the title event 1 s
+///   right → the bar stays bright over the heavy event, dim only where the title was and is → open
+///   Diagnostics → the Persistent cache section lists frames and source copies → press the switch beside the
+///   quality, pick Off → the bar over the heavy event is bright no more
+#[test]
+fn t3447_a_heavy_range_survives_an_edit_beside_it_and_the_store_says_so() {
+    crate::alone::own_process!();
+    use kt_time::Tick;
+    crate::plugins::install();
+    let mut h = crate::layout_tests::harness();
+    h.step();
+    if matches!(h.state().player.video_backend(), kt_engine::VideoBackendStatus::Missing) {
+        eprintln!("skipped: no wgpu adapter");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("kt-t3447-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let app = h.state_mut();
+    app.project_path = Some(dir.join("film.kt"));
+    let root = app.cache_folder().unwrap();
+    app.player.set_preview_quality(kt_media::Quality { width: 160, height: 90 });
+    let mut p = kt_model::demo::demo_project(kt_model::demo::DemoSources::Generators);
+    // the heavy event, and a title two seconds after it, on one row
+    let mut heavy = p.clips.iter().find(|c| c.kind == kt_model::ClipKind::Video).expect("a picture").clone();
+    (heavy.lane, heavy.start, heavy.duration) = (0, Tick(0), Tick(45_000));
+    let mut title = heavy.clone();
+    (title.id, title.start) = (kt_model::ClipId(heavy.id.0 + 1), Tick(225_000));
+    title.opacity = 0.5;
+    p.clips = vec![heavy, title.clone()];
+    p.transitions.clear();
+    p.morphers.clear();
+    p.region = None;
+    app.model = kt_model::TimelineModel::new(p);
+    app.model_rev += 1;
+    app.sync_media_sources();
+    app.push_project_to_player();
+    app.player.wait_built();
+    app.player.seek(Tick(0));
+    app.player.render_cache().set_heavy_for_tests(Some(1));
+    app.player.set_render_cache(Some(kt_engine::render_cache::Config {
+        codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
+        root: root.clone(),
+        made: kt_engine::render_cache::Made::of(60),
+        cap: None,
+    }));
+    let grid = app.player.video_grid();
+    let step = grid.frame_step();
+    let at = |from: i64| (0..6).map(|i| Tick(grid.align_floor(Tick(from)).0 + i * step)).collect::<Vec<_>>();
+    let (a, b, b_new) = (at(6_000), at(225_000), at(315_000));
+    let bright = |h: &egui_kittest::Harness<'_, crate::app::KtApp>, ts: &[Tick]| {
+        let (runs, _) = h.state().player.final_video_runs();
+        ts.iter().filter(|t| runs.iter().any(|r| r.contains(&t.0))).count()
+    };
+    let until = |h: &mut egui_kittest::Harness<'static, crate::app::KtApp>, what: &str, ok: &dyn Fn(&egui_kittest::Harness<'static, crate::app::KtApp>) -> bool| {
+        let deadline = kt_time::test_deadline();
+        while !ok(h) {
+            assert!(std::time::Instant::now() < deadline, "{what}");
+            h.step();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    };
+    for t in a.iter().chain(&b) {
+        h.state().player.note_preview_cost(*t, 1_000_000_000, (160, 90));
+    }
+    h.state().player.render_cache().kick();
+    until(&mut h, "the heavy range was never prepared", &|h| bright(h, &a) == 6 && bright(h, &b) == 6);
+    // nothing more is written: what the edit leaves bright is what was prepared before it
+    h.state().player.render_cache().set_heavy_for_tests(Some(u64::MAX));
+
+    let moved = h.state_mut().apply(kt_model::Command::MoveClip { id: title.id, new_start: Tick(315_000), new_lane: 0 });
+    assert!(moved, "the title moves: {:?}", h.state().status);
+    until(&mut h, "the heavy range did not stay bright after the edit", &|h| bright(h, &a) == 6 && !h.state().player.final_video_runs().1);
+    assert_eq!((bright(&h, &b), bright(&h, &b_new)), (0, 0), "the title's old and new moments are dim");
+
+    h.state_mut().perf.diag_open = true;
+    let frames = crate::i18n::tr(crate::i18n::k::pcache::FRAMES).split('{').next().unwrap().to_string();
+    until(&mut h, "the Diagnostics window shows no figures", &|h| h.state().copies_ui.figures[0].writes >= 12 && painted_texts(h).iter().any(|t| t.src.starts_with(&frames)));
+    let [f, c] = h.state().copies_ui.figures;
+    assert!(f.bytes > 0, "{f:?}");
+    assert_eq!(c, Default::default(), "no copy was made of a generator");
+    let copies = crate::i18n::tr(crate::i18n::k::pcache::COPIES).split('{').next().unwrap();
+    assert!(painted_texts(&h).iter().any(|t| t.src.starts_with(copies)), "the second kind is listed");
+    h.state_mut().perf.diag_open = false;
+    h.step();
+
+    // the switch, as a person presses it
+    let press = |h: &mut egui_kittest::Harness<'static, crate::app::KtApp>, probe: &str| {
+        let pos = crate::widgets::field_probe::rect_of(probe).unwrap_or_else(|| panic!("{probe} is not published")).center();
+        h.event(egui::Event::PointerMoved(pos));
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        }
+        h.step();
+        h.step();
+    };
+    press(&mut h, "pcache.switch");
+    press(&mut h, "pcache.off");
+    assert_eq!(h.state().cache_mode(), kt_media::copy::CopyMode::Off);
+    assert_eq!(h.state().start.store.start.persistent_cache.as_deref(), Some("off"), "kept between projects");
+    until(&mut h, "the bar still draws what the store holds", &|h| bright(h, &a) == 0);
+    drop(h);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// t3737 (found-defects 844, as t1671 holds the clock): a test does not count frames for something to
+/// become true. A counted loop that steps the harness and leaves when its condition holds is a limit
+/// nobody named: what another thread makes true is waited for by `layout_tests::step_until`. The list is
+/// the loops whose steps are gestures the test makes itself (a wheel turn, a pointer row) or egui's own
+/// animation.
+#[test]
+fn t3737_a_test_does_not_count_frames_for_a_condition() {
+    const STEPS_ARE_THE_GESTURE: &[(&str, &str)] = &[
+        // the pointer goes down the media bin's cards, row by row, until it leaves the panel
+        ("layout_tests.rs", "let p = egui::pos2(g.left() + 30.0, g.top() + 20.0 + y as f32 * 12.0);"),
+        // turns of the wheel until the row stands in the window (two helpers)
+        ("layout_tests.rs", "if r.bottom() < 470.0 {"),
+        ("layout_tests.rs", "let w = win(h)?;"),
+        ("layout_tests.rs", "let texts = crate::reach_tests::painted_texts(h);"),
+        ("reach_tests.rs", "if win(&h).shrink(24.0).contains_rect(h.get_by_label(wb).rect()) {"),
+        // egui's smooth scroll comes to rest by the harness's own frame time
+        ("layout_tests.rs", "&& (a.min - b.min).length() < 0.5"),
+    ];
+    let root = workspace_root();
+    let mut files = Vec::new();
+    collect_rs(&root.join("apps/kt-app/src"), &mut files);
+    assert!(files.len() > 30, "the sources are not where they were: {}", files.len());
+    let (mut bad, mut seen) = (Vec::new(), Vec::new());
+    for f in files {
+        let text = std::fs::read_to_string(root.join(&f)).unwrap();
+        let text: String = text.lines().filter(|l| !l.trim_start().starts_with("//")).flat_map(|l| [l, "\n"]).collect();
+        let name = std::path::Path::new(&f).file_name().unwrap().to_string_lossy().into_owned();
+        let mut at = 0;
+        while let Some(i) = text[at..].find("for ") {
+            let from = at + i;
+            at = from + 4;
+            let Some(open) = text[from..].find('{').map(|o| from + o) else { break };
+            let head = &text[from..open];
+            if !head.contains(" in ") || !head.contains("..") || head.contains('\n') || head.contains(';') {
+                continue;
+            }
+            let (mut depth, mut end) = (0usize, open);
+            for (k, c) in text[open..].char_indices() {
+                depth = if c == '{' { depth + 1 } else if c == '}' { depth.saturating_sub(1) } else { depth };
+                if depth == 0 {
+                    end = open + k;
+                    break;
+                }
+            }
+            let body = &text[open..end];
+            if !body.contains(".step()") || !["break;", "return"].iter().any(|w| body.contains(w)) {
+                continue;
+            }
+            match STEPS_ARE_THE_GESTURE.iter().find(|(n, w)| *n == name && body.contains(w)) {
+                Some(e) => seen.push(*e),
+                None => bad.push(format!("{name}: {} {}", head.trim(), body.split_whitespace().take(24).collect::<Vec<_>>().join(" "))),
+            }
+        }
+    }
+    assert!(bad.is_empty(), "frames are counted for a condition, use layout_tests::step_until:\n{}", bad.join("\n"));
+    for e in STEPS_ARE_THE_GESTURE {
+        assert!(seen.contains(e), "the list names a loop that is gone: {e:?}");
+    }
 }

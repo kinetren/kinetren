@@ -455,33 +455,6 @@ impl FxOp {
     }
 }
 
-/// Components of the ReadbackCache key from the resolved camera (R.29).
-fn put_cam3d(h: &mut Xxh3, c: &Option<Cam3d>) {
-    match c {
-        None => h.update(&[0u8]),
-        Some(c) => {
-            h.update(&[1u8, c.cam.ortho as u8]);
-            for v in [
-                c.cam.pos_x,
-                c.cam.pos_y,
-                c.cam.pos_z,
-                c.cam.rot_x,
-                c.cam.rot_y,
-                c.cam.rot_z,
-                c.cam.fov_deg,
-                c.world_scale,
-            ] {
-                h.update(&v.to_bits().to_le_bytes());
-            }
-            if let Some((x, y, z)) = c.cam.target {
-                for v in [x, y, z] {
-                    h.update(&v.to_bits().to_le_bytes());
-                }
-            }
-        }
-    }
-}
-
 /// Result of chain_ops: ops, final sizes, alpha (value/known),
 /// the maximum of intermediate sizes (max_dim guard, item 314).
 type ChainOps = (Vec<FxOp>, (u32, u32), bool, bool, (u32, u32));
@@ -745,7 +718,7 @@ fn chain_ops(
                     .map(|f| {
                         let t = kt_fx::geom::PluginTap::of(f).expect("a fusable stage is a tap");
                         let g = t.gpu();
-                        let idx = plugin_taps().iter().position(|(id, _)| *id == t.id).expect("assembled at engine creation");
+                        let idx = plugin_taps().iter().position(|(id, _)| *id == t.id).unwrap_or_else(|| panic!("{} is not in the assembled taps", t.id));
                         crate::runs::Stage { idx, f: [0.0, g[0], g[1], g[2], g[3], g[4], g[5], g[6]], positioned: t.positioned }
                     })
                     .collect();
@@ -801,7 +774,7 @@ fn chain_ops(
                 f @ FxInstance::Plugin(_) if kt_fx::geom::PluginTap::of(f).is_some() => {
                     let t = kt_fx::geom::PluginTap::of(f).expect("checked");
                     let g = t.gpu();
-                    let idx = plugin_taps().iter().position(|(id, _)| *id == t.id).expect("assembled at engine creation");
+                    let idx = plugin_taps().iter().position(|(id, _)| *id == t.id).unwrap_or_else(|| panic!("{} is not in the assembled taps", t.id));
                     ops.push(FxOp::PluginTap {
                         idx,
                         f: [0.0, g[0], g[1], g[2], g[3], g[4], g[5], g[6]],
@@ -1420,19 +1393,19 @@ impl GpuFxEngine {
 
     /// The present memo now: (composites, bytes, bound) — tests and `kt-cli`.
     pub fn present_memo_stats(&self) -> (usize, u64, u64) {
-        let g = self.inner.lock().unwrap();
+        let g = self.locked();
         (g.present_memo.len(), g.present_memo.bytes(), g.present_memo.cap())
     }
 
     /// The uploads held now (tests).
     pub fn uploads_held(&self) -> usize {
-        self.inner.lock().unwrap().upload.held()
+        self.locked().upload.held()
     }
 
     /// Tests: the present memo's base (the product's is 512 MB), set before it keeps anything.
     #[doc(hidden)]
     pub fn set_present_base_for_tests(&self, bytes: u64) {
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.locked();
         let hook = g.present_memo.take_on_shrink();
         g.present_memo = PresentMemo::new(bytes);
         if let Some(h) = hook {
@@ -1444,13 +1417,13 @@ impl GpuFxEngine {
     /// would refuse it.
     #[doc(hidden)]
     pub fn refuse_next_growth_for_tests(&self) {
-        self.inner.lock().unwrap().refuse_next_growth = true;
+        self.locked().refuse_next_growth = true;
     }
 
     /// This engine shows the preview on a device with no window (the bench, gpu-arbiter): its ring
     /// bounds what stands in front of its presents from now on.
     pub fn register_display(&self) {
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.locked();
         if g.shows.is_none() {
             g.shows = Some(g.arb.register_display());
         }
@@ -1458,13 +1431,13 @@ impl GpuFxEngine {
 
     /// The ring this engine's device runs on (gpu-arbiter).
     pub fn ring(&self) -> Arc<crate::arbiter::Ring> {
-        self.inner.lock().unwrap().arb.clone()
+        self.locked().arb.clone()
     }
 
     /// Wait for the device and keep this engine's lock for good: whoever asks for a frame from now
     /// on waits until the process is gone.
     pub fn park(&self) {
-        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let inner = self.locked();
         let _ = crate::wait_all(&inner.device);
         std::mem::forget(inner);
     }
@@ -1495,6 +1468,7 @@ impl GpuFxEngine {
         let info = GpuBackendInfo {
             name: ai.name.clone(),
             backend: format!("{:?}", ai.backend),
+            driver: format!("{} {}", ai.driver, ai.driver_info),
             software: ai.device_type == wgpu::DeviceType::Cpu
                 || name_l.contains("llvmpipe")
                 || name_l.contains("softpipe")
@@ -1546,14 +1520,14 @@ impl GpuFxEngine {
         // ours stalled under the context lock made this thread panic (t2746 beside t2745's hold)
         let _gate = self.compiled.gl_gate();
         let (device, queue, arb, memo_guard, seed, surface) = {
-            let g = self.inner.lock().unwrap();
+            let g = self.locked();
             (g.device.clone(), g.queue.clone(), g.arb.clone(), g.memo_guard, g.timer.seed_key(), g.surface)
         };
         let e = Self::assemble(device, queue, self.info.clone(), self.compiled.clone(), arb, memo_guard, false, false, seed);
         // a sibling of the window's engine: nobody block-waits on its device either, and its frames
         // yield to the window's refused reconfigure
         if surface {
-            e.inner.lock().unwrap().surface = true;
+            e.inner.lock().unwrap_or_else(|e| e.into_inner()).surface = true;
         }
         if self.display || self.on_window.load(std::sync::atomic::Ordering::Relaxed) {
             e.on_window.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -1566,7 +1540,7 @@ impl GpuFxEngine {
     fn keep_tex(&self, key: u64, tex: Tex) -> bool {
         let _hold = crate::holds::within(self.role(), "keep");
         let _gate = self.compiled.gl_gate();
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.locked();
         if g.present_memo.holds(key) {
             g.pool.release(tex);
             return true;
@@ -1577,7 +1551,7 @@ impl GpuFxEngine {
     /// This engine's device is the compute host's (`compute::host_device`): `execute_held` leaves a
     /// frame there for a compute job to read (stream-front-on-device). Idempotent.
     pub fn hold_for_compute(&self) {
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.locked();
         if g.held.is_none() {
             g.held = Some(Arc::default());
         }
@@ -1587,7 +1561,7 @@ impl GpuFxEngine {
     /// scheduler-followups D6): its ring bounds what stands in front of that frame and cuts a
     /// lower-class frame while it waits, as a display's ring does. Idempotent.
     pub fn serve_preview(&self) {
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.locked();
         if g.serves.is_none() {
             g.serves = Some(g.arb.register_preview());
         }
@@ -1658,8 +1632,14 @@ impl GpuFxEngine {
                 staged: Default::default(),
                 per_pass: false,
                 pool: TexturePool::new(TRANSIENT_BUDGET),
-                // an export's device keeps what its frames in flight read (memory-ledger D7)
-                upload: UploadCache::new(UPLOAD_BUDGET, export.then_some(KEEP_UPLOAD_FRAMES)),
+                // an export's device keeps what its frames in flight read (memory-ledger D7); a device of
+                // type CPU keeps the uploads of the frame being resolved and the one before (cache-audit
+                // cut 3): its textures are the process's memory, a second copy of the decoded frames, and
+                // the upload a card saves is a memcpy there
+                upload: UploadCache::new(
+                    UPLOAD_BUDGET,
+                    if export { Some(KEEP_UPLOAD_FRAMES) } else if !memo_guard { Some(1) } else { None },
+                ),
                 readback: ReadbackCache::new(READBACK_BUDGET),
                 present_memo: PresentMemo::new(PRESENT_MEMO_BUDGET),
                 keeps_bytes: false,
@@ -1692,7 +1672,7 @@ impl GpuFxEngine {
         // a grant the ledger takes back (an export claimed the room) drops the kept composites past
         // it at once, under the engine's lock, from the claiming thread (memory-ledger D6)
         let weak = Arc::downgrade(&engine);
-        engine.inner.lock().unwrap().present_memo.set_on_shrink(Arc::new(move |_| {
+        engine.inner.lock().unwrap_or_else(|e| e.into_inner()).present_memo.set_on_shrink(Arc::new(move |_| {
             if let Some(e) = weak.upgrade() {
                 let mut g = e.inner.lock().unwrap_or_else(|p| p.into_inner());
                 let Inner { present_memo, pool, .. } = &mut *g;
@@ -1741,7 +1721,7 @@ impl GpuFxEngine {
     /// not wait for it (ui-never-waits).
     #[doc(hidden)]
     pub fn hold(&self) -> impl Sized + '_ {
-        self.inner.lock().unwrap()
+        self.locked()
     }
 
     /// The display target's bytes (premultiplied, as egui samples them): tests only.
@@ -1757,7 +1737,7 @@ impl GpuFxEngine {
     }
 
     fn read_target(&self, pick: impl Fn(&Inner) -> Option<&Tex>) -> Option<Vec<u8>> {
-        let g = self.inner.lock().unwrap();
+        let g = self.locked();
         let t = pick(&g)?;
         let bpr = (t.w * 4).next_multiple_of(256);
         let buf = g.device.create_buffer(&wgpu::BufferDescriptor {
@@ -1803,7 +1783,7 @@ impl GpuFxEngine {
     /// The preview's engine off the window's device (gl-context-holder D5): its bytes-path frames
     /// keep their composites like `present` does, and a kept moment is read back, not composed.
     pub fn keep_composites_for_bytes(&self) {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).keeps_bytes = true;
+        self.locked().keeps_bytes = true;
         self.bytes_preview.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
@@ -1822,8 +1802,13 @@ impl GpuFxEngine {
     pub fn hold_gl_context(&self, release: impl FnOnce()) -> bool {
         // through the gate, as a call of ours stalled under the lock would hold it
         let _gate = self.compiled.gl_gate();
-        let device = self.inner.lock().unwrap_or_else(|e| e.into_inner()).device.clone();
+        let device = self.locked().device.clone();
         crate::holds::hold_gl_context(&device, release)
+    }
+
+    /// The engine's own lock; a wait for it is named in the trace (gpu-waits-named).
+    fn locked(&self) -> std::sync::MutexGuard<'_, Inner> {
+        crate::holds::lock(&self.inner, "engine", Some(self.role()))
     }
 
     /// The display engine's frame waits out a refused reconfigure of the window's surface: wgpu
@@ -1847,37 +1832,37 @@ impl GpuFxEngine {
         let _hold = crate::holds::within(self.role(), "execute_measured");
         let _gate = self.compiled.gl_gate();
         let _frame = self.compiled.frame();
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.locked();
         let complete = inner.guarded(|g| g.execute(plan, out, false, true))?;
         Ok((complete, inner.last_cost))
     }
 
     /// t2313: a uniform write and a new bind group per pass (the form before local-cost-queue).
     pub fn per_pass_binds(&self, on: bool) {
-        self.inner.lock().unwrap().per_pass = on;
+        self.locked().per_pass = on;
     }
 
     /// Bind groups made and reused, and held now (t2314).
     pub fn bind_stats(&self) -> (u64, u64, usize) {
-        let g = self.inner.lock().unwrap();
+        let g = self.locked();
         (g.binds.made, g.binds.reused, g.binds.len())
     }
 
     /// t1766: run every fused pass through the interpreter.
     pub fn interpret_geometry(&self, on: bool) {
-        self.inner.lock().unwrap().geom_interpret = on;
+        self.locked().geom_interpret = on;
     }
 
     /// How point-wise runs run on this engine (fused-pointwise-runs): `Measured` in the product;
     /// `Always`/`Never` for the tests and `kt-cli fuse-cost`.
     pub fn fuse_runs(&self, mode: crate::runs::FuseRuns) {
-        self.inner.lock().unwrap().fuse = mode;
+        self.locked().fuse = mode;
     }
 
     /// The last frame's run pieces by the form it showed: (own passes, fused, own with the trial's
     /// fused pass beside them).
     pub fn last_run_forms(&self) -> (u32, u32, u32) {
-        self.inner.lock().unwrap().last_runs
+        self.locked().last_runs
     }
 
     /// Point-wise run shapes with a warm pass of their own, and how many the trial kept fused and split.
@@ -1901,7 +1886,7 @@ impl GpuFxEngine {
 
     /// t1766: how many program shapes have a pass of their own so far.
     pub fn geometry_shapes(&self) -> usize {
-        self.inner.lock().unwrap().c.shapes_ready()
+        self.locked().c.shapes_ready()
     }
 }
 
@@ -1927,7 +1912,7 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn poll_done(&self) {
-        let device = self.inner.lock().unwrap().device.clone();
+        let device = self.locked().device.clone();
         let _ = device.poll(wgpu::PollType::Poll);
     }
 
@@ -1947,7 +1932,7 @@ impl VideoGpuExec for GpuFxEngine {
             let _gate = self.compiled.gl_gate();
             let _frame = self.compiled.frame();
             let cold = crate::compiled::cold_draws();
-            let mut g = self.inner.lock().unwrap();
+            let mut g = self.locked();
             let (complete, kept, sub) = g.guarded(|g| g.ahead_tex(plan))?;
             g.last_stages.cold = (crate::compiled::cold_draws() - cold) as u32;
             (complete, kept, sub, g.queue.clone())
@@ -1968,7 +1953,7 @@ impl VideoGpuExec for GpuFxEngine {
         let _gate = self.compiled.gl_gate();
         let _frame = self.compiled.frame();
         let cold = crate::compiled::cold_draws();
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.locked();
         let r = g.guarded(|g| g.execute(plan, out, true, false));
         g.last_stages.cold = (crate::compiled::cold_draws() - cold) as u32;
         r
@@ -1979,7 +1964,7 @@ impl VideoGpuExec for GpuFxEngine {
         let _hold = crate::holds::within(self.role(), "execute_once");
         let _gate = self.compiled.gl_gate();
         let _frame = self.compiled.frame();
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.locked();
         // an export's frame: its runs in the settled form (gpu-leftovers D3)
         g.settled = true;
         let r = g.guarded(|g| g.execute(plan, out, false, true));
@@ -1991,7 +1976,7 @@ impl VideoGpuExec for GpuFxEngine {
         let _hold = crate::holds::within(self.role(), "execute_held");
         let _gate = self.compiled.gl_gate();
         let _frame = self.compiled.frame();
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.locked();
         if g.held.is_none() {
             return Ok(HeldOut::Unsupported);
         }
@@ -2007,15 +1992,15 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn last_cost(&self) -> kt_fx::video::FrameCost {
-        self.inner.lock().unwrap().last_cost
+        self.locked().last_cost
     }
 
     fn last_stages(&self) -> GpuStages {
-        self.inner.lock().unwrap().last_stages
+        self.locked().last_stages
     }
 
     fn last_device_ns(&self) -> u64 {
-        let g = self.inner.lock().unwrap();
+        let g = self.locked();
         g.timer.last_frame(g.readback_role())
     }
 
@@ -2029,7 +2014,7 @@ impl VideoGpuExec for GpuFxEngine {
         let _gate = self.compiled.gl_gate();
         let _frame = self.compiled.frame();
         let cold = crate::compiled::cold_draws();
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.locked();
         let r = g.guarded(|g| g.present(plan, o));
         g.last_stages.cold = (crate::compiled::cold_draws() - cold) as u32;
         let target = g.display.as_ref().map(|d| DisplayTarget {
@@ -2046,7 +2031,7 @@ impl VideoGpuExec for GpuFxEngine {
         let _hold = crate::holds::within(self.role(), "wait_presented");
         let _gate = self.compiled.gl_gate();
         let (device, queue, expect) = {
-            let g = self.inner.lock().unwrap();
+            let g = self.locked();
             (g.device.clone(), g.queue.clone(), g.timer.last_frame(Role::Preview))
         };
         // gpu-arbiter D8: a blocking wait would hold the device's lock against the window's present
@@ -2084,7 +2069,7 @@ impl VideoGpuExec for GpuFxEngine {
     fn finish_present(&self) {
         let _hold = crate::holds::within(self.role(), "finish_present");
         let _gate = self.compiled.gl_gate();
-        let device = self.inner.lock().unwrap().device.clone();
+        let device = self.locked().device.clone();
         let _ = crate::wait_all(&device);
     }
 
@@ -2093,7 +2078,7 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn holds(&self, key: u64) -> bool {
-        self.inner.lock().unwrap().present_memo.holds(key)
+        self.locked().present_memo.holds(key)
     }
 
     fn present_kept(&self, key: u64, o: PresentOptions) -> bool {
@@ -2101,7 +2086,7 @@ impl VideoGpuExec for GpuFxEngine {
         let _hold = crate::holds::within(self.role(), "present_kept");
         let _gate = self.compiled.gl_gate();
         let _frame = self.compiled.frame();
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.locked();
         // an error in the replay shows nothing, as a miss does; the next composed frame reports it
         if !g.guarded(|g| Ok(g.present_kept(key, o))).unwrap_or(false) {
             return false;
@@ -2120,7 +2105,7 @@ impl VideoGpuExec for GpuFxEngine {
         self.yield_to_display();
         let _hold = crate::holds::within(self.role(), "read_kept");
         let _gate = self.compiled.gl_gate();
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.locked();
         g.guarded(|g| {
             let Some((tex, w, h)) = g.present_memo.get_texture(key) else { return Ok(None) };
             g.read_kept(&tex, w, h, out)?;
@@ -2133,12 +2118,12 @@ impl VideoGpuExec for GpuFxEngine {
     fn keep(&self, key: u64, w: u32, h: u32, rgba: &[u8]) {
         let _hold = crate::holds::within(self.role(), "keep");
         let _gate = self.compiled.gl_gate();
-        self.inner.lock().unwrap().keep(key, w, h, rgba);
+        self.locked().keep(key, w, h, rgba);
     }
 
     fn keep_loop(&self, moments: Option<usize>) {
         let _gate = self.compiled.gl_gate();
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.locked();
         let Inner { present_memo, pool, .. } = &mut *g;
         present_memo.keep_loop(moments);
         // a smaller want is its own: no hook tells it, it drops what it may no longer hold now
@@ -2151,14 +2136,14 @@ impl VideoGpuExec for GpuFxEngine {
 
     fn readback_depth_yuv(&self, w: u32, h: u32, layout: &kt_engine::yuv::YuvLayout) -> usize {
         let (_, _, th) = yuv_target(layout, w, h);
-        if th > self.inner.lock().unwrap().max_dim { 0 } else { ring_depth_bytes(layout.frame_bytes(w, h) as u64) }
+        if th > self.locked().max_dim { 0 } else { ring_depth_bytes(layout.frame_bytes(w, h) as u64) }
     }
 
     fn submit_yuv(&self, plan: &FramePlan<'_>, layout: &kt_engine::yuv::YuvLayout) -> Result<u64, GpuExecError> {
         self.yield_to_display();
         let _hold = crate::holds::within(self.role(), "submit");
         let _gate = self.compiled.gl_gate();
-        self.inner.lock().unwrap().guarded(|g| g.submit_as(plan, Some(layout)))
+        self.locked().guarded(|g| g.submit_as(plan, Some(layout)))
     }
 
     /// A frame worker's or the serial export's frame as planes made on this device (export-host-copy
@@ -2170,7 +2155,7 @@ impl VideoGpuExec for GpuFxEngine {
         layout: &kt_engine::yuv::YuvLayout,
         out: &mut Vec<u8>,
     ) -> Result<bool, GpuExecError> {
-        let (idle, max_dim) = { let g = self.inner.lock().unwrap(); (g.in_flight.is_empty(), g.max_dim) };
+        let (idle, max_dim) = { let g = self.locked(); (g.in_flight.is_empty(), g.max_dim) };
         let (_, _, th) = yuv_target(layout, plan.out_w, plan.out_h);
         if !idle || th > max_dim {
             let mut rgba = Vec::new();
@@ -2189,20 +2174,20 @@ impl VideoGpuExec for GpuFxEngine {
     fn done(&self, ticket: u64) -> bool {
         let _hold = crate::holds::within(self.role(), "done");
         let _gate = self.compiled.gl_gate();
-        self.inner.lock().unwrap().done(ticket)
+        self.locked().done(ticket)
     }
 
     fn submit(&self, plan: &FramePlan<'_>) -> Result<u64, GpuExecError> {
         self.yield_to_display();
         let _hold = crate::holds::within(self.role(), "submit");
         let _gate = self.compiled.gl_gate();
-        self.inner.lock().unwrap().guarded(|g| g.submit(plan))
+        self.locked().guarded(|g| g.submit(plan))
     }
 
     fn collect(&self, ticket: u64, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
         let _hold = crate::holds::within(self.role(), "collect");
         let _gate = self.compiled.gl_gate();
-        self.inner.lock().unwrap().guarded(|g| g.collect(ticket, out))
+        self.locked().guarded(|g| g.collect(ticket, out))
     }
 }
 
@@ -2415,7 +2400,10 @@ impl Inner {
         if r.mapped.lock().unwrap().is_some() {
             return true;
         }
-        let _ = self.device.poll(wgpu::PollType::Poll);
+        {
+            let _h = crate::holds::hold(self.role(), "poll");
+            let _ = self.device.poll(wgpu::PollType::Poll);
+        }
         self.ring[slot].as_ref().is_none_or(|r| r.mapped.lock().unwrap().is_some())
     }
 
@@ -2984,12 +2972,10 @@ impl Inner {
         // effect cells share the device, and "everything submitted" waited for their frames too
         let waited = {
             let _h = crate::holds::hold(self.role(), "wait");
-            crate::wait_for(&self.device, sub)
+            crate::wait_for(&self.device, sub).is_ok() && matches!(rx.recv(), Ok(Ok(())))
         };
-        waited.map_err(|_| GpuExecError::DeviceLost)?;
-        match rx.recv() {
-            Ok(Ok(())) => {}
-            _ => return Err(GpuExecError::DeviceLost),
+        if !waited {
+            return Err(GpuExecError::DeviceLost);
         }
         self.last_stages.wait_ns = mark.elapsed().as_nanos() as u64;
         let mark = Instant::now();
@@ -3010,7 +2996,7 @@ impl Inner {
         match key.filter(|_| same_forms) {
             // kept whole on the device for the next lap, as `present` keeps it
             Some(k) if self.keeps_bytes && complete => self.last_stages.stored = self.memo_keep(k, result),
-            Some(k) if !self.keeps_bytes => {
+            Some(k) if fills_readback(self.keeps_bytes, self.surface, !self.memo_guard) => {
                 self.pool.release(result);
                 self.readback.insert(k, out.clone(), complete);
             }
@@ -3481,6 +3467,7 @@ impl Inner {
 
     /// The timestamps that came back, the run trials' samples handed to the device's shapes.
     fn harvest(&mut self) {
+        let _h = crate::holds::hold(self.role(), "harvest");
         for s in self.timer.harvest(&self.device) {
             self.c.note_run(s);
         }
@@ -3723,8 +3710,13 @@ impl Inner {
         let mut snap: Option<(wgpu::TextureView, u32, u32, bool)> = None;
         // the dry side of an effect slot's masks (shape-masks), kept apart from the morpher's
         let mut msnap: Option<(wgpu::TextureView, u32, u32)> = None;
-        // the graph's held frames (fx-graph-dag D3): a held texture stays out of the pool to the end
+        // the graph's held frames (fx-graph-dag D3): a register's texture stays out of the pool until the
+        // register takes another value — its last reader is encoded by then (`plan::lower` frees a register
+        // after it), so a layer holds at most `MAX_HELD` of them
         let mut held: Vec<Option<(wgpu::TextureView, u32, u32)>> = Vec::new();
+        let mut held_tex: Vec<Option<Tex>> = Vec::new();
+        // a held frame stands in two registers (a slot that made no pass): no early release any more
+        let mut shared = false;
         // the reads' results (D2), encoded first and kept to the end of the chain
         let mut read_views: Vec<(wgpu::TextureView, u32, u32)> = Vec::with_capacity(chain.reads.len());
         for r in &chain.reads {
@@ -3745,11 +3737,21 @@ impl Inner {
                 FxOp::Hold { reg } => {
                     if held.len() <= *reg {
                         held.resize(*reg + 1, None);
+                        held_tex.resize_with(*reg + 1, || None);
+                    }
+                    // a dry side still open may be the old value's own view: it waits for the chain's end
+                    if let Some(old) = held_tex[*reg].take() {
+                        if snap.is_some() || msnap.is_some() || shared {
+                            retired.push(old);
+                        } else {
+                            self.pool.release(old);
+                        }
                     }
                     if let Some(t) = owned.take() {
                         held[*reg] = Some((t.view.clone(), w, h));
-                        retired.push(t);
+                        held_tex[*reg] = Some(t);
                     } else {
+                        shared |= held.iter().flatten().any(|(v, ..)| *v == view);
                         held[*reg] = Some((view.clone(), w, h));
                     }
                 }
@@ -4143,6 +4145,7 @@ impl Inner {
         if let Some(t) = owned {
             retired.push(t);
         }
+        retired.extend(held_tex.into_iter().flatten());
         (view, retired)
     }
 
@@ -4301,169 +4304,10 @@ impl Inner {
     }
 }
 
-/// ReadbackCache key: the full description of the plan. The frame is addressed by the SERIAL
-/// NUMBER of the content (R.53, item 409), not by the pair (source, cache_idx):
-/// by address the memo would return the old composite after an edit of the generator’s parameters
-/// with a still cursor.
-fn put_lead(h: &mut xxhash_rust::xxh3::Xxh3, lead: &Option<kt_fx::conform::LeadCtx>) {
-    match lead {
-        None => h.update(&[0u8]),
-        Some(l) => {
-            h.update(&[1u8, l.rule as u8]);
-            // the raster moves the "as is" frame (still-image-frame-rule): it is part of the plan
-            for v in [l.view, l.raster] {
-                match v {
-                    None => h.update(&[0u8]),
-                    Some((w, hh)) => {
-                        h.update(&[1u8]);
-                        h.update(&w.to_bits().to_le_bytes());
-                        h.update(&hh.to_bits().to_le_bytes());
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// The memo key of a plan: its hash and the run forms' revision (gpu-leftovers D2, found-defects 510):
+/// The memo key of a plan: the moment's one key (kt-engine `moment_key`) and the run forms' revision (gpu-leftovers D2, found-defects 510):
 /// a composite kept while a run ran in one form is not served once it runs in the other.
 fn plan_key(plan: &FramePlan<'_>) -> u64 {
-    plan_hash(plan) ^ crate::compiled::forms_revision().wrapping_mul(0x9E37_79B9_7F4A_7C15)
-}
-
-fn plan_hash(plan: &FramePlan<'_>) -> u64 {
-    fn put_src(h: &mut Xxh3, s: &LayerSrc<'_>) {
-        h.update(&s.source.0.to_le_bytes());
-        h.update(&s.cache_idx.to_le_bytes());
-        h.update(&s.content.to_le_bytes());
-        // frame blending (R.37 S5) goes INTO THE KEY: the same two frames with another
-        // weight give a DIFFERENT picture, and without this ReadbackCache would return
-        // someone else’s mix (the same reason as put_mix)
-        match &s.blend {
-            None => h.update(&[0u8]),
-            Some(b) => {
-                h.update(&[1u8]);
-                h.update(&b.cache_idx.to_le_bytes());
-                h.update(&b.k.to_le_bytes());
-                h.update(&b.content.to_le_bytes());
-            }
-        }
-        h.update(&s.fx_hash.to_le_bytes());
-        // the chain's wiring (fx-graph-dag D3): the same slots wired otherwise are another
-        // picture; a line adds nothing, so its keys stay
-        if !s.fx_in.is_empty() {
-            h.update(format!("{:?}", s.fx_in).as_bytes());
-        }
-        // each read is a layer of its own frame (fx-graph-dag D2): its key joins the layer's
-        for (slot, r) in &s.reads {
-            h.update(&(*slot as u64).to_le_bytes());
-            put_src(h, r);
-        }
-        // the masks evaluated at THIS frame (shape-masks): an animated mask on a still frame
-        // must not return another frame's composite; maskless layers add nothing
-        if !s.masks.is_empty() {
-            // the Debug text streamed into the hash (frame-work-by-edit, row 364): the same digest
-            // as hashing the formatted string, with no string built per masked layer per frame
-            struct Into<'h>(&'h mut Xxh3);
-            impl std::fmt::Write for Into<'_> {
-                fn write_str(&mut self, s: &str) -> std::fmt::Result {
-                    self.0.update(s.as_bytes());
-                    Ok(())
-                }
-            }
-            let _ = std::fmt::Write::write_fmt(&mut Into(h), format_args!("{:?}", s.masks));
-        }
-        // decode scale step (R.46, item 318): a frame of the same key in another
-        // size gives another picture; the plan MUST differ
-        h.update(&s.src_scale.to_le_bytes());
-        h.update(&s.u.to_bits().to_le_bytes());
-        put_cam3d(h, &s.cam3d);
-        // context of the leading “Geometry” node (R.62): the same frame with the same
-        // chain but another rule/view gives another picture
-        put_lead(h, &s.lead);
-        match &s.input {
-            kt_engine::video_plan::LayerInput::Frame(None) => h.update(&[0u8]),
-            kt_engine::video_plan::LayerInput::Frame(Some(f)) => {
-                h.update(&[1u8, f.has_alpha as u8]);
-                h.update(&f.width.to_le_bytes());
-                h.update(&f.height.to_le_bytes());
-            }
-            // the frame it stands for (stream-picture-stays D3): the same key either way
-            kt_engine::video_plan::LayerInput::Held(hl) => {
-                h.update(&[1u8, 0u8]);
-                h.update(&hl.out.w.to_le_bytes());
-                h.update(&hl.out.h.to_le_bytes());
-            }
-            // The subtree goes ENTIRELY INTO THE KEY (R.50): a reel has neither a frame nor a
-            // `cache_idx` by which it could be told apart, while
-            // ReadbackCache MUST distinguish different sub-composites.
-            kt_engine::video_plan::LayerInput::Nest(n) => {
-                h.update(&[2u8]);
-                h.update(&n.seq.0.to_le_bytes());
-                // content frame mode (R.56, item 448): the same reel at the
-                // same time in “blend” and in “nearest” gives DIFFERENT
-                // pictures, and the key, not luck, MUST tell them apart
-                h.update(&[n.blend as u8]);
-                // REEL tier (R.58, item 459): with it, above the chain input
-                // a fit is placed before the chain, and the bytes differ
-                h.update(&n.nest_scale.to_le_bytes());
-                h.update(&n.content_hash.to_le_bytes());
-                h.update(&n.inner_t.0.to_le_bytes());
-                put_plan(h, &n.plan);
-            }
-        }
-    }
-    /// Transition parameters go INTO THE KEY: without them ReadbackCache would return a frame of
-    /// another transition kind (R.33 S4). The ext scalars of volumetric kinds (R.51,
-    /// `trans_ext`) are NOT included here and must not be: this is a deterministic
-    /// function of the already-hashed (kind, p, k), so there is nothing “missing” here. A plugin
-    /// kind is hashed by its id, not by its mode: the mode is a function of the registry's order (D12).
-    fn put_mix(h: &mut Xxh3, m: &TransMix) {
-        match kt_engine::transitions::plugin_id(m.mode) {
-            Some(id) => {
-                h.update(&[1u8]);
-                h.update(id.as_bytes());
-                h.update(&[0u8]);
-            }
-            None => h.update(&m.mode.to_le_bytes()),
-        }
-        for v in m.p {
-            h.update(&v.to_bits().to_le_bytes());
-        }
-    }
-    fn put_plan(h: &mut Xxh3, plan: &FramePlan<'_>) {
-        h.update(&plan.t.0.to_le_bytes());
-        h.update(&plan.out_w.to_le_bytes());
-        h.update(&plan.out_h.to_le_bytes());
-        for layer in &plan.layers {
-            match layer {
-                PlanLayer::One { src, alpha_k, scale_alpha, fade } => {
-                    h.update(&[1u8, *scale_alpha as u8]);
-                    h.update(&alpha_k.to_le_bytes());
-                    match fade {
-                        None => h.update(&[0u8]),
-                        Some(f) => {
-                            h.update(&[1u8, f.incoming as u8]);
-                            h.update(&f.k.to_le_bytes());
-                            put_mix(h, &f.mix);
-                        }
-                    }
-                    put_src(h, src);
-                }
-                PlanLayer::Dissolve { a, b, k, alpha_k, mix } => {
-                    h.update(&[2u8]);
-                    h.update(&k.to_le_bytes());
-                    h.update(&alpha_k.to_le_bytes());
-                    put_mix(h, mix);
-                    put_src(h, a);
-                    put_src(h, b);
-                }
-            }
-        }
-    }
-    let mut h = Xxh3::new();
-    put_plan(&mut h, plan);
-    h.digest()
+    kt_engine::moment_key::moment_key(plan) ^ crate::compiled::forms_revision().wrapping_mul(0x9E37_79B9_7F4A_7C15)
 }
 
 /// Held stream pictures an engine converted on its device, and read back from another (tests,
@@ -4552,3 +4396,27 @@ const COPY3: &str = "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n\
     if id.x < u.x { x[id.x] = a[id.x]; }\n\
     if id.x < u.y { y[id.x] = b[id.x]; }\n\
     if id.x < u.z { z[id.x] = c[id.x]; }\n}\n";
+
+/// Whether a read-back frame goes into the read-back memo (cache-audit cut 4): not on an engine that
+/// keeps its bytes-path composites on the device (`keeps_bytes`, the present memo holds them), and not
+/// on the window's engine on a card, whose present memo holds the same moments and whose read-backs
+/// are rare (an eyedropper, a meter); a CPU device's window engine, and every other engine — reel
+/// strips, posters, cells, the slow route — keep it.
+pub(crate) fn fills_readback(keeps_bytes: bool, window: bool, cpu: bool) -> bool {
+    !keeps_bytes && !(window && !cpu)
+}
+
+#[cfg(test)]
+mod readback_tests {
+    /// t3607 (cache-audit cut 4): the window's engine on a card does not fill the read-back memo; on a
+    /// CPU device it does, every other engine does, and an engine keeping its bytes on the device never.
+    #[test]
+    fn t3607_the_window_on_a_card_fills_no_readback_memo() {
+        use super::fills_readback;
+        assert!(!fills_readback(false, true, false), "the window's engine on a card");
+        assert!(fills_readback(false, true, true), "the window's engine on a CPU device");
+        assert!(fills_readback(false, false, false), "an offline engine on a card");
+        assert!(fills_readback(false, false, true), "an offline engine on a CPU device");
+        assert!(!fills_readback(true, false, true), "the bytes path keeping its composites");
+    }
+}

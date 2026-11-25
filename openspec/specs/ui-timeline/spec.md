@@ -524,7 +524,7 @@ interface, space does not lead to pause until I close the effect window".
 
 ### Requirement: Thumbnails, sidecar and the event preview compute the same map as render
 Scrolling/zooming the timeline MUST NOT generate decode requests (invariant 8):
-waveforms come from the peak pyramid, thumbnails from the sidecar DB; while there is no index, placeholders.
+waveforms come from the peak pyramid, thumbnails from the media index; while there is no index, placeholders.
 Everything that may fail in the worker SHALL publish a FAILURE (a negative
 cache); the thumbnail sources are LRU. Thumbnail keys are quantized FROM ZERO OF THE FILE (a shared
 cache bin ↔ timeline). The translation "event tick → source frame" SHALL be one
@@ -550,7 +550,7 @@ reversed clip drew something other than what played.
 - **TEST** t549 (`src/apps/kt-app/src/thumbs.rs`), t249 (`src/apps/kt-app/src/layout_tests.rs`)
 
 #### Scenario: Generator thumbnail without a file
-- **WHEN** a `gen:` source without a file, with a sidecar DB and without one
+- **WHEN** a `gen:` source without a file, with a cache folder and without one
 - **THEN** the service returns the look (video without audio), zero duration and a real thumbnail of the given colour
 - **TEST** t476 (`src/apps/kt-app/src/thumbs.rs`)
 
@@ -1604,14 +1604,14 @@ the whole edit in view; with the effects window open, 280 ms.
 - **TEST** t1912 (`src/apps/kt-app/src/frame_cost_tests.rs`)
 
 #### Scenario: A frame's processor time does not follow the project
-- **WHEN** ten frames run with 20000 events outside the view, or 1000 files in the bin, against a small project
-- **THEN** they cost the UI thread less than one and a half times as much
+- **WHEN** ten frames run with 200000 events outside the view, or 4000 files in the bin, against a small project
+- **THEN** they cost the UI thread less than three times as much with the events and less than five with the files (bounds past a loaded machine's noise: found-defects 176)
 - **PATH** open a long edit with hundreds of files in the bin → move the mouse along a track, then over the bin → Diagnostics → Performance reads the same "UI frame" at the start of the edit, at its end and zoomed out
 - **TEST** t1913 (`src/apps/kt-app/src/frame_cost_tests.rs`)
 
 #### Scenario: An open window does not follow the project
-- **WHEN** the effects and the project settings windows are open over 20000 events outside the view
-- **THEN** ten frames cost the UI thread less than one and a half times what they cost over a small project
+- **WHEN** the effects and the project settings windows are open over 200000 events outside the view
+- **THEN** ten frames cost the UI thread less than three times what they cost over a small project
 - **PATH** double click an event → its effects window opens → move the mouse over it and over the preview → the program draws as fast as without the window
 - **TEST** t1914 (`src/apps/kt-app/src/frame_cost_tests.rs`)
 
@@ -1862,3 +1862,59 @@ Why: `v26.10` MW1 and his answer U9 of kkt-26.11.18b: "целиком, моме�
 - **THEN** the ghost's width is the file's length on the view's scale; the carried card's strip shows the pressed moment's timecode; the three landing texts exist in all five catalogs and name Alt
 - **PATH** carry the card over V1 → the green ghost is as long as the file, a white tick at the mouse
 - **TEST** t3119 (`src/apps/kt-app/src/layout_tests.rs`)
+
+### Requirement: Nothing of the main window is painted over a tool window
+The glow of the preview and the meters, the resting status line and the project's title with its crumbs SHALL be painted
+in one layer above the panels and below every window; a layer of the `Foreground` or `Tooltip` order SHALL exist only
+for a use listed with its reason (a live status line among them: it may answer a control of the covering window).
+Why: the owner, v26.10 W1 and T9 — the glow and the title showed through an opaque window, the glow only partly.
+
+#### Scenario: A window over the meters and the title shows neither
+- **WHEN** the effects window is moved over the meters column and to the top edge over the title, with the glow on
+- **THEN** inside the window's rectangle no pixel of the glow or the title differs from the window's own background; outside it the glow is unchanged
+- **PATH** open the effects window → drag its title over the meters → the window is opaque, the meters' glow ends at its edge → drag it to the top over the project title → the title does not show through
+- **TEST** t3936 (`src/apps/kt-app/src/layout_tests.rs`), t988 `no_teaching_layer_over_the_ui` (`src/apps/kt-app/src/reach_tests.rs`), live `window_chrome`
+
+### Requirement: A window started maximized drags at a normal size
+A drag of a maximized window by any of its strips (the header, the top, the window buttons' row, the bottom toolbar)
+SHALL first restore it and then move it, under the pointer; a window that has not been normal in this run SHALL be
+given its remembered normal size (kept between runs) or, when it had none, 80 % of the monitor; the restore button and
+the double click SHALL do the same; a window that comes up over the whole monitor without being maximized SHALL be
+given its normal size and maximized in truth.
+Why: the owner, v26.10 T5 — "оно начнет перемещаться в том же размере".
+
+#### Scenario: Started maximized, dragged
+- **WHEN** the program starts maximized with no remembered size and its title strip is dragged; then it is maximized again and dragged
+- **THEN** both drags move a window of 80 % of the monitor under the pointer
+- **PATH** start the program maximized → drag the toolbar's empty space → the window becomes smaller and follows the pointer → double-click to maximize → drag again → the same normal size
+- **TEST** t3937 (`src/apps/kt-app/src/layout_tests.rs`), live `window_chrome`
+
+### Requirement: A narrow toolbar scrolls with the wheel
+Over the toolbar row the wheel SHALL move the row sideways when it does not fit, the transport and the timecode standing,
+with the "more" menu holding what is not wholly in view; a window wide enough SHALL show the row unmoved.
+Why: the owner, v26.10 U10.
+
+#### Scenario: Wheel over a narrow toolbar
+- **WHEN** the window is 900 points wide and the wheel turns over the toolbar
+- **THEN** the hidden groups slide into view; the "more" menu lists only what is still outside
+- **PATH** narrow the window → hover the toolbar → turn the wheel → the row slides left, Render and Search come into view
+- **TEST** t3938 (`src/apps/kt-app/src/window_fill_tests.rs`), live `window_chrome`
+
+### Requirement: A window the window manager never took is asked for again
+On X11 the program SHALL look for its own window until a window manager has taken it, and SHALL ask to map
+it again while it is unmapped and no `WM_STATE` stands on it, at most once a second for two minutes; the
+journal SHALL say how many times it asked. A window on screen, minimized or managed is never asked for.
+Why: found-defects 830, 954 — openbox drops a map request that comes while it starts, and the program then
+ran for ten minutes with no window on screen.
+
+#### Scenario: What counts as lost
+- **WHEN** the window is missing, mapped, unmapped but managed, or unmapped and unmanaged on the root
+- **THEN** only the last is lost
+- **PATH** minimize Kinetren's window from the panel → it stays minimized: the program asks for it no more
+- **TEST** t3726 (`src/apps/kt-app/src/map_watch.rs`)
+
+#### Scenario: A window manager that drops the first request
+- **WHEN** the window manager ignores the program's first map request
+- **PATH** start Kinetren while the desktop's window manager is still starting → within a second or two the window is on screen
+- **THEN** the window comes on screen and the journal names the asks
+- **TEST** live `map_lost` (`src/scripts/live/map_lost.py`)

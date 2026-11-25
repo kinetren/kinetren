@@ -106,6 +106,9 @@ single-slot presets, replacing the whole effect (values and curves) in one undo 
 any edit, as Vegas does. A CHAIN preset is not a replacement: it joins the existing chain on the graph, its nodes
 arrive selected, and the extra ones are deleted or moved with the mouse (the owner, A4).
 
+Change `fx-preset-change`, implementation-ready 2026-11-24 on graph v2d: the insertion and its checks are the graph's own
+(`node_editor::perform`); the change adds the form's Preset menu and a selection of several nodes.
+
 ## Sources
 
 - `docs/ktprompts/kkt-26.11.07.txt` line 12; registry `kkt-26.11.07-index.md` E6.

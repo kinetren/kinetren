@@ -50,6 +50,15 @@ pub struct GeneratorSource {
     cache: Option<(Quality, Box<[u8]>)>,
 }
 
+/// A generator's values and what it hears, as one number: the source's identity and the renderer's
+/// `src_rev` of its layer (durable-moment-key D1).
+pub fn gen_rev(kind: &Option<kt_model::GeneratorKind>, auto: &Vec<kt_model::ParamCurve>, heard: u64) -> u64 {
+    // a kind that hears nothing keeps its former revision, byte for byte
+    let text = format!("{kind:?}|{auto:?}");
+    let text = if heard == 0 { text } else { format!("{text}|{heard}") };
+    xxhash_rust::xxh3::xxh3_64(text.as_bytes())
+}
+
 impl GeneratorSource {
     pub fn new(kind: GeneratorKind) -> GeneratorSource {
         GeneratorSource::from_state(GenState::new(kind))
@@ -368,6 +377,11 @@ impl MediaSource for GeneratorSource {
     /// passport would change (SMPTE with tone enabled becomes audible media, which is
     /// already another set of clips) or the path cannot be
     /// parsed.
+    fn identity(&self) -> Option<crate::SourceIdent> {
+        let key = gen_rev(&Some(self.state.kind.clone()), &self.state.auto, self.state.feed.key());
+        Some(crate::SourceIdent { key, durable: true })
+    }
+
     fn retune(&mut self, path: &str) -> bool {
         let Some(kind) = kt_model::parse_gen_path(path) else { return false };
         self.retune_gen(&kt_model::GenState::new(kind))

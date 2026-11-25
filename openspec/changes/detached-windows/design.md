@@ -2,6 +2,10 @@
 
 > DESIGN ONLY, revision 1 (2026-11-20), base `ccae9d10`. Q1–Q2 in `proposal.md`; defaults recommended.
 
+> Re-read 2026-11-25 against `fc60a5d9`: 28 windows in the registry (14 `Tool`, 12 `Dialog` with the two modals, 2 `Progress`); "detachable" is a flag of the registry row, not of `Kind` (project settings is a
+> `Dialog` and the render's progress a `Progress`, both worth a second monitor). Q1 a/b/c change that flag's rows only. `ctx.show_viewport_immediate` is used by the preview (`app.rs:2068`); the
+> windows are drawn after the panels in one list (`draw_fx_editors` …), so a detached body keeps its place in it.
+
 ## Context
 
 - `window_shell::Shell` (`src/apps/kt-app/src/window_shell.rs`) is the only way to a window (t921); its `Kind`

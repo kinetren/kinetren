@@ -15,7 +15,7 @@ pub const KT_NS: &str = "kt";
 /// it is v=1, byte-stable, and opens in old builds.
 /// One Pan3d does NOT bump the version: an unknown effect
 /// degrades into foreign-passthrough.
-pub const KT_META_VERSION: u32 = 18;
+pub const KT_META_VERSION: u32 = 19;
 pub const KT_META_V1: u32 = 1;
 /// Cameras and camera tracks (R.29).
 pub const KT_META_V2: u32 = 2;
@@ -99,6 +99,9 @@ pub const KT_META_V17: u32 = 17;
 /// fx-graph-dag: a chain's wiring (`in` in an effect's envelope) or a Merge (`kt:merge`). An old
 /// build would run the arms one after another and save them as a line. Raised ONLY by content.
 pub const KT_META_V18: u32 = 18;
+/// The document's loudness target and program stage (loudness-norms). An old build would drop the stage
+/// on its next export and play another mix.
+pub const KT_META_V19: u32 = 19;
 
 // ---- typed metadata.kt envelopes (otio-types approach) -----------------
 // Structurally small things get OWN types (model evolution does not silently move the file schema);
@@ -189,6 +192,11 @@ pub struct KtTimelineMeta {
     /// instance — but the model's content must not be silently lost.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub published: Vec<kt_model::PublishedParam>,
+    /// The loudness the document is mixed for and the stage on its master (loudness-norms, v19).
+    #[serde(default, skip_serializing_if = "kt_model::LoudnessTarget::is_default")]
+    pub loudness: kt_model::LoudnessTarget,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<kt_model::ProgramStage>,
     /// Forward mercy toward future versions (R.29): unknown kt fields
     /// of v3+ are carried through passthrough — the next additions will not require
     /// a hard refusal, if the old reader loses none of them.

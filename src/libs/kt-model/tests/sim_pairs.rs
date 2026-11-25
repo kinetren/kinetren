@@ -529,7 +529,8 @@ fn t3222_a_branching_layer_over_a_branching_event() {
 /// t3223 (fx-graph-dag D6; capabilities `morpher`, `audio-fx`): a device's halves stay mirrored in
 /// presence and values while each lane keeps its own wiring; removing the SOUND half takes the
 /// picture half too, and the picture chain's Merge that read it reads the half's own input instead.
-/// (A sound chain takes no wiring until the sound graph, the owner's Q1 a: it is refused.)
+/// A sound chain takes wiring since the sound graph (v2c; until then it was refused, the owner's
+/// Q1 a), but no Matte: the sound has no coverage to make.
 #[test]
 fn t3223_pairs_mirror_presence_not_wires() {
     use fx_graph::FxIn;
@@ -556,9 +557,17 @@ fn t3223_pairs_mirror_presence_not_wires() {
     let p = patch_of(&m);
     assert_eq!(chain_ids(&p.video_fx), ["blur", "merge"]);
     assert_eq!(p.video_in, vec![Default::default(), merge_of(FxIn::Prev, FxIn::Source)], "the Merge was not re-wired");
-    // wiring on the sound chain is refused until the sound graph
+    // wiring on the sound chain is accepted since the sound graph (v2c)
     let mut ev = m.project().morphers[0].clone();
     ev.patch.audio_fx = vec![FxInstance::plugin("gain").unwrap(), FxInstance::plugin("gain").unwrap()];
     ev.patch.audio_in = vec![Default::default(), arm(FxIn::Source)];
-    assert!(m.apply(Command::SetMorpher(ev)).is_err(), "a sound branch was accepted before the sound graph");
+    assert!(m.apply(Command::SetMorpher(ev.clone())).is_ok(), "a sound branch was refused");
+    // …but a Matte on it is not: the sound has no coverage
+    ev.patch.audio_fx.push(merge_fx());
+    ev.patch.audio_in.push(fx_graph::SlotInputs {
+        main: FxIn::Slot(0),
+        second: Some(FxIn::Slot(1)),
+        matte: Some(fx_graph::Matte { from: FxIn::Source, by: fx_graph::MatteFrom::Luma }),
+    });
+    assert!(m.apply(Command::SetMorpher(ev)).is_err(), "a Matte on the sound was accepted");
 }

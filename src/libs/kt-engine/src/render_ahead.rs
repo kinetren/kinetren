@@ -266,7 +266,7 @@ fn pump(ra: &RenderAhead, parts: &PreviewParts, region: &Mutex<Option<(i64, i64)
     }
     let video = built.video.clone();
     let q = parts.quality();
-    let versions = parts.versions();
+    let versions = parts.kept_state(q);
     let step = video.grid.frame_step().max(1);
     let head = parts.transport.playhead();
     let region = *region.lock().unwrap();
@@ -365,7 +365,7 @@ fn pump(ra: &RenderAhead, parts: &PreviewParts, region: &Mutex<Option<(i64, i64)
         if let Some(k) = display.present_key(&video.probe_plan(&parts.cache, Tick(t), q))
             && display.holds(k)
         {
-            parts.note_kept(Tick(t), k);
+            parts.note_kept(Tick(t), k, q);
             continue;
         }
         // room for one more in flight: wait for the oldest, polling the device without blocking
@@ -413,7 +413,7 @@ fn pump(ra: &RenderAhead, parts: &PreviewParts, region: &Mutex<Option<(i64, i64)
                 st.kept += 1;
                 st.waiting.remove(&t);
                 drop(st);
-                parts.note_kept(Tick(t), k);
+                parts.note_kept(Tick(t), k, q);
                 let mut st = ra.st.lock().unwrap();
                 match done {
                     Some(done) => st.flights.push_back(Flight { done, at }),

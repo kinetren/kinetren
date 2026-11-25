@@ -689,6 +689,24 @@ processor clocks passed it.
   `thread_ns()` outside the list, and every entry of the list still exists
 - **TEST** t1671 (`src/apps/kt-cli/tests/dist_guard.rs`); t1913, t1914 (`src/apps/kt-app/src/frame_cost_tests.rs`)
 
+#### Scenario: A test does not count frames for a condition
+- **WHEN** kt-app's sources are scanned for a counted loop that steps the harness and leaves when its condition holds
+- **THEN** each is in the list of loops whose steps are the test's own gestures or egui's animation, and the list names none that is gone; what another thread makes true is waited for by `step_until` under `kt_time::test_deadline()`
+- **TEST** t3737 (`src/apps/kt-app/src/reach_tests.rs`)
+
+### Requirement: kt-app's tests pass as threads of one process
+`cargo test -p kt-app` runs the crate's tests as threads of one process, nextest each in its own; they SHALL be green both
+ways. A test that reads or drains what a process has one of — the scheduler's pause mask, the work counters, the compute host, the poster
+service, the cache notices, the processor time of a frame — SHALL either read its own program's share or run in a process of
+its own (`alone::own_process!`: outside nextest the test runs again as a child process and the thread brings its verdict).
+Why: a plain `cargo test -p kt-app` was red (7 red, 5 unfinished) and ended only by a kill: one panicked composite poisoned
+the shared executor and every later test waited ten minutes per frame; the rest read each other's votes and counters.
+
+#### Scenario: One process
+- **WHEN** the kt-app tests run as threads of one process
+- **THEN** every one passes
+- **TEST** t2453, t2495, t2330, t2332, t2333 (`src/apps/kt-app/src/ui_wait_tests.rs`), t680, t2903, t3842 (`src/apps/kt-app/src/layout_tests.rs`), t985, t986, t3843
+
 ### Requirement: A test waits for the code's last designed step, not for a flag before it
 A test that asserts a state the code reaches after a designed step (a thread's pass after a close,
 a lane releasing its state after it reports idle, a hold proven by a frame past a widened threshold)

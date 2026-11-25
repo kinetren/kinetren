@@ -412,6 +412,12 @@ transition windows, and on another system it grew wider by itself.
 - **PATH** double-click an event → its FX window → double-click the camera block → the camera window on top of it → Esc → only the FX window is left → open the morpher window, click the FX window's title → FX is on top → Esc → only the morpher window is left
 - **TEST** t920 (`src/apps/kt-app/src/reach_tests.rs`)
 
+#### Scenario: Two presses of Esc in one frame close two windows
+- **WHEN** the FX window is open with the morpher window over it and a slow frame reads two presses of Esc at once
+- **THEN** both windows close: each press closes the window that is on top for it
+- **PATH** double-click an event → its FX window → open the morpher layer's window over it → press Esc twice quickly while the program is busy → both windows are gone, the timeline is free
+- **TEST** t3291, t3241 (two frames running) (`src/apps/kt-app/src/reach_tests.rs`), live scenario `node_graph`
+
 #### Scenario: The title cross and Esc are one path
 - **WHEN** each openable window of the registry that has a title cross is opened twice in the same scene; once it is closed by a click on the cross, once by Esc; the model, the undo stack, the clipboard and the focus are compared
 - **THEN** both closings leave the same model, the same undo depth and the same focus state; every window of the kind "tool window" and "dialog" has the cross in the same place of its title row and no collapse arrow, every "progress" window has no cross, as its kind declares
@@ -485,6 +491,12 @@ item "Import .ktproj…" was an extra door with the same meaning.
 - **THEN** the item is reachable and named "OpenTimelineIO…"; the exchange file is written: `Timeline.1`, two `Stack`s with non-empty bodies, the foreign fields are returned; the project file is byte-for-byte as before, the path and the asterisk are untouched; the notification names the export path; "Open" rejects this file
 - **PATH** File → Export → OpenTimelineIO… → save dialog → file name → notification "exported: …", the asterisk in the title as it was
 - **TEST** t820 (`src/apps/kt-app/src/reach_tests.rs`), live scenario `src/scripts/live/export_otio.py`
+
+#### Scenario: An export waits for no disk
+- **WHEN** an export is asked on a disk that stands, another project is opened meanwhile, the disk answers; then an export onto a name that is a folder, and one right before the program is closed
+- **THEN** no frame makes a blocking call; the notice comes after the file is there; the second warns; the close waits for the third, whose file is there
+- **PATH** File → Export → OpenTimelineIO… on a disk that stands → the menu closes, the window goes on drawing → the disk answers → "exported: <path>"
+- **TEST** t3736 (`src/apps/kt-app/src/disk_tests.rs`)
 
 #### Scenario: Three files on the window — three outcomes
 - **WHEN** `film.kt`, `film.otio`, `film.ktproj` are dropped onto the window in turn
@@ -1703,7 +1715,7 @@ selected event (a solid colour on a video track, a tone on an audio track), at t
 With nothing selected it SHALL create a solid colour on video track 1. Its window SHALL open, and the
 kind SHALL be changed in the window's gallery. A kind change, from the gallery or from the bin card,
 SHALL keep the generator's sound pair in step in the same history step: a kind that sounds beside its
-picture SHALL have its linked sound event on audio track 1, and a kind with no sound SHALL have none.
+picture SHALL have its linked sound event on audio track 1, and a kind with no sound SHALL have none. A value edit that switches the generator's sound on or off (SMPTE's tone, Sync flash's beep) SHALL do the same in its own history step for the edited event alone, whose new sound event SHALL carry the edited values (found-defects 1000); "apply to all" and a kind change SHALL do it for every event of the generator in every reel (found-defects 1001), and the window's Cancel SHALL take it back.
 Why: the owner, kkt-26.11.20 line 4 (A1): "Один пункт, по дорожке (Recommended)".
 
 #### Scenario: Edit and the bin by the selected track
@@ -1717,6 +1729,18 @@ Why: the owner, kkt-26.11.20 line 4 (A1): "Один пункт, по дорож�
 - **THEN** the flash has its beep event on A1, linked, under it; Safe areas leave the picture event alone; one Ctrl+Z gives both back; the card's change takes the beep again
 - **PATH** Edit → "Create a generator…" → Kind → Sync flash → a beep event on A1 under the flash → Kind → Safe areas → the beep is gone → Ctrl+Z → the flash and its beep → right click the bin card → Change kind → Signal check → Safe areas → the beep is gone
 - **TEST** t3713 (`src/apps/kt-app/src/gen_audio_tests.rs`), t3702 (`src/apps/kt-app/src/gen_audio_tests.rs`), live scenario `src/scripts/live/gen_technical.py`
+
+#### Scenario: Ticking a generator's tone brings its sound event
+- **WHEN** SMPTE bars are made without their tone, then "Tone" is ticked in their window, then unticked, then Ctrl+Z
+- **THEN** the bars stand alone; the tick brings a sound event on A1 under them, linked, with the ticked values (the meters move when it plays), and leaves another event of the same bars silent; the untick, through either half, takes it; one Ctrl+Z gives it back
+- **PATH** Edit → "Create a generator…" → Kind → SMPTE bars → tick "Tone" → a sound event appears on A1 under the bars → untick → it goes → Ctrl+Z → it is back
+- **TEST** t3720 (`src/apps/kt-app/src/gen_audio_tests.rs`), live `gen_technical`
+
+#### Scenario: Apply to all reaches the sound in every reel
+- **WHEN** SMPTE bars stand in the edit and twice inside a reel, one of them linked already; "Tone" is ticked on the edit's and "Apply to all" pressed; then the kind is changed to a solid colour and undone
+- **THEN** each picture event of the reel gets its sound event on its audio track 1, linked to it alone, with the ticked values, in one history step; the solid colour takes them from every reel; undo gives them back
+- **PATH** SMPTE bars in the edit and the same bars inside a reel → in the edit's event window tick "Tone" → "Apply to all" → enter the reel: a sound event stands under its bars → Ctrl+Z: it is gone
+- **TEST** t3724 (`src/apps/kt-app/src/gen_audio_tests.rs`)
 
 ### Requirement: A form uses the width it is given
 Every form of parameter rows — effect, morpher, transition, camera, track, generator and title forms,
@@ -1745,3 +1769,169 @@ Why: the owner, 2026-11-07: "половина ширины этой портян
 - **THEN** at the default width two fields share a row, as before columns, so the automation graph under the form stays in the window; where two do not fit, one field a row and nothing past the edge; on the code before (one field a row in every single column) the default width fails
 - **PATH** double-click an event → its effects window at its default size → the Geometry fields stand two a row → "+ curve" → a parameter → its graph stands inside the window → clicks on it place keys → a right click on a segment opens the shape menu
 - **TEST** t3290 (`src/apps/kt-app/src/form_width_tests.rs`), live scenarios `curves`, `formula`, `segfields`
+
+### Requirement: An event window says which event it edits
+The effects window SHALL be titled by the event's name (a title's first words, a generator's kind, a reel's name, a
+file's base name) and the window's kind, the transition window by the events it joins, the morpher window by its row and
+start, and each SHALL show its number in the body in weak text; the per-chain fold SHALL be drawn without an indent strip, its body past the window's resize edge; copy and paste of a chain
+and of an envelope SHALL be icon buttons with their hints.
+Why: the owner, v26.10 W3, T8, T7.
+
+#### Scenario: A title by name, the number in the row
+- **WHEN** the effects of an event of `interview.mp4` (number 2149) are opened, and those of a linked pair
+- **THEN** the titles read "interview.mp4 — Effects" and "interview.mp4 + sound — Effects"; "#2149" is drawn after "Video" at the chain's head; the folds have no left strip; the copy/paste controls are icons with hints
+- **PATH** double-click the interview event → the window's title reads "interview.mp4 — Effects" → "#2149" in grey beside "Video" at the head of its chain → hover the copy icon → the status bar says "Copy the chain"
+- **TEST** t3940 (`src/apps/kt-app/src/reach_tests.rs`), t3941 (`src/apps/kt-app/src/reach_tests.rs`), live `window_chrome`
+
+### Requirement: Preferences show the persistent cache on disk and its caps
+Preferences (the program's settings window) SHALL have a section "Persistent cache" that lists every cache folder the program made:
+- its place;
+- the projects it serves, a project no longer there marked so;
+- its size, with a Delete button.
+
+The section SHALL also show each folder's cap, the total the caches take now, and whether a folder is writing
+in its cycle (full). Deleting the open
+project's folder SHALL empty it and leave the work untouched. The section SHALL only read the registry and
+the folders' sizes, and SHALL compute nothing while it is open.
+Why: kkt-26.11.20 A14 moved the caches into the projects' folders; a cache the person cannot see or
+reclaim breaks UI rule 20 (nothing grows by itself unseen); the owner's cyclic rule (kkt-26.11.20b B2) needs a place to see
+and set it; project-cache-folder D3.
+
+#### Scenario: The list, a deleted folder and a cap
+- **PATH** Edit → Preferences → section "Persistent cache": two folders listed with sizes, one marked "no project here" → Delete on that row: the row goes and the total drops → the cap of the other row set to 2 GB: its size shows against it, marked full
+- **WHEN** the section is shown with two registered folders, one whose project is gone, then the orphan is deleted and the other folder's cap lowered below its size
+- **THEN** the rows, sizes and marks match the registry, the deleted folder is gone from the disk and the list, the cap is saved, the folder is marked full and its next write drops its oldest entries, and the window runs no job while open
+- **TEST** t3842 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: The program at rest after cyclic writing costs nothing
+- **PATH** the heavy showcase opens → Space plays a lap → Space stops → the mouse rests, then moves over the preview → nothing redraws or works by itself once the writes are done
+- **WHEN** the heavy showcase stands paused after the prerender wrote into a full folder
+- **THEN** no cache job runs and no frame is asked at rest
+- **TEST** t3843 (`src/apps/kt-app/src/idle_tests.rs`)
+
+### Requirement: The persistent cache is switched beside the quality and shown in the Diagnostics
+A switch beside the preview quality SHALL show the disk and its value — "As in the preview" (the default), "1/2", "1/4"
+or "Off" — under a list headed «Постоянный кэш» / "Persistent cache"; the choice SHALL be kept between projects; "Off"
+SHALL stop reading and writing the store and leave its files; a bin card SHALL show its source copy's state (being made,
+its lines, the camera's own, why there is none), and its menu SHALL take a camera's own copy and refuse one that differs,
+naming how; the Diagnostics window SHALL list the store's two kinds with bytes, reads and writes; an edit beside a
+prepared range SHALL leave its bars bright without a click; no text of the interface SHALL say "proxy" in any language.
+Why: the owner, A10, B1 and D1.
+
+#### Scenario: A heavy range survives an edit beside it, and the store says so
+- **WHEN** a heavy event's range is prerendered, a title beside it (not over it) is moved, and the Diagnostics is opened
+- **THEN** the heavy range stays bright on the coverage bar after the edit, the title's old and new moments are dim; the Diagnostics lists "frames" and "source copies" with their sizes and reads, and nothing else; at "Off" the bar over the heavy range is bright no more
+- **PATH** play the heavy range, pause 2 s → the coverage bar turns bright → drag the title event 1 s right → the bar stays bright over the heavy event, dim only where the title was and is → open Diagnostics → the Persistent cache section lists "Frames on disk: 420 MB, read 48, written 52" and "Source copies"
+- **TEST** t3447 (`src/apps/kt-app/src/reach_tests.rs`), live scenario `persistent_cache` (t3448)
+
+#### Scenario: No "proxy" anywhere in the interface
+- **WHEN** the five catalogs are scanned
+- **THEN** no entry contains "proxy" or "прокси" (or the word in the other three languages' catalogs)
+- **PATH** switch the language to Russian → open the switch beside the quality and a clip card's menu → every item reads «Постоянный кэш», none "прокси"
+- **TEST** t3450 (`src/apps/kt-app/src/i18n_tests.rs`)
+
+### Requirement: Every effect chain is edited in one node editor that fits its window
+The FX window (an event and its link partners), the track window, the morpher window and a
+composition instance's chain SHALL show and edit effects through ONE node editor in one style. It
+SHALL open framed (every node in view) and SHALL never scroll: the detailed nodes when they fit
+the width and at most 40 % of the window's visible height (the form keeps its room), else small chips wrapped into bands (the zoom is a LEVEL OF DETAIL — the text stays
+sharp and every widget keeps its real place); Ctrl+wheel over the graph switches detail and
+chips, a middle drag pans the detail, "Frame all" and a double click on empty space return the
+fit; the plain wheel stays the window's scroll. Picture and
+sound SHALL be two socket kinds and no wire SHALL join them. A simulated device SHALL be one node
+with a picture lane and a sound lane, each with its own switch. After an event's own nodes the morpher layers
+over it (bottom up, the render's rule) and its track's stage SHALL stand as read-only boxes; a
+double click on one SHALL open its own window. A sidechain key SHALL be drawn as a box wired into
+its compressor. A node SHALL show at most three main
+sliders per lane, named by the plugin's passport, and its height SHALL NOT grow with the passport;
+selecting a node SHALL open that slot's existing form beside the graph. Nodes SHALL be laid out by
+processing order; dragging a node SHALL change only its order. An effect SHALL be added by dragging a wire into empty canvas or
+the picker; a drag SHALL reorder within its lane by dropping a node on another; every node SHALL
+carry its switch and its cross, and a device's cross SHALL remove both halves. While the pointer is over a graph,
+the key table's own commands SHALL act on it: Delete on the selected node, the mute key on its
+switch, zoom to fit as Frame all, zoom in/out as detail/chips — no new key, the timeline does not
+get them. Every gesture SHALL be one undo step. A gesture
+the engine cannot execute yet (a branch, a second input, a cycle) SHALL be refused with a reason in
+the status line, changing nothing. No layout SHALL be stored and no window SHALL be added.
+Why: kkt-26.11.18b item 3 — "компактного удобного графа"; U7 — "Вместо полоски", "везде в окнах
+разных единым стилем в одном месте чтобы не скролить … типо как в blender"; R.63 — no new window;
+rule 17 — one widget. U8 — "2-3 ползунка, но … как уместить огромные эффекты типо isp".
+
+#### Scenario: A device's halves stand in one column
+- **PATH** double click a morpher block carrying a Blur, VHS Tape and a Gain → the morpher window shows its node editor: the purple source node, Blur and VHS Tape on the picture lane, Gain and VHS Tape's sound (with the speaker) on the sound lane, the tape's two halves one above the other in one frame
+- **WHEN** the morpher window opens on a layer carrying a device and other effects of both kinds
+- **THEN** the device's halves share one column, the picture half above; Blur stays on the picture lane and Gain on the sound lane, each in its chain's order; the graph publishes its place (an event and its linked audio in ONE editor follows in v1c)
+- **TEST** t2994 (`src/apps/kt-app/src/node_editor_tests.rs`)
+
+#### Scenario: Reorder within a lane, refuse across, remove a device
+- **PATH** in the morpher's node editor drag Blur onto VHS Tape → Blur stands after the tape → drag Gain onto VHS Tape (another lane) → the status line says an effect stays on its lane, nothing changes → click the cross of VHS Tape's picture half → both halves go
+- **WHEN** the person reorders by dropping a node on another, tries the other lane, and removes a device
+- **THEN** the picture chain is reordered in one step; the drop across lanes changes nothing in the model; every node has its cross, and the device's cross takes both halves
+- **TEST** t2995 (`src/apps/kt-app/src/node_editor_tests.rs`)
+
+#### Scenario: Layers, the track stage and the key are group nodes in the processing order
+- **PATH** double click an audio event under two morpher layers on a track whose compressor is keyed by the music track → its effects window shows the event's nodes, then two purple layer boxes, then the track's box with "Key: …" → double click the first layer box → that morpher's window opens → open the track's window → the key box stands under its compressor, wired into it
+- **WHEN** the effects window opens on an event reached by layers and a keyed track stage
+- **THEN** the boxes stand in the render's order (the event's nodes, the layers bottom up, the track), they edit nothing there, the track's box names its key, and a double click opens the existing window of the box, no other; the track window draws the key box with a dashed wire into its compressor
+- **TEST** t2996 (`src/apps/kt-app/src/node_editor_tests.rs`), live `node_graph` (`src/scripts/live/node_graph.py`)
+
+#### Scenario: A long chain fits without scrolling
+- **PATH** open the FX window on an event with 24 effects → every node is in view as a chip → Ctrl+wheel over the graph → the detailed nodes with their sliders, a middle drag pans them → click "Frame all" → all the chips again, no scrollbar over the graph
+- **WHEN** a chain is longer than the graph area
+- **THEN** the opened view frames every node inside the window's width; Ctrl+wheel opens the detailed nodes; "Frame all" restores the fit; no node label wraps
+- **TEST** t3001 (`src/apps/kt-app/src/node_editor_tests.rs`)
+
+#### Scenario: A huge device stays a small node with its main sliders
+- **PATH** add Camera ISP to an event → the ISP node shows its exposure, gain and sharpening sliders, no more → drag the exposure slider in the node → the preview brightens → the full ISP panel stays below the graph with all its blocks
+- **WHEN** a device with tens of rows is added and its main slider is dragged in the node
+- **THEN** the node has at most three rows per lane and the same height whatever the passport holds; the drag sets that row in the MODEL in one undo step, exactly as the same row in the side form; the side form shows the whole device
+- **TEST** t2999 (`src/apps/kt-app/src/node_editor_tests.rs`)
+
+#### Scenario: The Viewer shows the picture after a node
+- **PATH** in an event's effects window Ctrl+Shift+click the Blur node (or right-click it → "Show the picture after this effect") → the preview shows the picture after Blur with the badge "Viewer: Blur" → press Esc → the whole picture again, the window stays open
+- **WHEN** the person views the output of a node in the middle of a chain
+- **THEN** the player holds the project with that one event's chain cut after the node (its curves and slot masks with it), so the one plan composes the preview and the sound is heard up to that node; the model does not change; Esc, Play, a Ctrl+Shift+click on empty canvas or closing the window give the whole project back
+- **TEST** t2997 (`src/apps/kt-app/src/node_editor_tests.rs`), live `node_graph`
+
+#### Scenario: An event and its linked audio are one graph
+- **PATH** double click a video event linked to its audio, carrying VHS Tape → the effects window shows one graph: the picture lane with VHS Tape, the sound lane with its sound half under it, a switch at each lane's In → click the sound half's checkbox → it is struck through, the picture keeps the tape → click the picture half's cross → the tape goes from both events
+- **WHEN** the effects window of an A/V pair (one video and one audio event of a link group, neither a generator nor a composition) shows a device
+- **THEN** one graph holds both events' chains, a device's halves in one column; the sound half's switch reaches the AUDIO event's slot only; the cross takes the device off both; an event whose chain did not change sends nothing; each event's form stays in its own section below
+- **TEST** t3004 (`src/apps/kt-app/src/node_editor_tests.rs`), live `node_graph`, `vhs_sound`
+
+#### Scenario: The table's keys act on the graph under the pointer
+- **PATH** in an event's effects window click the Blur node → with the pointer over the graph press the mute key → Blur is struck through → press Delete → Blur goes, the event stays on the timeline → press zoom in → the detailed nodes → press zoom to fit → the fit again
+- **WHEN** the person presses the key table's mute, Delete and zoom keys with the pointer over the graph
+- **THEN** the selected node's bypass is switched and then the node removed in the MODEL, the timeline keeps its event and its tracks' switches; zoom in and zoom to fit change the graph's view (in a style that binds them)
+- **TEST** t3002 (`src/apps/kt-app/src/node_editor_tests.rs`)
+
+#### Scenario: A chain of sound draws its nodes
+- **PATH** double click an audio event carrying Gain and Pitch Shift → its effects window shows both as nodes between In and Out
+- **WHEN** the effects window opens on an audio event (or an audio track's window on its chain)
+- **THEN** every slot is a node; a single-kind chain is one lane whatever its kind (found-defects 811)
+- **TEST** t3000 (`src/apps/kt-app/src/node_editor_tests.rs`)
+
+#### Scenario: The node editor costs nothing at rest
+- **PATH** open the FX window and the morpher window on the heavy showcase project carrying VHS Tape, Datamosh and Camera ISP → move the mouse over a node and leave it still → only the hover tint changes → wait → no frame is asked
+- **WHEN** the editor is open and nothing moves
+- **THEN** the work counters show no layout of the editor on a hover frame and no frame at rest, with one window open or with both; the live idle run with an effects window, then a track's, stays at its rest load
+- **TEST** t3003, t3006 (`src/apps/kt-app/src/idle_tests.rs`), live `idle` (`src/scripts/live/idle.py`)
+
+### Requirement: The loudness target is the project's, and matching is reached where the person stands
+Project settings SHALL hold the loudness target (a standard or a number) and the ceiling; "Match loudness…" SHALL be
+offered on selected events and a track header, and "Match the program" on the program stage in the meters
+column, which shows its gain, the limiter's light and the measured value or "changed since measured"; the render
+report SHALL judge against the project's target.
+Why: the owner, B6 and T14.
+
+#### Scenario: Set the target, match the dialogue, match the program
+- **WHEN** the person sets Streaming in Project settings, selects the dialogue events → "Match loudness…" → Dialogue, then presses "Match the program" and renders
+- **THEN** the dialogue gains change in one step; the program stage shows its gain and what was measured; the render report reads "Sound — 0 outside the norm" against −14 LUFS; the last pick of the match window is remembered
+- **PATH** File → Project settings → Audio → Loudness → pick "Streaming (−14 LUFS)" → Apply → click a dialogue event, Shift+click the last one → right click → "Match loudness…" → pick "Dialogue (−14 LUFS)" → Match → the dialogue levels move → click the program row under the meters → "Match the program" → after the bar fills the row shows the gain → Render → the result reads "Sound — 0 outside the norm"
+- **TEST** t3922 (`src/apps/kt-app/src/program_tests.rs`), live `render_norms` (`src/scripts/live/render_norms.py`)
+
+#### Scenario: An edit marks the program as changed
+- **WHEN** after matching the program an event's level is raised
+- **THEN** the program stage shows "changed since measured" until "Match the program" is pressed again
+- **PATH** raise a music event's level line → the program stage under the meters shows "changed since measured" → click it → "Match the program" → the mark goes
+- **TEST** t3923 (`src/apps/kt-app/src/program_tests.rs`), live `render_norms`

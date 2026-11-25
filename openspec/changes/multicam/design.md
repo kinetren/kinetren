@@ -1,126 +1,121 @@
 # Design: multicam
 
-> DESIGN ONLY, revision 1 (2026-11-20), base `a30c134d`. Q1–Q3 in `proposal.md`; the defaults follow
-> the recommended options.
+> DESIGN ONLY, revision 2 (2026-11-25), base `fc60a5d9`. Q1–Q3 decided (A18). Implementation-ready after `shared-events`.
+
+## D0. What revision 1 said and the code contradicts
+
+1. **`ClipEvent.angle` beside `overrides`.** A per-instance choice that changes a reel exists: `Override` on a published handle (R.59).
+   Everything an angle needs is keyed by it already: `instance_content`, `NestKey`, the reel preview per instance (`reel_keys`), copy, split,
+   paste, `expand_instance` (`overrides_baked`), `.kt`. A second field would have to be added to each, and forgetting one shows another
+   angle's picture. An angle is an override (D2).
+2. **"The right piece starts its stream at the cut: byte-equal."** A new `ClipId` is a new `NestStream`: a canonical move from a block boundary.
+   It equals the continuous play only for chains with a finite memory; an equaliser or a compressor inside rings differently. The stream
+   is handed on, as a split of a pitched event is one stream (`split_predecessors`), D3.
+3. **Alignment by timecode "(source tc)".** No source timecode is read anywhere (no `AVDictionary` read in kt-ffmpeg but the muxer's). It is
+   read here: `timecode` of the format, the video stream, then the `tmcd` data stream (D1).
+4. **The cells on the compose thread, class `background`.** Since render-ahead the compose thread only presents while playing, and the
+   `Visible`/`Background` classes stand still while a player plays. The cells have a lane of their own (D4).
+5. **"A toggle in the preview head", "Alt + digit".** There is no head: the place is the corner row of the preview
+   (`preview-canvas-and-gizmos`). Digits are free in every style (`controls.rs`: only Shift+8 in After Effects). Alt+click on a cell is taken by
+   window managers: switch without a cut is Shift.
+6. **`ClipEvent` in a vector**: the model's events are `Events<ClipEvent>` with `shared-events`; a live pass edits one event.
+7. `collapse_into_sequence` already turns a selection into a reel keeping the `ClipId`s; "Create multicam" is it plus rows.
 
 ## Context
 
-Read on `a30c134d`:
+`published.rs` (`Override`, `ParamOwner`, `apply_overrides`), `resolve_reel` (`project.rs:7152`), `gen_salt`, `instance_content` (`video.rs:502`),
+`NestStream`/`split_predecessors` (`fxstore.rs`, `audio.rs:160`), `ops::{collapse_into_sequence :1321, expand_instance :1562}`,
+`kt_media::sync::offset_from_pyramids` (two files whose pyramids are ready; `sync_selected_by_audio`, `app.rs:3770`), `Priority::Thumbnail`,
+`reel_preview::offline_renderer`, `kt_gpu::side_engine`, `Player::sources`.
 
-- **Compositions** (R.50–R.59, `compositions` spec): `Sequence` with its tracks, raster and fps; an
-  instance is a `ClipEvent` whose media is the reel; `Project::resolve_reel(seq, overrides)` is the one
-  door; `expand_instance` (`src/libs/kt-model/src/ops.rs`) unpacks an instance into its events; the
-  engine's sub-plan of a reel and its audio sub-mix keyed by instance (`NestStream`, a stream per
-  INSTANCE `ClipId`, born at its first read).
-- **Sync** (R.49, F-SPD-004): `kt_media::sync::offset_from_pyramids` gives the offset of two recordings by
-  their peak pyramids; the offset is stored in the sidecar (`index.rs::set_sync_offset`).
-- **The morpher** swaps a source over a window (`MorphPatch.media`, cutting partially covered targets);
-  F-TL-005 named it the closest relative.
-- **Decode**: a worker per media; `Priority::{Playback, NearPrefetch, FarPrefetch, Thumbnail}`; the
-  compose thread composes the preview (`compose_queue`), classes via `kt_time::sched`.
-- **Coalescing**: `apply_coalesced` keeps a live gesture as one history step by its token.
+## D1. The composition
 
-## Goals / Non-Goals
+`Sequence.multicam: Option<Multicam { angles: Vec<Angle { video: TrackId, audio: Option<TrackId>, name }> }>` (not written when `None`). Rules of
+`validate`: distinct tracks of the reel; at most one multicam level in a chain of nests (an angle may hold a composition, not another multicam);
+at least one angle. A multicam reel publishes two handles by construction, not written in `published`: `ANGLE` and `SOUND` (reserved `PubId`s
+at the top of the range, refused elsewhere).
 
-**Goals:** sync and group cameras in one step; switch live with digits; per-angle grading; sound that does
-not jump; one undo step per pass; no extra decode for angles that are not shown.
+**Create multicam…** (`ops::create_multicam`, one batch) from a selection on at least two video tracks or files:
+1. group by media, linked audio joins its video; a file without picture is a **recorder** (a plain audio track);
+2. align by the dialog's choice, the first file the reference:
+   - **by sound**: `offset_from_pyramids` of each against the reference on the lane `sync` (a job with a progress, the pyramids built first if
+     absent: `SYNC_PENDING` becomes a wait, not a refusal); below the confidence the file is listed "not found" with three buttons: leave at its
+     place, place by hand later, cancel;
+   - **by timecode**: `MediaInfo.start_tc: Option<Tick>` (kt-ffmpeg `Source::timecode()`, drop-frame understood); disabled with its reason when a
+     file has none;
+   - **by start**;
+3. `collapse_into_sequence`, then one row per angle, its chain of effects left on its event; a 1-frame difference left by the audio granule
+   (`SYNC_GRANULARITY_TICKS`, 5.3 ms) is rounded to the frame for the picture and kept for the sound;
+4. one linked pair of instances (picture, sound) over the union replaces the selection. Angle = the earliest clip's; sound = the recorder if
+   there is one, else the first angle's (Q2 a).
 
-**Non-Goals:** automatic switching by the active speaker (F-TL-005 trick 4, a later assist); nested
-multicams; more than 16 angles in the grid (more are allowed, switched from the menu).
+## D2. The angle is an override
 
-## D1. The multicam composition (Q1 a)
-
-`Sequence.multicam: Option<Multicam>`; `Multicam { angles: Vec<Angle> }`, `Angle { video: TrackId,
-audio: Option<TrackId>, name: String }` — an angle is one of the reel's video tracks with its paired audio
-track. The reel is otherwise an ordinary composition: its tracks, events, effects, track stages. Rules
-(validate): angle tracks are distinct; an angle's video track has no overlap with another angle's inside
-the multicam (each camera its own row); the multicam's own raster is the project's unless set.
-
-`CreateMulticam` (an ops batch, one undo step) from a selection of clips:
-1. group by camera: clips sharing a media are one angle; linked audio joins its video's angle;
-2. align: by sound (`offset_from_pyramids` against the first angle's audio; refused with the pair named if
-   an angle has no sound or the correlation is below the threshold), by timecode (source tc), or by start;
-3. build the reel (a track per angle, events at their aligned offsets), name angles by file name;
-4. replace the selection by one instance spanning their union (on the lowest selected video track and its
-   audio), the instance's angle = the angle of the earliest clip, audio per Q2.
-
-## D2. The instance's selection
-
-`ClipEvent.angle: Option<AngleSel>`; `AngleSel { video: u16, audio: AudioSel }`, `AudioSel = Fixed(u16) |
-FollowVideo | Track(TrackId) /* a non-angle track of the reel: the recorder */`. Legal only on an instance
-of a multicam reel. `resolve_reel` with a selection drops the other angles' video tracks (and, for
-`Fixed`/`Track`, every other audio track of the angles) — so the sub-plan composes one angle and the
-sub-mix plays the chosen sound. Because each piece's resolved reel differs, each is its own `NestKey`
-(instance content includes the selection, `instance_content`): the memo and the coverage stay correct
-(invariant 4).
-
-**Sound across cuts.** With `Fixed`, two adjacent pieces read the SAME audio tracks at continuous reel
-time: the audio sub-mix of the right piece starts its stream at the cut (a new `ClipId`) — a reel without
-tail effects has zero pre-roll and the canonical move (the nested producer, law C4) yields the same
-samples as the left piece would have: no seam (t3509 compares the bytes across a cut with the uncut
-instance). With tail effects in the angles, the pre-roll covers them (the reel's own rule).
+`ParamOwner::Angle { what: Picture | Sound }`, values `Choice`. The override applies in `apply_overrides` BEFORE morphers: `Picture(n)` drops every
+other angle's video events, transitions and tracks' stages with no events; `Sound(Fixed(n) | Track(id) | Follow)` drops the other angles'
+audio. `Follow` reads the Picture choice of the event's linked picture instance at resolve time (the sound event carries its own copy of the
+number, kept equal by `SetAngle` in one batch, so a resolve needs no partner). No override = angle 0 and the composition's first sound.
+Consequences, all existing code: other angles ask no decode and no coverage; keys differ per angle; `gen_salt` is 0 for these owners (no source's
+values change), so sources are shared between angles; the instance form ("Composition parameters") draws both as galleries; a person may put
+them on a template by `Nested`.
 
 ## D3. Switching
 
-- **Cut & switch** (digit, click on a cell): `Split` of the instance at the playhead (frame-aligned,
-  outside a transition window — the forbidden-zone rule pushes it to the nearest legal frame inward) +
-  `SetAngle` on the right piece. If the playhead stands exactly on a piece boundary, only `SetAngle` of
-  the right piece.
-- **Switch** (Alt + digit / Alt + click): `SetAngle` of the piece under the playhead.
-- **Audio mode**: the instance's right-click menu; applies to the selected pieces.
-- **Live**: while playing, switches are applied immediately (the model edit is safe under invariant 3 —
-  the sub-mix stream of the left piece continues, the right piece's starts), under one gesture token from
-  Play to Stop: one undo step per pass. The switch position is the DISPLAYED frame (`video_playhead()`),
-  so the cut lands where the person saw it.
-- **Ripple / trim / move** of pieces are ordinary edits of events (instance pieces are events).
+- `ops::cut_switch(project, instance, at, n)`: `Split` of the picture instance AND its linked sound at the frame-aligned moment (both, as every
+  split of a pair; the right halves get a new group, so a piece can be trimmed or deleted alone), then the override of the right picture
+  piece (and of the sound when `Follow`). On a boundary: only the override. Inside a transition's window: the nearest legal frame, said in words.
+- `Command::SetAngle { id, what, value }` = `SetOverride` of the reserved handle.
+- **The sound does not notice a cut**: `NestStream` of a right piece is handed the left one's when the right continues it (same lane, abutting,
+  same `NestKey`, `source_in` continuing, no reverse, warp, overlap or transition at the join, the event chains equal): `sync_fx` moves the stream by the
+  rule of `split_predecessors` without its `ctx` clause, and the instance's own chain through `hand_on`. With it the cut is byte-equal to no cut
+  whatever rings inside (t3509). A seek warms it as any stream.
+- **Live**: a switch while playing lands at the SHOWN frame (`video_playhead`); the batches of one Play…Stop are one undo step
+  (`amend_batch` of `ripple-and-trim-modes`, brought by whichever lands first). The player is told per switch as of any edit.
 
 ## D4. The angle viewer (Q3 a)
 
-A toggle in the preview head ("Angles") when the playhead stands on a multicam instance (disabled with
-the reason otherwise). The preview area splits: program picture + a grid (2×2 up to 4×4 by angle count).
-Each cell is a plan of the multicam reel at the instance's reel time with that angle selected, at 1/8 of
-the project raster: the one plan code (invariant 7) with the angle's own effects. Cells are composed by
-the compose thread after the program frame, class `background`, their decode asks at `Priority::Thumbnail`
-(declared, unused today, F-TL-005) — so a starved cell shows its previous frame dimmed, never the program
-frame waiting for it. Playing: cells request at most the moments the program frame shows (no look-ahead of
-their own beyond 0.5 s). Paused: each cell composes once per moment and is kept by the present memo key.
+A corner button "Angles" of the preview, only while the playhead stands on a multicam instance: the preview area splits into the program
+picture and a grid 2×2…4×4 (the split drags, remembered). The cells:
+- `AngleCells` (kt-engine): one `VideoRenderer` per angle of the reel-as-root with that angle (built once per revision through the build memo), composed
+  at ⅛ of the raster on `sibling_exec` of the display (a card) or `side_engine`, read back to a texture each;
+- a lane `angles` of class `Near` with a budget: a cell is composed only when the program's moment is kept or composed and the near prefetch has nothing
+  pending; decode asks `Priority::Thumbnail` at the cell's size for the shown moment and ½ s ahead, withdrawn when the moment leaves;
+- a cell without its frame keeps the former one dimmed; the program frame never waits;
+- paused: each cell once per (moment, revision); sixteen cells of 1080p are 8 MB in the ledger (`Tenant::Angles`, the next number).
+The active cell has the selection stroke, its name and number are under it. Click = cut and switch; Shift+click = switch; digits 1–9 and
+Shift+digit the same, only while the playhead is on an instance and no text has the focus (commands `Angle1…9`, the next free numbers; an unbound
+digit elsewhere does nothing). The scopes measure the program picture.
 
-Memory: N cells × (1/8 raster) — 16 angles of 1080p ≈ 16 × 0.5 MB per moment; the frames cache's sizing
-counts them (frames-cache-growth: `size_frames_cache` adds the cells' window bytes).
+## D5. Expand, flatten
 
-## D5. Expand
-
-"Expand multicam" on selected pieces: each piece becomes its active angle's events (the existing
-`expand_instance` over the resolved reel with the selection) + the chosen audio. Per-angle effects on the
-angle's track stage go with the expanded events by the rule `expand_instance` already has for a reel's
-track stages; where that rule refuses, the expand is refused with its reason (nothing is silently lost).
+"Expand multicam" on pieces: `expand_instance` over the resolved reel (the override is baked), the angle's track chain moves by that function's rule for a
+reel's track stage, a refusal names it. Nothing else.
 
 ## D6. Format and OTIO
 
-`.kt`: the next free version by content (`has_multicam()`). OTIO: the reel is a nested Stack (as today);
-an instance piece exports its stack with only the active angle's tracks `enabled = true` and the
-selection in `metadata["kt"]`; a foreign editor plays the right angle per piece but has no multicam
-(a row in "What OTIO export loses").
+`.kt`: the next free version by content (`Sequence.multicam` or a reserved override). OTIO as revision 1: stacks with the active angle's tracks enabled, the
+selection in `metadata["kt"]`; the row stands.
 
-## D7. Class walk — "a choice among alternatives that must not cost when not shown"
+## D7. Class walk: "a choice among alternatives that must cost nothing when not shown"
 
-| Place | Today | Here |
-|---|---|---|
-| inactive angles in the edit | n/a | dropped by `resolve_reel` → no decode, no prefetch, no coverage |
-| angle cells | n/a | Thumbnail priority, background class, 1/8 size, bounded look-ahead |
-| morpher source swap | swaps over a window | not used for multicam (Q1 a); a morpher over an instance still works as on any event |
-| reel previews in the bin | content hash | the multicam reel's poster shows angle 1 |
-| coverage bars of an instance | reel coverage | of the active angle per piece |
-| the audio sub-mix per piece | stream per instance | zero-seam across a cut (D2) |
-| scopes / formats | presented / target | the program picture; cells are not measured |
+| Place | Here |
+|---|---|
+| decode, prefetch, coverage, prerender, copies (`persistent-cache`) of hidden angles | none: not in the resolved reel. A copy is made for a file the preview SHOWS, so hidden 4K angles get none |
+| generators and titles inside an angle | sources are raised for every reel's content (`gen_sources` walks reels): hidden ones are opened, never read; unchanged |
+| `AngleCells` | D4 |
+| reel poster and strip | the first angle |
+| morphers over an instance, transitions at a cut, track duck keys | as any event |
+| `frame-format-variants` | a correction belongs to the piece; a split carries it |
+| export | one angle per piece; `stream_preroll` as any reel |
+| `multicam` + `simulated-elements`, `motion-driven-params` | links into a reel's published handles skip the reserved ones |
 
 ## D8. Idle
 
-Nothing runs at rest: on a pause the grid composes each cell once per moment; hovering the grid draws
-cached textures. The live `idle` scene adds the angle viewer open on a paused 9-angle multicam.
+Nothing runs without the viewer; with it, a pause composes each cell once. Live `idle`: the viewer open on nine paused angles, the mouse over the grid.
 
 ## Rejected
 
-- **Through the morpher's UI** — the owner forbade it ("не … в тупую").
-- **Takes on events (Vegas)** — no per-angle grade; sync per event.
-- **Raw cells by default** — chosen by what the camera will look like (Q3 may reverse).
+- The morpher's UI (he forbade it), takes on events, raw cells.
+- A field of its own for the angle (D0.1).
+- Not splitting the sound: deleting a piece of a pair deletes its group, and a group of one sound and many pictures would delete the whole
+  instance.

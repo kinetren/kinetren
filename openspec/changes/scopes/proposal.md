@@ -1,7 +1,7 @@
 # Proposal: scopes
 
-> DESIGN ONLY (spec session, 2026-11-20). Code starts on the owner's word after his answers to the
-> questions at the end. Tests reserved: t3400–t3414.
+> DESIGN, revision 2 (2026-11-24), base `229c694b`: implementation-ready. The owner answered Q1–Q2 (A8). Code starts on
+> the orchestrator's go. Tests: t3400–t3405, t3410–t3412.
 
 ## Why
 
@@ -17,27 +17,15 @@ nothing in the picture.
 
 ## What Changes
 
-- **Five instruments of one frame**: luma waveform, RGB parade, vectorscope (with the skin-tone
-  line at 123°, as Vegas draws it), histogram (luma and R/G/B overlaid) and false colour (the frame
-  painted by exposure zones over the preview). The scale is the honest one for our 8-bit path:
-  0–255 and 0–100 %; no 10-bit or mV scale is offered (the frame is RGBA8 after decode).
-- **They measure what the preview presented, through no second composition.** The executor's
-  `present` gains a *scope tap*: when asked, after the composite it runs one downscale pass into a
-  small analysis texture (at most 512 px wide, aspect kept) and starts an asynchronous readback of it,
-  never waited for in the frame — the same way it already refreshes the 32×18 ambient glow. A scope
-  thread turns the bytes into counts and an image; the window draws a texture. Invariant 7 holds:
-  the tap reads the finished composite of the one `frame_plan`.
-- **On a pause the scope can measure the export frame** (owner question Q2): once per paused moment
-  the full-resolution composite of the same plan is made on the offline route, measured, and the
-  scope says "1/1" next to its title; while playing it says the preview's quality ("1/4").
-- **Clipping is never hidden**: no smoothing of the trace is offered, and every instrument marks
-  the real excursions (the top and bottom rows of the waveform and parade light where any pixel
-  reached 0 or 255) — the lesson of Resolve's Low Pass Filter (note F-CLR-005, trick 2).
-- **A Scopes window** from View (owner question Q1): one to four instruments side by side, the
-  choice and layout kept in `UiState` (outside undo, the default not written).
-- **At rest it costs nothing**: the tap is asked only while the window is open AND the presented
-  frame key changed; a pause with the mouse moving over the scope makes no pass, no readback and no
-  scope work (`kt_time::work` rows, live `idle`).
+- **Five instruments of one frame**: luma waveform, RGB parade, vectorscope (with the skin-tone line at 123°), histogram
+  and false colour. The scale is the honest one for our 8-bit path: 0–255 and 0–100 %.
+- **They measure what the preview shows, with no second composition**: the presented composite is copied off the device
+  without the frame waiting; where the preview shows bytes (a GL window, a slow chain) the bytes are measured.
+- **On a pause the full frame is measured once**, on the offline route of the effect cells; the window says the size.
+- **Every pixel is counted**, with no smoothing: a clipped pixel lights its mark.
+- **False colour is painted by the display pass**, in step with the frame.
+- **A Scopes window** from View and the preview's menu, its instruments remembered per person.
+- **At rest it costs nothing** (`Work::ScopeTap`, `Work::ScopeCount`, live `idle`).
 
 ## Capabilities
 
@@ -53,21 +41,17 @@ nothing in the picture.
 
 ## Impact
 
-- kt-engine: `PresentOptions.scope: Option<ScopeTap>`; `Player::measure_paused` (one offline
-  composite of the paused moment).
-- kt-gpu: the tap pass (a box downscale, integer, `Rgba8Uint`) and a two-deep readback ring of the
-  analysis texture; no atomics, no compute (works on the GL device and llvmpipe).
-- kt-app: `scopes.rs` (counts → image, on its own thread), the window, View item, i18n ×5,
-  `UiState.scopes` (serde default, not written at default — the `.kt` file does not move).
-- Project format: unchanged for a project without the field; the field is UI state, so the file
-  version does not rise (`project_file::version_for` unchanged). OTIO: `UiState` already travels in
-  `metadata["kt"].ui`; nothing is lost that a foreign editor could show.
-- Feature note: F-CLR-005 updated with the current code (the preview no longer reads back).
+- kt-engine: `PresentOptions.tap`/`false_colour`, `VideoGpuExec::take_tap`, the compose thread's hand-on.
+- kt-gpu: two map buffers, the copy in the two presents, `display.wgsl` mode 1.
+- kt-app: `scopes.rs`, `SceneCtx::frame` (shared with the picker's cells), the window, `Workspace.scopes`, i18n ×5.
+- Project format, OTIO: nothing. Feature note: F-CLR-005.
 
 ## Questions to the owner
 
-Decided (2026-11-20, `kkt-26.11.20` A8, his Q6–Q7): "Окно, кадр превью" — Q1 (a), a Scopes window; Q2 (a), the
-preview frame while playing, the full-size frame once on a pause.
+Decided (2026-11-20, `kkt-26.11.20.txt` line 13, A8): "Q6/Q7 scopes: «Окно, кадр превью (Recommended)»" — Q1 (a), a
+Scopes window; Q2 (a), the preview frame while playing, the full-size frame once on a pause. Read again on 2026-11-24
+against the options as asked: both are option (a), nothing else is said. His ★8 also names "или по событию": the Viewer
+(fx-graph, built) shows the picture after any node of an event, and the scope measures what is shown. No open question.
 
 The questions as asked:
 

@@ -385,6 +385,9 @@ the first half of the open part above the way Premiere and After Effects do — 
 the machine has — without a setting; a lever in the interface is still not there, and the bases are
 still the old numbers (found-defects 330). The 4K black-render question is unchanged.
 
+Design `memory-breakdown` revision 3 (2026-11-24): the bars split process memory from device memory (six ledger kinds live on
+the card), video memory is the graphics library's own count, the project's disk is the cache folder's parts (`ktindex.db` is gone).
+
 ## Sources
 
 - mlt #695 — https://github.com/mltframework/mlt/issues/695

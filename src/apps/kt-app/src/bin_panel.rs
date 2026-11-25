@@ -1013,6 +1013,10 @@ impl KtApp {
                 );
             }
         }
+        // the copy of a heavy source the preview reads instead (persistent-cache)
+        if visible && !is_reel && gen_kind.is_none() && !is_synth {
+            self.draw_copy_mark(&p, thumb_rect, id);
+        }
         // Ctrl/Shift+click — builds the selection set, a plain click — as before
         // (place at the cursor), while also making the card the only selected one:
         // otherwise “selected with a frame, clicked elsewhere — and the selection
@@ -1107,6 +1111,9 @@ impl KtApp {
             } else if ui.button(tr(k::bin::menu::MEASURE_LOUDNESS)).clicked() {
                 *to_measure = Some(id);
                 ui.close();
+            }
+            if gen_kind.is_none() && !is_synth && !is_off {
+                self.copy_menu(ui, id);
             }
             ui.separator();
             match group_of {
@@ -1206,7 +1213,8 @@ impl KtApp {
                 }
                 None => tr(k::bin::LOUDNESS_PENDING).to_string(),
             };
-            self.hint(resp.clone(), &format!("{path}\n{loud}"));
+            let copy = self.copy_hint(id).map_or(String::new(), |c| format!("\n{c}"));
+            self.hint(resp.clone(), &format!("{path}\n{loud}{copy}"));
         }
         resp
     }

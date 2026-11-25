@@ -14,9 +14,14 @@ PATH (export spec):
 3. the bar fills → the summary line, Open file and Open folder, Close at the right;
 4. Close → the window is gone, the program keeps drawing, no crash window, no crash report; the
    file on disk is an MP4.
+5. (render-result-check) the journal's two pairs are equal, and the file holds them: as many video
+   packets as frames, the picture over the whole region, the sound as long as the region within one
+   frame of the audio codec; the final block says no difference.
 """
 import json
 import os
+import re
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -29,6 +34,15 @@ SEC = 90000
 # 24 fps: one frame is 3750 ticks; the region starts a third of a frame after 1 s
 R0 = SEC + 1250
 R1 = R0 + 18000
+
+
+JOURNAL = "telemetry-journal.log"
+
+
+def probe(path, stream, entry, *flags):
+    """One value of the file, read by ffprobe."""
+    cmd = ["ffprobe", "-v", "error", "-select_streams", stream, *flags, "-show_entries", entry, "-of", "csv=p=0", path]
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=60).stdout.strip().split(",")[0] or "0"
 
 
 def main(out):
@@ -74,6 +88,21 @@ def main(out):
             with open(target, "rb") as f:
                 head = f.read(12)
             app.expect(head[4:8] == b"ftyp", "the file on disk is an MP4")
+            # 5) the numbers: the journal's, and the file's
+            log = open(os.path.join(out, "xdg", "kinetren", JOURNAL), errors="replace").read()
+            m = re.findall(r"render done: frames (\d+)/(\d+), sound (\d+)/(\d+) samples", log)
+            app.expect(len(m) == 1, f"the journal names both pairs of the finished render: {m}")
+            fw, fa, sw, sa = (int(x) for x in m[0]) if m else (0, 1, 0, 1)
+            app.expect(fw == fa and sw == sa, f"the pairs are equal: frames {fw}/{fa}, samples {sw}/{sa}")
+            packets = int(probe(target, "v", "stream=nb_read_packets", "-count_packets"))
+            app.expect(packets == fw, f"the file's video packets are the frames written: {packets}")
+            length, step = R1 - R0, SEC // 24
+            app.expect(length <= fw * step < length + 2 * step, f"the picture covers the region: {fw * step} ticks of {length}")
+            sound = float(probe(target, "a", "stream=duration"))
+            app.expect(
+                abs(sound - length / SEC) <= 1024 / 48000 + 1e-3,
+                f"the sound is as long as the region: {sound:.4f} s of {length / SEC:.4f} s",
+            )
             app.step("closed", "the timeline again, the region rendered")
             return app.done()
     finally:

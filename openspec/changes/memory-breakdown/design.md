@@ -1,66 +1,103 @@
 # Design: memory-breakdown
 
-> DESIGN ONLY, revision 2 (2026-11-22): the owner's B12 — the counter shows resident memory plus VRAM in GB (D4).
-> Revision 1 on `df6d0858`.
+> DESIGN ONLY, revision 3 (2026-11-24), base `0c2a4065`.
 
-## Context
+## D0. What revision 2 said and the code contradicts
 
-- `kt_time::mem` (memory-ledger): tenants `Kept, History, Frames, Mix, Upload, Readback, Transient, Compute`, accounts
-  opened by caches, a growth budget for `GROWING`; `snapshot().used`; `resident()` (the probe from kt-gpu).
-- kt-app: the status bar's "memory: N MB" and the Diagnostics rows read `PerfState::resident()` (a second-old reading);
-  the Diagnostics line `memory_ledger` prints the cache tenants.
-- The sidecar `ktindex.db` (kt-media), the project's cache folder (change `project-cache-folder`, the owner's A14).
+1. **"accounts + not counted = resident" over every tenant.** Six of the ledger's eight kinds (`Kept`, `Upload`, `Readback`,
+   `Transient`, `Compute`, part of `History` through `Compute`) are device memory: on a card they are not in the resident
+   memory at all. The bar would have shown "not counted 0". D2 splits by where the bytes are.
+2. **The sidecar `ktindex.db`.** Gone; the cache folder's tenants (`kt_media::cache_folder::Tenant`: frames, mix, copies,
+   reels, media) are the project's disk, counted already by `Folder::known_sizes` without touching it. No walk every 5 s.
+3. **Nine report-only kinds with a `report` call.** An account with base 0 of a kind outside `GROWING` is exactly that
+   (`Upload`, `Compute` live so). And most of the nine are holders only the interface reads: they are asked when shown.
+4. **The model's estimate per revision.** A walk of 2 000 events at every step of a drag, for a window that is closed.
+5. **VRAM = "kt-gpu's pools and live textures".** The pools are the part we count; the interface's textures, pipelines,
+   swapchains are not in them. D3.
+6. **The popup on hover.** t83.
 
-## D1. Report-only accounts
+## D1. The accounts
 
-`Tenant` gains kinds that are counted but never granted: `Model`, `Undo`, `Peaks`, `Thumbs`, `ReelPreview`,
-`UiTextures`, `Decoders`, `AudioState`, `Fonts`. `Ledger::report(kind, bytes)` stores the latest value (an atomic);
-`GROWING` and the budget are untouched, so nothing about sizing changes. Owners report:
-- the model: `Project::approx_bytes()` (events × the struct size + curves' keys + strings' capacities), on each
-  revision by `TimelineModel`; the undo stack sums its snapshots' estimates (shared-events will make them smaller —
-  the number shows it);
-- kt-app: peaks and thumbnails caches (their byte counters), reel previews, egui textures (the texture manager's
-  sizes), fonts (atlas bytes);
-- kt-media: each open decoder's frame pool (width × height × planes × pool size), summed by the media worker;
-- kt-engine: the audio render's FX buffers and the ring (known at build).
+`Tenant::Decoders = 8`, `AudioState = 9` (device-decode-sources appends `Surfaces`: whichever merges second takes the
+next number; the numbers are in traces). Not in `GROWING`; `growth_budget`, `room` and every grant are unchanged (t3962).
+- **Decoders**: `kt-ffmpeg` after open knows the coded size, the pixel format and the thread count: `(threads + DPB) ×
+  surface` (the software decoder's own pool is not readable; this is FFmpeg's sizing). Account set at open, dropped with
+  the decoder. It is an estimate and the list says "about".
+- **AudioState**: `fxstore.rs`: what every live processor's buffers hold (reverb lines, rings, the kept mix excluded: that is
+  `Mix`), summed when the store changes, and the output ring.
+`mem_used` records follow by themselves (`Tenant::ALL`); `MemSample`'s sum grows by two kinds.
 
-## D2. The arithmetic
+## D2. The sections
 
-`not counted = resident − Σ accounts` (never negative; shown as 0 when the accounts exceed a stale resident reading).
-The bar's sections are the accounts with ≥ 1 MB, sorted by size, then "not counted". The video-memory bar is kt-gpu's
-pools and live textures by device. Both readings are taken together once a second while the section is open, from
-the same snapshot.
+`kt_app::mem_view::snapshot()` makes one `MemView { resident, sections: Vec<(Section, u64)>, not_counted, video: Vec<…>,
+video_total, shared: bool }` from:
+- the ledger: `Frames`, `Mix`, `History`, `Decoders`, `AudioState` — the process's; `Kept`, `Upload`, `Readback`,
+  `Transient`, `Compute` — the device's (`Tenant::on_device`). **On a software rasterizer** (every device's type is `Cpu`)
+  the device's kinds are in the process's memory: they join the first bar and the second is not drawn. On an integrated
+  card the second bar says "shared with the memory": the driver decides what of it is resident, so it is not subtracted;
+- asked now: the model (`Project::approx_bytes` of the open document, memoized by revision), undo (`TimelineModel::memory`:
+  each `Snapshot` keeps its own estimate in a cell, at most eight new ones per reading, "…" until all are known: 80
+  steps of a large project are ten seconds of one-a-second readings, never a stall), waveform peaks (`KtApp.peaks`), reel
+  previews (`reel_preview` ready frames), picker cells (`fx_thumbs`), the cache of title layouts;
+- egui's textures (`ctx.tex_manager().read().allocated()`, `TextureMeta::bytes_used`): video memory, a section of the
+  second bar.
+`not_counted = resident − Σ process sections`, never below zero. Sections under 1 MB are summed into "other". `resident` is
+the once-a-second reading of `PerfState`, and the sections are read in the same frame.
 
-## D3. The disk bar (Q2 a)
+## D3. Video memory
 
-`<project>.ktindex.db` (the file + its WAL), the cache folder's subfolders, the recovery file — sizes from a
-background `media`-lane job when the section opens and every 5 s while it stays open (a directory walk; the cache
-folder's own size index when `project-cache-folder` keeps one). Each segment's hover says what clearing it costs
-("peaks and thumbnails are rebuilt when needed").
+wgpu's feature `counters` (a counter per allocation, no cost worth naming; in the workspace's `wgpu` line, so kt-app's egui
+device counts too): `device.get_internal_counters().hal.{buffer_memory, texture_memory}` — kept by the Vulkan and DX12
+backends (wgpu-hal 30, `vulkan/device.rs:1063, 1210`, `dx12/suballocation.rs:196, 220`). `kt_gpu::memory::video()` sums them
+over the devices of the process, each once: the live `Compiled`s hold their devices and register themselves weakly;
+`compute::host_device()` and the window's device are named. On GL the counters are zero: the sum is the ledger's device
+kinds plus egui's textures, shown as "≥ 1.1 GB". Unknown (no device yet): the counter shows "3.2 GB" alone.
 
-## D4. The status counter (the owner's B12)
+## D4. The status bar (B12)
 
-"3.2 GB · VRAM 1.1 GB": the resident memory and the video memory (kt-gpu's device bytes), each to one decimal in GB,
-nothing else on the bar (the former "memory: N MB" text goes). Its hover (the one hint place) expands: the largest
-sections of each with MB, then "project on disk: N GB". Read once a second as today.
+`app.rs:8573–8590`: the two items become one: `"{0} GB · VRAM {1} GB"`, one decimal, read at most once a second in frames
+drawn anyway (as `PerfState::resident` today; video the same way). The underruns and the rest of the bar stay. Probe
+`status.memory`. Its hint (the one hint line, priority hover): "Memory 3.2 GB: decoded frames 1.1 · undo 0.4 · kept mix 0.2
+· not counted 0.9. Video 1.1 GB: kept frames 0.5 · uploads 0.3. Project on disk 4.3 GB" — the three largest of each, built when
+hovered and once a second while it is. A click opens Diagnostics with the section in view.
 
-## D5. Class walk — "a number that does not say what it counts"
+## D5. The section in Diagnostics
 
-| Number | Says what it counts? | Here |
+In place of the "Caches: …" line (`app.rs:11316–11346`), above the graphs, inside the scrolling part; its height is fixed by
+the number of sections possible (a figure gaining a digit moves nothing: t918). Each bar is one row of segments in the order
+of size, "not counted" last in grey; a segment's hover puts its name, size and what it is into the hint; under each bar
+the list in two columns. The room the caches may still take (the old line's last number) is the last row of the first
+list. The first performance row ("Program … MB · rest …", t2398) stays, its "rest" becomes D2's `not_counted` so the two
+numbers of one window agree (the owner's line 143 is exactly two numbers that do not).
+
+**The project's disk**: the cache folder of the open project, by tenant from `Folder::known_sizes`; not counted yet: one
+recount on the `media` lane when the section opens, "counting…" until it answers. The folder belongs to the project's
+FOLDER (his B2): other projects in it are named ("also: B.kt"). Plus the project file and its recovery file (two
+`metadata` calls in the same job). A segment's hint says what clearing it costs; the way there is Preferences ›
+Persistent cache (a link, `CachesUi.show`). Untitled project: "no folder yet".
+
+## D6. Idle and load
+
+The section closed and the counter not hovered: two readings a second in frames that are drawn anyway — none at rest. The
+section open on a paused program: the window is redrawn only as today (its graphs decide), a reading is ≈ 0.1 ms without
+the undo estimates. `approx_bytes` runs at most once a second and only when the revision moved.
+
+## D7. Class walk — "a number that does not say what it counts, or two that disagree"
+
+| Number | Today | Here |
 |---|---|---|
-| status memory | resident (since frames-cache-growth) | hover adds the split |
-| Diagnostics cache line | tenants, text | the bar + list |
-| cache occupancy bar | decoded frames vs bound | unchanged, labelled |
-| "Callback/renderer underruns" | labelled since R.43 | — |
-| render window sizes | file size and bitrate | — |
-
-## D6. Idle
-
-Owners update their numbers when their contents change; the section samples once a second only while open; the disk
-walk runs only while open.
+| status: frames V/cap | decoded frames | leaves the bar (B12); Diagnostics' occupancy line has it |
+| status: memory | resident | GB, with VRAM and the hint |
+| Diagnostics: Program · rest | resident − all tenants, device ones too | rest = not counted (D2): the same number as the bar's |
+| Diagnostics: caches line | eight kinds, device summed | the bars |
+| occupancy | frames against their bound | unchanged |
+| trace `mem_sample` sum | all kinds | unchanged meaning, two kinds more; `trace machine` names them |
+| Preferences › Persistent cache | per folder | unchanged; the third bar is the open project's part |
+| the render window's file size | file | — |
+| kt-cli's printed memory | resident | — |
 
 ## Rejected
 
-- **Parsing `/proc/self/smaps` into sections** — the owner: "не про тупое чтение procinfo"; the mapping of anonymous
-  memory to our sections is known only to the owners.
-- **Counting by serializing the model** — a whole-project walk per revision; an estimate from sizes is enough for a bar.
+- `/proc/self/smaps` — "не про тупое чтение procinfo". - `generate_allocator_report` — it lists every allocation under the
+  allocator's lock, a second's reading of thousands. - `VK_EXT_memory_budget` — the whole machine's heaps. - A walk of the
+  folder every 5 s. - A pop-up.

@@ -401,6 +401,9 @@ impl Ring {
             self.cv.notify_all();
         }
         let ticket = self.push(&mut st, class, ns, false, done);
+        // the admission ends under the lock: after it, a thread put off before its record ended let the
+        // record of a later admission end first (found-defects 919)
+        drop(span);
         drop(st);
         self.admitted.fetch_add(1, Ordering::Relaxed);
         ticket
@@ -535,7 +538,9 @@ impl Submitted {
             return;
         }
         if !self.surface {
-            let _ = self.device.poll(wgpu::PollType::Wait { submission_index: Some(self.sub.clone()), timeout: None });
+            let t0 = Instant::now();
+            let _ = crate::wait_for(&self.device, self.sub.clone());
+            crate::holds::note_wait("piece wait", trace::gpu_wait::CALL, None, t0.elapsed());
             self.ring.finish(self.id);
             return;
         }

@@ -279,27 +279,35 @@ our render was shorter than melt by 605 frames (found by cross-render).
 
 ### Requirement: Loudness is measured in the export pass, without master gain
 Export SHALL report the integrated loudness, the true peak and the LRA (BS.1770/EBU R128)
-of the finished mix, measured as capability `audio-render` states it ("Loudness — BS.1770 / EBU R 128",
-the rule's home: the finished buffer, no extra pass, no master gain). The master gain MUST NOT exist in the
-project model: it is a monitoring loudness that lives only in the player. There is no "normalize" button —
-a reference line "to −23 LUFS: +N dB" is shown.
-Why: the number in the preview and the number in the file match BY CONSTRUCTION only if one
-code counts both over the same material; normalizing after the fact would mean re-encoding the file.
+of the finished mix AFTER the project's program stage, measured as capability `audio-render` states it, and judge them
+against the project's loudness target and ceiling. The player's monitoring gain MUST NOT exist in the project model and
+MUST NOT enter the measurement. The project's program stage (a gain and a true-peak limiter, the owner's decision of
+2026-11-22, B6) IS part of the mix and of the measurement. The report SHALL show each value with its unit, the project's
+norm and a state (within, within tolerance, outside), per-channel peak, loudness, balance and silence, and timed
+findings (over the ceiling, a silent channel, an imbalance), each moving the playhead to its place; render presets SHALL carry no target.
+Why: the number in the preview and the number in the file match BY CONSTRUCTION only if one code counts both over the
+same material; the owner — "на уровне проекта нормализация а не в пресетах рендера"; T14 — "на цифры вообще внимание не
+обратишь такие".
 
 #### Scenario: Loudness hears the event level
-- **WHEN** the same event is exported at 0 dB and at −10 dB
+- **WHEN** the same event is exported at 0 dB and at −10 dB with no program stage
 - **THEN** the difference is exactly 10 LU (±0.15), and the true peak matches the amplitude of the source
 - **TEST** t406 (`src/libs/kt-engine/tests/export_loudness.rs`)
 
 #### Scenario: The master gain is not in the measurement
-- **WHEN** the project settings are printed and the export is repeated
-- **THEN** there is no master-gain field in the project, and the number is deterministic
+- **WHEN** the player's monitoring volume is changed and the export is repeated; then a program stage of +3 dB, under its ceiling, is added
+- **THEN** there is no monitoring-gain field in the project and the number is unchanged; with the stage the number is 3 LU higher
 - **TEST** t407 (`src/libs/kt-engine/tests/export_loudness.rs`)
 
 #### Scenario: The meter that export measures with
 - **WHEN** the meter receives a calibration sine / an inter-sample overshoot / the same signal cut differently
 - **THEN** 1 kHz at full scale = 0.0 LUFS; the true peak sees the overshoot between samples; the cutting does not change the result; the sums are in f64, because f32 accumulation over 10 minutes drifts by 0.37 LU (a guard of the APPROVAL, not of the code)
 - **TEST** t403, t403b, t405 (`src/libs/kt-fx/tests/loudness.rs`) — the meter itself belongs to capability `audio-render`
+
+#### Scenario: One loud channel and one silent stretch are found against the project target
+- **WHEN** a stereo project with the left channel +12 dB over the right for 3 s, the right channel silent for 2 s, and a passage over the ceiling is exported twice with the target Streaming
+- **THEN** the report lists an imbalance span of 3 s, a silent-channel span of 2 s and an over-ceiling span at their times, judged against −14 LUFS / −1 dBTP; both reports are equal
+- **TEST** t3921 (`src/libs/kt-engine/tests/export_loudness.rs`)
 
 ### Requirement: A render with unavailable sources proceeds rather than being cancelled
 In the GUI an unavailable source SHALL get a stub (a dark plate with the file name; audio is
@@ -338,7 +346,7 @@ atomic writer as the GUI; an existing file MUST NOT be overwritten without `--fo
 `demo` by default SHALL refer to synthetic sources (`synth:`), so that
 `demo && render` works without a single media file. Relative media paths SHALL be resolved
 exactly once (when the project is loaded), and `.ktproj` in `render/export` — a refusal with a hint to
-`convert`. Export opens the files with the project's sidecar index.
+`convert`. Export opens the files with the project's media index.
 Why: kt-cli has neither an asterisk nor a dialog — there was nothing to prevent silent overwriting;
 `demo` referred to eight files that nobody had; a double join of the path base silently
 rendered empty layers with exit 0.
@@ -361,7 +369,7 @@ rendered empty layers with exit 0.
 #### Scenario: A relative path to the project
 - **WHEN** `kt-cli export sub/p.otio …` with the media `clip.mp4` next to the project
 - **THEN** without "decode failed", `missing layers 0`
-- **TEST** t307 (`src/apps/kt-cli/tests/cli.rs`), t34 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`) — opening with the sidecar index does not rescan the file again
+- **TEST** t307 (`src/apps/kt-cli/tests/cli.rs`), t34 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`) — opening with the media index does not rescan the file again
 
 ### Requirement: `kt-cli probe` — "what sounds at this point"
 `probe <project> <from_s> <to_s>` SHALL print cleanly from the model, without decode and without audio
@@ -956,7 +964,6 @@ no fixed count is right for both.
 - **THEN** the frames are byte for byte equal, and the line names the counts used
 - **TEST** t2901 (`src/libs/kt-gpu/tests/export_ring.rs`)
 
-
 ### Requirement: A render goes on past the end of a cut file
 A render of an event longer than its file holds SHALL give every frame, the frames past the end with
 the file's last picture, and lose no layer.
@@ -990,8 +997,13 @@ uploads once; at 1080p that is 31 frames per device, on three or four devices.
 
 #### Scenario: Uploads past the ring are dropped, the bytes stay
 - **WHEN** twenty-four consecutive frames are composed once each on an export device and on a preview device with its full upload cache, each frame twice in a row on the export device
-- **THEN** after every frame the export device holds at most the uploads of the frames in flight and the frame being built, the frame read again at once uploads nothing, the frames are byte for byte the preview device's, and the preview device holds more
+- **THEN** after every frame the export device holds at most the uploads of the frames in flight and the frame being built, the frame read again at once uploads nothing, the frames are byte for byte the preview device's, and a card's preview device holds more
 - **TEST** t2298 (`src/libs/kt-gpu/tests/export_ring.rs`)
+
+#### Scenario: A CPU device's preview keeps two frames of uploads
+- **WHEN** twenty-four consecutive frames are composed on a preview engine of a device of type CPU, each twice in a row
+- **THEN** it holds at most two frames' uploads after every frame (its textures are the process's memory, a second copy of the decoded frames: cache-audit cut 3), and the frame composed again at once uploads nothing; a card's preview keeps its cache
+- **TEST** t3606 (`src/libs/kt-gpu/tests/export_ring.rs`)
 
 ### Requirement: An export claims the preview's growth while it runs
 While an export runs in the process, the memory ledger SHALL grant no tenant anything above its base:
@@ -1333,3 +1345,106 @@ made the export three frames per 52.7 ms, 0.94× real time of a 60 fps project, 
   frames written equal the serial export's; with no latency at most two frames were ever in flight (each was
   handed on at its next submission); both record forty frames from submission to collection
 - **TEST** t2961 (`src/libs/kt-engine/tests/export_pipeline.rs`)
+
+### Requirement: The finished render's numbers are the announced ones and the file's
+An export's result SHALL carry the frames and the samples it announced beside those it wrote. The sound written SHALL be
+exactly the range's samples at 48 kHz, its last burst cut to the range's end. Where a pair differs, the result window's
+final block and the telemetry journal SHALL name both numbers of the pair; the journal's line of a finished render SHALL
+name both pairs always. The file's frame count SHALL be the frames written, and its sound SHALL be as long as the range
+within one frame of the audio codec.
+Why: the owner, v26.10 line 55 — "в окне рендера может быть в конце video 517/516 audio 412672/413364 - не понятно как
+так".
+
+#### Scenario: Frames and samples end at their totals
+- **WHEN** ranges on the frame grid, off it, shorter than a burst and ending inside a burst are exported at 24 and 30 fps
+- **THEN** the written frames and samples equal the announced ones each time; a result whose written numbers are lowered by hand reads both numbers of the pair in the final block
+- **PATH** draw a region by hand → File → Render… → Render… → wait for "Done" → the final block reads one number of frames and no line about a difference
+- **TEST** t3998 (`src/libs/kt-engine/tests/export_totals.rs`), t3998b (`src/apps/kt-app/src/layout_tests.rs`: the final block), live scenario `renderregion` (`src/scripts/live/renderregion.py`: the journal's two pairs are equal; the file's packets and sound length are the journal's)
+
+### Requirement: An export never reads the persistent cache
+Every export body, the render window and the command-line export SHALL open sources by the media's path and never
+by the persistent cache — no frame or source copy — whatever the preview's switch says.
+Why: invariant 11 — the export's bytes depend on the project only; Premiere's "exported my proxies".
+
+#### Scenario: Export bytes are the same with the persistent cache full
+- **WHEN** a project is exported while the preview plays from cached frames and copies, and again in a fresh process with an empty cache folder
+- **THEN** the two files' decoded frames and samples are byte-equal
+- **TEST** t3445 (`src/libs/kt-engine/tests/persistent_cache.rs`)
+
+### Requirement: The RGB to YUV conversion of an export is exact and runs on the composing device
+An export SHALL convert its RGBA composite to the encoder's pixel format (yuv420p, NV12, yuv420p10le,
+p010le, yuv422p10le) by one integer formula — the chosen matrix and range in Q15, chroma sited left
+(horizontal [1 2 1], vertical [1 1] for 4:2:0; horizontal only for 4:2:2), the edge repeated — computed on
+the device that composed the frame, and SHALL read back the encoder's planes, not RGBA. A path with no such
+pass SHALL convert by the CPU reference of the same formula. The stream SHALL be tagged with the left
+chroma location besides its matrix and range. The planes SHALL be a function of the RGBA only, equal on
+every device and machine.
+Why: found-defects 741 — the owner's trace: copy out 2.2 ms a frame (12 % of the wall) and the CPU convert
+26 % of it; export-host-copy D2, D3. swscale's RGB input path has no documented filter to reproduce on a
+device, and its C and SIMD paths differ.
+
+#### Scenario: The formula's values
+- **WHEN** black, white, the six primaries and secondaries, and a one-pixel stripe pattern are converted by the reference for BT.601 and BT.709, limited and full, 8 and 10 bit, 4:2:0 and 4:2:2
+- **THEN** each Y, Cb and Cr equals the value computed by hand from the Q15 coefficients, the stripes give the left-sited chroma, and odd widths and heights repeat the edge
+- **TEST** t3312 (`src/libs/kt-engine/src/yuv.rs`)
+
+#### Scenario: The device pass equals the reference byte for byte
+- **WHEN** composites of odd and even sizes are converted by the pass on the test device into each of the five layouts
+- **THEN** the planes read back equal the CPU reference's byte for byte
+- **TEST** t3313 (`src/libs/kt-gpu/tests/gpu_render.rs`)
+
+#### Scenario: The export reads back planes and stays reproducible
+- **WHEN** a second of the demo project is exported pipelined to a sink that takes yuv420p and then P010 planes — on one device twice and on three devices
+- **THEN** every frame arrives as the layout's planes (the layout's bytes, 1.5 or 3 a pixel), none as RGBA for the worker to convert, the frames are the CPU reference over the RGBA export's frames, and the runs write the same frames
+- **TEST** t3314 (`src/libs/kt-gpu/tests/export_ring.rs`); t1451 (pipelined = serial) keeps holding
+
+#### Scenario: The ring counts the layout's bytes
+- **WHEN** the ring depth is asked for 1080p RGBA, yuv420p and p010le readbacks
+- **THEN** each depth is `RING_BYTES` over the layout's frame bytes, within `RING_MIN..=RING_MAX`
+- **TEST** t3315 (`src/libs/kt-gpu/tests/export_ring.rs`)
+
+#### Scenario: A path without the pass writes the same bytes
+- **WHEN** an export runs on a device with the pass, and again on the same device behind an executor that reads back RGBA only (the path without the pass), into NV12 and 4:2:2 10-bit planes
+- **THEN** the second path's workers convert by the reference, and the frames of the two are equal
+- **TEST** t3318 (`src/libs/kt-gpu/tests/export_ring.rs`)
+
+#### Scenario: The file says where its chroma sits
+- **WHEN** a file written through the export's exact conversion with BT.709 limited is read back by the output probe
+- **THEN** it reports the matrix, the range and the left chroma location, and a saturated red comes back within 6 codes through the decode that reads the tags
+- **TEST** t3319 (`src/libs/kt-engine/tests/render_settings.rs`)
+
+### Requirement: On a card the export composes on the compute host's device
+When an export composes on one card device, that device SHALL be the compute host's (the shared device
+where one device per adapter holds, or the compute host's own in a headless run), so a stream stage's frames
+reach the composite held, not read back. On a software adapter the export SHALL keep its several devices.
+The frames SHALL equal those of the two-device export.
+
+Why: found-defects 663 — the export's stream frames crossed devices like the preview's
+(stream-picture-stays D4).
+
+#### Scenario: A card's export crosses nothing and writes the same frames
+- **WHEN** a project with Datamosh is exported with the export engine on the compute host's device (the host holding pictures), and again on a device of its own; and the decision is asked for a card, a software adapter, a host not holding pictures and `KT_VIDEO_ENGINES`
+- **THEN** the first crosses no stream frame (no `stream_cross` record), the second reads each held picture back, and the two exports' raw frames are equal; only the card holding pictures composes on the host's device (kt-cli asks the host to hold them on a card, `hold_pictures_for_export`)
+- **TEST** t3820 (`src/libs/kt-engine/tests/stream_stage.rs`), t3818 (`src/libs/kt-gpu/tests/compute_shared.rs`)
+
+### Requirement: The render's loudness stands against its norms, per channel
+The loudness measured on the export pass SHALL also give each channel's level, over the blocks the
+summed measurement's gates keep, and each channel's true peak. The render result SHALL show
+integrated loudness, true peak, loudness range, the two channels and, where the document has one, what the program
+stage did, each beside its norm (the project's target ± 1 LU; the project's ceiling; ≤ 20 LU; channels within 3 LU; the
+limiter at most 1 LU), a value out of its norm in amber, and a level 3 LU off or louder than −9 LUFS, a peak over the
+ceiling, a silent channel or channels 6 LU apart in the error colour; the title counts what is out, and what is out is a
+line of the render log. kt-cli export SHALL print the same.
+Why: the owner, `v26.10` line 56 — "на цифры вообще внимание не обратишь такие. а еще не понятно что
+является нормой у каждого параметра"; a mix with one channel silent measured exactly −23 LUFS.
+
+#### Scenario: Each channel on its own
+- **WHEN** a −20 dBFS 1 kHz tone is measured in both channels, with the right one 10 dB down, and with the right one silent
+- **THEN** a balanced channel reads 3 LU under the summed value and −20 dBTP; 10 dB down reads 10 LU down with its own true peak −30 dBTP; a silent channel has no level and no peak while the summed value is the left channel's
+- **TEST** t3106 (`src/libs/kt-fx/tests/loudness.rs`)
+
+#### Scenario: The result table judges each value
+- **WHEN** the result rows are built for a −23 LUFS balanced mix, a −14 mix against a streaming project and against a −23 one, a −0.4 dBTP peak, a silent right channel, channels 10 and 4 LU apart, 2 and 4 LU off and −6 LUFS, a limiter that took 0.4 and 1.6 LU; the table of a bad case is drawn
+- **THEN** a mix at its project's target is plain on every row and the −14 one is bad against −23; the peak, the silent channel, 10 LU apart, 4 LU off and −6 LUFS are bad; 4 LU apart, 2 LU off and 1.6 LU taken are amber; each row prints its norm, the title counts two out, the channels row reads "L -24.0 · R silent LUFS" and carries the bad mark
+- **PATH** File → Render… → Render… → the render finishes → under the summary "Sound — N outside the norm" and the table: Integrated, True peak, Range, Channels L / R, each with its norm in grey beside it → a render with the right channel silent shows "R silent" in red and, under the table, the stretch where it is silent; a click on it moves the cursor there
+- **TEST** t3107 (`src/apps/kt-app/src/layout_tests.rs`), live `render_loudness` (`src/scripts/live/render_loudness.py`)

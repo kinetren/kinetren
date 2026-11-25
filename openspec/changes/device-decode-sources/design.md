@@ -88,8 +88,18 @@ construction) and, on a machine with a real device, `kt-cli probe … --decode-c
 decodes a whole range both ways and counts differing pictures. A deviation found there is a driver
 defect; the file list of the eligibility table gets a `(vendor, codec)` refusal with its reason.
 
-Not a sidecar entry: the proof is cheap and a driver update would need a re-check; a per-process memo
-keyed by (path, size, mtime, device name) is enough.
+Not an entry of the cache folder: the proof is cheap and a driver update would need a re-check. A per-process memo keyed
+by (file, device name) is enough. **The file's key is the source's identity** of `durable-moment-key` D1 (name, size,
+mtime as opened), handed down by kt-media as a number; kt-ffmpeg stats nothing of its own. Not the content id of
+`project-cache-folder` (a whole-file hash the index lane learns later). `open_hw(path, prebuilt, file_key)` takes the key as an argument (kt-ffmpeg's tests pass one). **The proof is recorded after the identity
+check, not in the open**: a path may hold another file by the time it is opened (row 1065: `cursor_for` drops a decoder whose file is not the source's, after the
+open), and a proof written inside the open would stand under the former file's key. So `open_hw` returns its verdict, and `FfmpegSource` calls `kt_ffmpeg::remember_proof(file_key, verdict)` once
+`file_ident(path)` agreed; a cursor refused by the check records nothing.
+
+**Surfaces never meet the caches.** `download` carries a picture to host memory and frees its surface before the frame
+is converted; the burst cache, the stream's input and the moment key see host frames of the source's identity, whoever
+decoded them. A source replaced on disk is a new identity, so a new proof, so a new set of decoders; `adopt` drops the
+old frames and the old worker's decoders drop their pools with it.
 
 ## D3. One device per process; decoders stay on their owner's thread
 
@@ -98,7 +108,9 @@ Today `open_decode_device` runs per `Source::open_hw`, i.e. per decoder: a VA di
 file.
 
 Decision: the process opens its decode device once (first need), under the existing verdict per node,
-and hands each decoder a reference (`av_buffer_ref` of the `AVHWDeviceContext`). Each decoder creates
+and hands each decoder a reference (`av_buffer_ref` of the `AVHWDeviceContext`). The process's own reference is never
+released: `hw_device_opened` (exit-double-free) already puts the driver behind the process's end, and a reference
+dropped in a static destructor would be the crash that row fixed. Each decoder creates
 its own frames context (its surface pool) in `get_format`, and that pool lives and dies with the
 decoder, owned by the thread that owns the decoder. Invariant 5 is about decoder instances: it holds
 unchanged. A source moved between threads by the export's chunks (one owner at a time) is as safe as
@@ -117,30 +129,34 @@ The export's encoder keeps its own device context (hw-encode-context): its open 
 process per open and its failure modes are the encoder's; sharing would tie a decode failure to the
 render's encoder.
 
-## D4. Surfaces are a ledger tenant
+## D4. Surfaces are a ledger tenant (revised 2026-11-24)
 
 A device decoder's pool is `initial_pool_size` surfaces of the coded size in the device's format
 (FFmpeg sizes it from the stream's DPB plus its extra frames). After `get_format` creates the frames
 context, the decoder knows its bytes: `pool × surface bytes` (NV12 = w·h·1.5, P010 = w·h·3, at the
-aligned coded size). A new ledger tenant `Surfaces` holds them.
+aligned coded size). A new ledger tenant `Surfaces` holds them, as a FIXED kind beside `Upload`, `Readback`,
+`Transient` and `Compute`: it is counted and bounded, it takes no part in the growth budget.
 
-- Admission: before a decoder opens on the device, it asks the ledger for its pool's bytes (estimated
-  from the coded size and the codec's maximum DPB before the open, corrected to the real pool after);
-  a refusal opens that decoder on the processor. By D1 the choice changes no byte; it is recorded.
-- Base 0; growth order: after the stream history, before the decoded frames
-  (`[Mix, Kept, History, Surfaces, Frames]`). A refused device decoder costs cores per picture; a
-  refused frame costs a whole decode again — but frames already have their base, and a device decoder
-  does not replace them, it makes each decode cheaper. The order is a design choice, not the owner's:
-  either order is invisible in a frame.
-- A grant taken back does not tear down a decoder mid-run: the owner closes its device decoders at
-  their next reopen (backward seek) or drop, and they reopen on the processor. The kind of a decoder is
-  otherwise kept across `seek_and_reopen` (no flapping).
-- An offline job's hold (the export) is stronger than any cap, as for the other tenants: the export's
-  sources take their surfaces under the export's claim.
-- On iGPUs (the owner's machines) surfaces are system memory — the ledger's own currency. On a
-  discrete card they are video memory, which the ledger does not measure; counting them in the same
-  budget makes the bound conservative, which is the safe side. Precedent: the upload/readback/compute
-  pools already count device buffers there.
+- **Why not a growing kind** (what this design said until 2026-11-24): an export lives under `mem::claim()`
+  (`render_dialog.rs:850`), and a live claim makes the growth budget ZERO (`growth_budget`, `mem.rs:137`). A
+  growing `Surfaces` with base 0 would be granted nothing for the whole render: the export the owner turned
+  the decoder on for would never use it. It would also be cut by whatever the preview's caches want.
+- **The bound.** One process-wide bound, asked when a decoder opens: `min(1 GiB, a quarter of the memory
+  available now)` (`Ledger::available`; unknown: 256 MiB). A decoder whose pool does not fit opens on the
+  processor and says "no room for its surfaces (N MB of M)". A software decoder of the same file holds a pool of
+  its own (frame threads + DPB pictures, not counted anywhere): the device's replaces it, it is not on top of it.
+  Two decoders of a 4K file are ~420 MB, two such files at once still fit; `cursors_for_size` bounds each
+  file as before.
+- **Account.** `kt_time::mem::open(Surfaces, 0)`, then `set(pool bytes)` once the frames context exists; dropped with
+  the decoder. kt-ffmpeg already depends on kt-time (its shutdown order). A tight render (`kt_gpu::memory::tight`)
+  needs no rule: the memory available then is what makes it tight.
+- **No take-back.** A bound that moves down closes nothing. A decoder refused for room asks again at its next
+  backward reopen; every other kind of refusal (flavour, proof, fault) stands for the process. A decoder on
+  the device stays on it across `seek_and_reopen`. By D1 none of it changes a byte.
+- On iGPUs (the owner's machines) surfaces are system memory, the ledger's own currency. On a discrete card
+  they are video memory, which the ledger does not measure; counting them keeps the bound conservative.
+- A replaced source (`add_media` swaps the worker before it stops the old one, `player.rs`) holds two pools for a
+  moment: the new one may be refused for room and asks again at its first reopen.
 
 ## D5. The keys do not change
 
@@ -151,15 +167,23 @@ would be a different filter and different bytes (rejected).
 
 ## D6. The export
 
-Today the sources open at four places, not one:
-- the preview: `util.rs:38` → `kt_media::factory::open_indexed`;
+Today (orch `229c694b`) the sources open at these places, not one:
+- the preview: `util.rs` `open_source` → `kt_media::factory::open_indexed` (kt-cli `preview` and `pause-scan` the same);
 - the render window: `render_dialog.rs` `open_all` → `FfmpegSource::open` (no index);
-- kt-cli export: `open_render_sources` → `FfmpegSource::open_indexed`;
-- kt-cli's other commands: `open_sources` → `FfmpegSource::open_indexed`.
+- kt-cli export: `FfmpegSource::open_indexed` inside `open_render_sources` (since row 1059 the scope of a render's decoder settings);
+- kt-cli's `render` and `probe --time`: `open_sources` → `FfmpegSource::open_indexed`.
 
-This change routes all four through one factory call, `factory::open_source(path, db, Purpose::{Preview,
-Export})`, so the device rule (D2) and the setting (D11) are decided in one place. The render window gains
-the index as a side effect: its sources stop rescanning a file the index holds. Thumbnails, the filmstrip
+These ask facts or sound and stay software: kt-cli's `media` facts (`open_indexed` and `FfmpegSource::open` at their own commands), `gpushare.rs`, `showcase.rs`; what the
+audio-reactive generators hear (`listen::ensure`); the peak pyramid (`util.rs`).
+
+This change routes them through one factory call, `factory::open_source(path, store, Purpose::{Preview, Export, Facts})`, so the device rule (D2) and the setting (D11) are decided in one place. The render window gains the index as a side effect (`MediaStore` of the cache folder, which its job already opens for
+`listen::ensure`): its sources stop rescanning a file the index holds.
+
+**The settings travel with the source.** `DecodeSettings` (`kt-ffmpeg/src/lib.rs:52`) are read on the opening thread, and a
+render opens its sources inside `with_decode_settings`. A cursor is opened later, by `cursor_for`, on whatever thread
+reads the span: outside the scope, so a render's second decoder of a file takes the PREVIEW's settings (found-defects
+1064). `FfmpegSource` keeps the settings it was opened with and opens its cursors under them; the new bit, "decode on the
+card", is the third field of the same struct, so it obeys the same rule. Thumbnails, the filmstrip
 and stills keep their own software opens (D9). Invariant 11: by D1 the bytes are those
 of the processor's decode, so two runs on one device are equal AND an export on a machine without a
 device equals one with it (stronger than required). The export's stage profile adds the pictures per
@@ -167,7 +191,8 @@ decoder kind and the transfer time (`ExportStage` decode record's aux), so a slo
 
 A device decode error mid-stream (a driver faulting after the trial, D2 of hw-segment-decode) reopens
 that decoder on the processor at the same keyframe, marks the file processor-only for the process, and
-the picture is the same (D1). A render does not fail on it.
+the picture is the same (D1). A render does not fail on it, and its frames written equal its frames announced
+(render-result-check; t3306 and t3307 compare them).
 
 ## D7. The trace
 
@@ -179,13 +204,13 @@ the picture is the same (D1). A render does not fail on it.
   decode statistics; `kt-cli trace summary` prints "decode: N pictures on the device (transfer p50 X
   ms), M on the processor (why: …)".
 
-## D8. Rejected: the surface straight into wgpu
+## D8. Rejected for now: the surface straight into wgpu
 
 A VA surface exported as a dma-buf (`vaExportSurfaceHandle`) could be imported into Vulkan
 (`VK_EXT_external_memory_dma_buf`) and sampled by the composite without any host copy. Not now:
 
-- wgpu has no external-memory import; it would go through `create_texture_from_hal` with raw Vulkan
-  per platform (D3D11 shared handles on Windows), outside our one executor's discipline;
+- wgpu 30 does import a dma-buf (export-into-surface D2, whose `surface.rs` is the code this would need), but per platform (D3D11 shared
+  handles on Windows are another path);
 - the burst cache is the only truth about coverage (invariant 4) and holds host frames; a device-only
   frame would be a second cache with its own coverage and its own eviction;
 - the YUV → RGB conversion would move to the device and change the bytes against the stored frames'
@@ -205,10 +230,13 @@ It stays the next step if the owner's trace shows the transfer, not the decode, 
 | Stills, image sequences | no | not an exact video codec |
 | Reel strips (offline render of a nested reel) | inherits | they decode through the export-like offline path: yes |
 | Datamosh stream input, render-ahead, ahead-kept, kept composites | unaffected | they read decoded frames from the cache, which are the same bytes |
-| Loudness, sync, peak pyramid | n/a | audio |
+| Loudness, sync, peak pyramid, audio-reactive series (`listen.rs`) | no | audio |
+| The render-ahead composites, the disk frames of the cache folder (segments) | as the tier | they decode as `segment.rs` |
+| `persistent-cache`'s source copies (`FfmpegCopies::copy`, `kt-media/src/copy.rs`, branch `persistent-cache` 14d30724) | yes, through `open_source` | today it opens by `open_hw` as a segment does: a display per decoder, no bound, and NV12 through swscale. After this change a copy is a file like any other: the same table, proof and layout, and its picture no longer depends on whether a device opened (its `SourceIdent` names the copy's file, not its decoder, so until then two machines may keep two pictures under one key: the lossy tier, never an export) |
+| the copy's MAKING (`FfmpegCopies::make`: `Source::open`, the processor) | yes, `Purpose::Preview` | a long-GOP 4K file is what the device is for; its time is measured there and decides "slow" |
 | Windows (D3D11VA, NV12/P010) | yes | the same layout; wine CI has no device → processor |
 | FFmpeg 6/7/8/9 | yes | no new symbol; `AVHWFramesContext` is in every version module (t961) |
-| The memory ledger | changed | tenant `Surfaces` (D4) |
+| The memory ledger | changed | tenant `Surfaces`, a fixed kind (D4); `memory-breakdown` appends its report-only kinds after it |
 | The GPU arbiter | unchanged | the decode block is a separate engine; it shares memory bandwidth, not shader time; the trace will show if it matters |
 | The export's encoder device | unchanged | its own context (D3) |
 
@@ -216,11 +244,11 @@ It stays the next step if the owner's trace shows the transfer, not the decode, 
 
 - **The switch:** Preferences (`prefs_window.rs`), FFmpeg section, the checkbox "Decode video on the card",
   on by default. It follows the Economy checkbox's pattern:
-  - `StartChoice.decode_on_card: bool` in `user_store.rs`, default `true`, loaded and saved with the rest;
+  - `StartChoice.decode_on_card: bool` in `user_store.rs`, default `true`, loaded (`:847`) and saved (`:960`) with the rest;
   - the setter `set_decode_on_card` is added to t1294's list of the store's writers;
   - a `field_probe::note("prefs.decode_on_card")` and a hint line.
-- **The bit:** a process-wide atomic in kt-ffmpeg, `set_decode_device(bool)` beside `set_decode_threads`
-  (lib.rs). It is set from the store at start and on every toggle. `KT_DECODE_DEVICE=off|on` in the
+- **The bit:** a process-wide atomic in kt-ffmpeg, `set_decode_device(bool)` beside `set_decode_threads` (lib.rs), read into
+  `DecodeSettings { device, .. }` by `opening_settings`. It is set from the store at start and on every toggle. `KT_DECODE_DEVICE=off|on` in the
   environment wins, for A/B runs and tests.
 - **The effect:** read when a decoder is opened. A toggle reaches decoders opened after it; the player
   reopens its sources on the toggle (the same path as a returned file, `replace_media`). An export reads

@@ -37,7 +37,7 @@ impl ListenService {
         let queue: Arc<Mutex<Vec<Task>>> = Arc::new(Mutex::new(Vec::new()));
         let fresh = Arc::new(AtomicBool::new(false));
         let (q, f) = (queue.clone(), fresh.clone());
-        let db: Mutex<Option<(PathBuf, kt_media::index::MediaIndexDb)>> = Mutex::new(None);
+        let db: Mutex<Option<(PathBuf, kt_media::index::MediaStore)>> = Mutex::new(None);
         let lane = kt_time::sched::Lane::service("listen", kt_time::sched::Class::Background, move |ctx| {
             use kt_time::sched::Pump;
             let Some(task) = ({
@@ -50,7 +50,7 @@ impl ListenService {
             if db.as_ref().map(|(p, _)| p) != task.db_path.as_ref() {
                 *db = task.db_path.as_ref().and_then(|p| {
                     let _w = kt_time::block::wait(kt_time::block::kind::SIDECAR);
-                    kt_media::index::MediaIndexDb::open(p).ok().map(|d| (p.clone(), d))
+                    kt_media::index::MediaStore::open(p).ok().map(|d| (p.clone(), d))
                 });
             }
             for (key, file) in task.files {
@@ -60,7 +60,8 @@ impl ListenService {
                 let stop = || ctx.checkpoint();
                 let store = db.as_mut().map(|(_, d)| d as &mut dyn kt_media::listen::SeriesStore);
                 let open = || crate::util::open_source(&file).ok();
-                if let Some(s) = kt_media::listen::series_for(std::path::Path::new(&file), store, open, &stop) {
+                let series = crate::bg::caught(|| kt_media::listen::series_for(std::path::Path::new(&file), store, open, &stop));
+                if let Some(s) = series.flatten() {
                     kt_engine::listen::put(&key, Arc::new(s));
                     f.store(true, Ordering::Release);
                     crate::wake::now();
@@ -85,6 +86,12 @@ impl ListenService {
         }
         self.queue.lock().unwrap().push(Task { db_path, files });
         self.lane.kick();
+    }
+
+    /// The file of `key` came back or was replaced: its series is asked again, at the next ask.
+    pub fn forget(&self, key: &str) {
+        self.project.lock().unwrap().1.remove(key);
+        kt_engine::listen::forget(key);
     }
 
     /// A series arrived since the last call: the player's generators are to be resynced.

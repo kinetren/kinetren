@@ -21,7 +21,7 @@ struct HeldExec {
 impl HeldExec {
     fn new() -> Arc<HeldExec> {
         Arc::new(HeldExec {
-            info: GpuBackendInfo { name: "held".into(), backend: "Test".into(), software: true },
+            info: GpuBackendInfo { name: "held".into(), backend: "Test".into(), software: true, driver: String::new() },
             open: Mutex::new(false),
             cv: Condvar::new(),
             started: AtomicU32::new(0),
@@ -191,7 +191,7 @@ impl VideoGpuExec for KeptExec {
 #[test]
 fn t1843_the_bars_never_wait_for_the_executor() {
     let exec = Arc::new(KeptExec {
-        info: GpuBackendInfo { name: "kept".into(), backend: "Test".into(), software: true },
+        info: GpuBackendInfo { name: "kept".into(), backend: "Test".into(), software: true, driver: String::new() },
         keys_open: Mutex::new(true),
         cv: Condvar::new(),
         asked: AtomicU32::new(0),
@@ -225,4 +225,45 @@ fn t1843_the_bars_never_wait_for_the_executor() {
         let (runs, pending) = p.final_video_runs();
         !pending && covers(&runs)
     });
+}
+
+/// An executor that panics on its first composite.
+struct PanicsOnce {
+    inner: Arc<HeldExec>,
+    first: std::sync::atomic::AtomicBool,
+}
+
+impl VideoGpuExec for PanicsOnce {
+    fn execute_into(&self, p: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
+        if self.first.swap(false, Ordering::SeqCst) {
+            panic!("t3723: a composite that panics");
+        }
+        self.inner.execute_into(p, out)
+    }
+
+    fn info(&self) -> &GpuBackendInfo {
+        self.inner.info()
+    }
+}
+
+/// Test t3723 (one-process-tests): a composite that panics is a frame without a picture; the preview's
+/// thread answers it and composes the next one. It died, and no frame came for the rest of the run.
+#[test]
+fn t3723_a_composite_that_panics_does_not_end_the_preview() {
+    let inner = HeldExec::new();
+    inner.release();
+    let p = player();
+    p.set_video_gpu(Some(Arc::new(PanicsOnce { inner, first: std::sync::atomic::AtomicBool::new(true) })));
+    let answer = |at: Tick| {
+        let seq = p.ask_preview(at, None);
+        let mut got = None;
+        wait_until("the ask was never answered", || {
+            got = p.take_composed(Duration::from_millis(5)).filter(|c| c.seq == seq);
+            got.is_some()
+        });
+        got.unwrap()
+    };
+    assert!(!answer(Tick(0)).complete, "the panicked composite is no picture");
+    let next = answer(Tick(3600));
+    assert_eq!(next.rgba, vec![1, 2, 3, 255], "the next frame is composed");
 }

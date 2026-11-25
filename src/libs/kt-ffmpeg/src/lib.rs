@@ -82,13 +82,11 @@ pub fn opening_settings() -> DecodeSettings {
     })
 }
 
-#[cfg_attr(not(feature = "ffmpeg"), allow(dead_code))]
 pub(crate) fn rgba_threads() -> usize {
     opening_settings().rgba_threads.max(1) as usize
 }
 
 /// What the `threads` option of a video decoder says.
-#[cfg_attr(not(feature = "ffmpeg"), allow(dead_code))]
 pub(crate) fn decode_threads() -> String {
     match opening_settings().decode_threads {
         0 => "auto".to_string(),
@@ -1062,6 +1060,36 @@ impl Source {
             Source::V7(s) => s.read_video_span_sizes(keys, emit),
             Source::V8(s) => s.read_video_span_sizes(keys, emit),
             Source::V9(s) => s.read_video_span_sizes(keys, emit),
+        }
+    }
+
+    /// Where the last audio packet starts.
+    pub fn audio_end(&self) -> Option<Tick> {
+        match self {
+            Source::V6(s) => s.audio_end(),
+            Source::V7(s) => s.audio_end(),
+            Source::V8(s) => s.audio_end(),
+            Source::V9(s) => s.audio_end(),
+        }
+    }
+
+    /// The video stream's time base (num, den).
+    pub fn video_time_base(&self) -> Option<(i32, i32)> {
+        match self {
+            Source::V6(s) => s.video_time_base(),
+            Source::V7(s) => s.video_time_base(),
+            Source::V8(s) => s.video_time_base(),
+            Source::V9(s) => s.video_time_base(),
+        }
+    }
+
+    /// The next picture in order with its own time in the stream's time base (a source copy).
+    pub fn next_video(&mut self, w: u32, h: u32) -> Result<Option<(i64, RgbaFrame)>, FfError> {
+        match self {
+            Source::V6(s) => s.next_video(w, h),
+            Source::V7(s) => s.next_video(w, h),
+            Source::V8(s) => s.next_video(w, h),
+            Source::V9(s) => s.next_video(w, h),
         }
     }
 

@@ -227,6 +227,12 @@ class Shooter:
         try:
             app.resize(*WINDOW)
             self.require(step, app.wait_loaded(), "project on screen")
+            # the picture is a CONSEQUENCE the program reports: a complete frame drawn and no Loading
+            # over it. A screen unchanged for half a second is neither — Loading stands still as long
+            # as the sources take to open, and under four workers that outlasted it (finish-23b: the
+            # shot of "Loading", lit 0.8%)
+            self.require(step, app.until(lambda: self.pictured(app), timeout=self.kt.TEST_DEADLINE),
+                         "a complete frame in the preview, with no Loading over it")
             still = self.still(app, step, "screen settled (thumbnails and waveforms loaded)")
             lit = self.preview_lit(app, still)
             self.require(step, lit > 0.01, f"decoded frame in the preview (lit {lit:.1%})")
@@ -234,6 +240,13 @@ class Shooter:
             self.close(app)
             raise
         return app
+
+    @staticmethod
+    def pictured(app):
+        g = app.geom()
+        names = {f["param"] for f in g.get("fields", [])}
+        c = g.get("compose", {})
+        return c.get("picture") and c.get("complete_taken") and "preview.loading" not in names
 
     @staticmethod
     def close(app):

@@ -52,7 +52,9 @@ pub trait SegmentCodec: Send + Sync {
     /// Open a writer of `w`×`h` at `fps`; `Err` — no encoder this codec accepts opens (no hardware
     /// encoder: the tier is off on this machine, and the reason says so).
     fn writer(&self, path: &Path, w: u32, h: u32, fps: u32) -> Result<Box<dyn SegmentWriter>, String>;
-    fn reader(&self, path: &Path) -> Result<Box<dyn SegmentReader>, String>;
+    /// Read a segment written at `fps`: its rate is the manifest's. Matroska keeps a frame's time in whole
+    /// milliseconds, and what a container says of its rate is guessed from them (found-defects 981).
+    fn reader(&self, path: &Path, fps: u32) -> Result<Box<dyn SegmentReader>, String>;
     /// The segment's file extension.
     fn extension(&self) -> &str {
         "mkv"
@@ -103,7 +105,7 @@ impl SegmentCodec for RawSegments {
         let f = std::fs::File::create(path).map_err(|e| e.to_string())?;
         Ok(Box::new(RawWriter { file: std::io::BufWriter::new(f), n: 0 }))
     }
-    fn reader(&self, path: &Path) -> Result<Box<dyn SegmentReader>, String> {
+    fn reader(&self, path: &Path, _fps: u32) -> Result<Box<dyn SegmentReader>, String> {
         Ok(Box::new(RawReader(std::fs::File::open(path).map_err(|e| e.to_string())?)))
     }
     fn extension(&self) -> &str {
@@ -202,7 +204,8 @@ pub mod ffmpeg {
         fn frame(&mut self, index: u32, w: u32, h: u32, out: &mut Vec<u8>) -> Result<(), String> {
             let f = self
                 .src
-                .read_video_frame(Tick(index as i64 * self.step), Some(Quality { width: w, height: h }))
+                // the middle of the frame: its own time is rounded to a millisecond, either way
+                .read_video_frame(Tick(index as i64 * self.step + self.step / 2), Some(Quality { width: w, height: h }))
                 .map_err(|e| format!("{e:?}"))?;
             if (f.width, f.height) != (w, h) {
                 return Err(format!("a frame of {}×{} in a {w}×{h} segment", f.width, f.height));
@@ -257,13 +260,11 @@ pub mod ffmpeg {
             Ok(Box::new(Writer { mux: Some(mux), path: path.to_path_buf(), encoder: report.encoder }))
         }
 
-        fn reader(&self, path: &Path) -> Result<Box<dyn SegmentReader>, String> {
+        fn reader(&self, path: &Path, fps: u32) -> Result<Box<dyn SegmentReader>, String> {
             // the owner's rule (row 775): the segments decode on the machine's device, the processor
             // only where none opens — the encoder that wrote them was a device's too
             let src = crate::ffmpeg::FfmpegSource::open_hw(&path.to_string_lossy()).map_err(|e| format!("{e:?}"))?;
-            let (num, den) = src.info().fps.unwrap_or((25, 1));
-            let step = kt_time::TICK_HZ * den.max(1) as i64 / num.max(1) as i64;
-            Ok(Box::new(Reader { src, step }))
+            Ok(Box::new(Reader { src, step: kt_time::TICK_HZ / fps.max(1) as i64 }))
         }
     }
 }

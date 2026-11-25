@@ -23,8 +23,8 @@ outside the host-provided position.
 The registry SHALL refuse, at registration and before any frame or sample is produced: a
 duplicate id; an id that is not lower `snake_case`; a video kernel that declares state between
 frames, a tail or a look-ahead; any kernel that declares it must not be called concurrently; an
-audio look-ahead that can reach `MIN_PREROLL_FRAMES` (4800); a built-in point-wise or barrier video plugin without a
-GPU kernel; a geometry-class plugin that does not express its map in the host's closed
+audio look-ahead that can reach `MIN_PREROLL_FRAMES` (4800); a point-wise or barrier video plugin, built-in or not, without a
+GPU kernel (the device is the one executor of a frame); a geometry-class plugin that does not express its map in the host's closed
 primitive set. A refusal SHALL name the plugin id and the declaration that failed.
 Why: F-EXT-003 — the real content of a plugin API is what the host must promise and what the
 plugin must confess; checking the confession at load makes refusal cheap and early. Video
@@ -634,3 +634,17 @@ Why: stream-round-trips D1 — a walk's state between batches and walks without 
 - **WHEN** pictures fill the memo's bound and live entries pass `LIVE_BYTES`
 - **THEN** no live entry is evicted by the pictures, the live tier evicts its own least recently used, `drop_unpinned` keeps it and `clear` empties it
 - **TEST** t2709 (`src/libs/kt-plugin-api/tests/memo_live.rs`)
+
+### Requirement: A passport names at most three main rows per lane
+A plugin's UI declaration SHALL be able to name its main rows: at most three, each an existing
+numeric or choice row of its passport; a device's sound half names its own in its own passport. A
+simulated device (a kind with a pair) SHALL name them, or the registry SHALL refuse it. A plugin that
+names none SHALL get its first three numeric smooth rows. The node editor SHALL show exactly these
+rows in a node.
+Why: kkt-26.11.18b U8 — "2-3 ползунка, но и нужно учесть как уместить огромные эффекты типо isp
+чтобы не нагромождали": the node shows what matters and never grows with an 80-row passport.
+
+#### Scenario: Every built-in plugin has a valid main set
+- **WHEN** every built-in plugin of the registry is asked its main rows for each lane
+- **THEN** each set has at most three rows, each row exists in its passport and is numeric or a choice; every paired kind declares its set explicitly; a test plugin pair without one is refused at registration
+- **TEST** t2998 (`src/libs/kt-plugins-builtin/tests/main_rows.rs`)

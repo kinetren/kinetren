@@ -467,3 +467,45 @@ fn t714_order_equals_read_on_every_conform_rule() {
     assert!(complete, "every layer found its own decode size");
     assert_eq!(frame.len(), (q.width * q.height * 4) as usize);
 }
+
+/// Test t3262 (found-defects 843; capability `video-plan`): the decode step is the clip's MAXIMUM over its
+/// length, so a moment can ask nothing of it: a zoom curve at 1, a chain whose resolved slots are all
+/// identity. Such a moment composes — the step's frame comes back to the canvas — at every kind of carrier
+/// of the curve, with a strength and with a mask. A debug build panicked there.
+#[test]
+fn t3262_a_moment_that_asks_nothing_of_the_decode_step_composes() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    let q = Quality { width: 128, height: 72 };
+    let curve = || ParamCurve {
+        param: "zoom".into(),
+        keys: vec![AutoKey::at(Tick(0), 1.0), AutoKey::at(Tick(SEC), 1.0), AutoKey::at(Tick(2 * SEC), 4.0)],
+        source: Default::default(),
+    };
+    let slot = project(128, 72, vec![zoom(1.0)], vec![vec![curve()]]);
+    let mut node = project(128, 72, vec![], vec![]);
+    node.clips[0].geometry_auto = vec![curve()];
+    let mut masked = slot.clone();
+    masked.clips[0].masks.picture = vec![Mask::new(1, "m", MaskShape::Rect { cx: 0.5, cy: 0.5, w: 1.0, h: 1.0, rot: 0.0, round: 0.0 })];
+    let mut half = slot.clone();
+    half.clips[0].opacity = 0.5;
+    let mut track = slot.clone();
+    track.tracks[0].opacity = 0.5;
+    for (name, p) in [("a slot", slot), ("the Geometry node", node), ("a mask", masked), ("a level", half), ("a track's level", track)] {
+        p.validate().unwrap();
+        let vr = VideoRenderer::new_with_natives(&p, &natives(512, 288));
+        let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+        let mut src = CheckerSource::new(Tick(10 * SEC), 512, 288);
+        for t in [Tick(0), Tick(SEC / 2), Tick(SEC + SEC / 2)] {
+            for (media, pts, dq) in vr.layers_at(t, q) {
+                assert_eq!(dq, Quality { width: 512, height: 288 }, "{name}: scene: the step");
+                cache.insert_video(kt_engine::source_id(media), Some(dq), video_cache_idx(pts), src.read_video_frame(pts, Some(dq)).unwrap().into());
+            }
+            let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, t, q);
+            assert!(complete, "{name} at {t:?}: the layer has a size of its own and no picture");
+            assert_eq!(out.len(), (q.width * q.height * 4) as usize);
+            assert!(out.chunks_exact(4).any(|p| p[0] > 0 || p[1] > 0 || p[2] > 0), "{name} at {t:?}: black");
+        }
+    }
+}

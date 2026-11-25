@@ -1,7 +1,7 @@
 # Proposal: multicam
 
-> DESIGN ONLY (spec session, 2026-11-20). Code starts on the owner's word after his answers to the
-> questions at the end. Tests reserved: t3505–t3519.
+> DESIGN, revision 2 (2026-11-25), base `fc60a5d9`: implementation-ready after `shared-events`. The owner answered Q1–Q3 (A18).
+> Code starts on the orchestrator's go. Tests: t3505–t3514, t4247–t4249.
 
 ## Why
 
@@ -18,24 +18,16 @@ the cache and the interface, not invariant 5.
 
 ## What Changes
 
-- **A multicam composition**: "Create multicam" over selected clips builds a composition whose video
-  tracks are the ANGLES (each with its linked audio), aligned by sound (the existing sync), by timecode or
-  by start; an instance replaces the selection. Per-angle effects live inside it, on the angle's track
-  (grade each camera once); effects on the instance apply to what plays.
-- **An instance shows one angle**: an instance carries its active angle (video) and its audio choice; the
-  engine composes only that angle's track, so inactive angles cost no decode in the edit.
-- **Switching is an edit of the instance, not a morpher**: cut-and-switch splits the instance at the
-  playhead and sets the right piece's angle; switch-only changes the angle of the piece under the
-  playhead. It works while playing; one live pass (Play → switches → Stop) is ONE undo step.
-- **The angle viewer**: while the playhead stands on a multicam instance, the preview area can show the
-  angles as a grid (4 / 9 / 16) beside or instead of the program picture (Q3), the active one outlined;
-  a click on a cell, a digit 1–9 or the menu does the same switch (UI rule 17); Alt switches without a
-  cut. Cells compose at a coarse size through the one plan at a lower priority than the program frame.
-- **Sound does not follow the video by default** (Q2): the instance's audio stays on the chosen angle's
-  sound (or a separate recorder track) through every cut; a mode "audio follows video" exists per
-  instance.
-- **Flatten**: "Expand multicam" turns pieces into ordinary events of their active angles (the existing
-  `expand_instance`, keeping only the active angle per piece).
+- **A multicam composition**: "Create multicam…" over selected clips builds a composition whose video tracks are the ANGLES (each with its
+  linked audio), aligned by sound, by timecode (now read from the files) or by start. Per-angle effects live inside it.
+- **An instance plays one angle and one sound**: two handles of the composition, set per piece as composition parameters are; hidden angles
+  cost no decode.
+- **Switching is an edit of the piece, not a morpher**: a click on a cell or a digit cuts and switches; with Shift it switches without a cut.
+  It works while playing; one pass from Play to Stop is ONE undo step.
+- **The sound does not jump**: one chosen sound through every cut by default, and the cut itself is not heard (the composition's sound stream goes
+  on across it); "Audio follows the angle" per instance ("сделай опцию звук за ракурсом").
+- **The angle grid** in the preview area, with each angle's own effects, never ahead of the program picture.
+- **Expand** turns pieces into ordinary events.
 
 ## Capabilities
 
@@ -54,22 +46,18 @@ the cache and the interface, not invariant 5.
 
 ## Impact
 
-- kt-model: `Sequence.multicam: Option<Multicam { angles: Vec<Angle { video: TrackId, audio:
-  Option<TrackId>, name }> }>`, `ClipEvent.angle: Option<AngleSel { video: u16, audio: AudioSel }>`;
-  `resolve_reel` applies the selection (other angle tracks drop out); commands `CreateMulticam`
-  (an ops batch), `SetAngle`; ops `cut_switch`; validation.
-- kt-engine: nothing new in the plan — a resolved reel already omits the dropped tracks; the grid cells
-  are plans of the reel with each angle selected, composed by the compose thread at class `background`.
-- kt-app: the angle viewer in the preview area, digits in `controls.rs`, the create dialog (sync method),
-  menus, i18n ×5; live passes coalesced (`apply_coalesced`).
-- Format: next free version by content; a row in "What OTIO export loses".
-- Idle: on a pause the grid composes each cell once per moment and stops; at rest nothing runs.
+- kt-model: `Sequence.multicam`, `ParamOwner::Angle`, reserved handles, `ops::{create_multicam, cut_switch}`, `SetAngle`, validation; the next file
+  version by content.
+- kt-ffmpeg, kt-media: the source timecode. kt-engine: the nest stream handed on at a split, `AngleCells`.
+- kt-app: the dialog, the grid, digits in `controls.rs`, menus, i18n ×5. OTIO: the planned row. Idle: nothing without the grid.
 
 ## Questions to the owner
 
-Decided (2026-11-20, `kkt-26.11.20` A18, his Q28–Q30): Q1 (a), a composition of angles; Q2 (a) "п.1 и сделай опцию
-звук за ракурсом" — one chosen sound by default, and an "Audio follows the angle" option on the instance (D2's
-`AudioSel` follow form); Q3 (a), the grid in the preview area.
+Decided (2026-11-20, `kkt-26.11.20.txt` lines 28–29, A18): "Q28 multicam: «Композиция ракурсов (Recommended)»" — Q1 (a); "Q29/Q30
+multicam sound and grid: «п.1 и сделай опцию звук за ракурсом»" — Q2 (a) with the option of the sound following the angle, Q3 (a). Read again on
+2026-11-25: "п.1" answers the pair Q29/Q30, option (a) of each; the option he adds is the per-instance mode of Q2 (a). His M1 (line 55, whole above)
+forbids the morpher's UI and features "куда-попало": the angle stands where a composition's parameters stand, the grid on the preview. No open
+question.
 
 The questions as asked:
 

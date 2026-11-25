@@ -164,10 +164,16 @@ pub fn run(project: &kt_model::Project, path: &str, from: f64, to: f64, laps: us
         }
     }
     let t_build = Instant::now();
-    let video = kt_engine::VideoRenderer::new_with_facts(project, &facts);
+    let mut video = kt_engine::VideoRenderer::new_with_facts(project, &facts);
     let build_ms = t_build.elapsed().as_secs_f64() * 1e3;
     let q = size.unwrap_or(kt_media::Quality { width: project.settings.width, height: project.settings.height });
-    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig { max_audio_bytes: 1, max_video_bytes: 3 << 30 });
+    let cache = std::sync::Arc::new(kt_cache::BurstCache::new(kt_cache::CacheConfig { max_audio_bytes: 1, max_video_bytes: 3 << 30 }));
+    for m in &project.media {
+        if let Some(s) = fetcher.source_mut(m.id) {
+            kt_engine::export::adopt_source(&cache, m.id, s.as_ref());
+        }
+    }
+    video.set_source_idents(cache.ident_reader());
     let step = video.grid.frame_step().max(1);
     let t0 = video.grid.align_floor(Tick::from_secs_f64(from));
     let t1 = Tick::from_secs_f64(to);

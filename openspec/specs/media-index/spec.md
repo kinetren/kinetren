@@ -4,7 +4,7 @@
 
 Media sources and all their upkeep: the system FFmpeg through dlopen, ownership of the decoder by
 one thread, the cache of bursts as the only truth about coverage, prefetch along the playback grid,
-the sidecar index DB (peaks, thumbnails, batch index, analysis), and offline analysis of the material — so that
+the media index (peaks, thumbnails, batch index, analysis) and the project's cache folder, and offline analysis of the material — so that
 not a single UI gesture generates a decode on demand.
 
 ## Requirements
@@ -297,7 +297,7 @@ on one frame gave 885 coverage requests under the mutex on every pass.
 - **TEST** t287 (`src/libs/kt-engine/tests/scheduler.rs`)
 
 ### Requirement: Timeline scroll/zoom does not generate decode requests
-Waveforms SHALL be read from the peak pyramid (memory/DB), thumbnails — from the strip in the sidecar DB,
+Waveforms SHALL be read from the peak pyramid (memory/DB), thumbnails — from the strip in the media index,
 warmth bars — from the coverage of the cache; while there is no index — placeholders. The keys of the thumbnails SHALL
 be quantized from the ZERO OF THE FILE (the common cache of the bin and the timeline). Everything the thumbnail worker may "fail to get"
 (the duration, decoding of a key) SHALL publish the failure, so that a repeated request is not queued; the thumbnail sources are kept in an LRU, and not reset wholesale.
@@ -312,7 +312,7 @@ decode and a bloated DB.
 
 #### Scenario: The peak pyramid is exact and survives reopening
 - **WHEN** the pyramid is built and the project is opened again
-- **THEN** the levels equal the naive recomputation; the repeated opening reads from the DB without decode
+- **THEN** the levels equal the naive recomputation; the repeated opening reads the entries without decode
 - **TEST** t15 (`src/libs/kt-media/tests/index_db.rs`)
 
 #### Scenario: Peaks without a DB and thumbnails for media added later
@@ -327,7 +327,7 @@ decode and a bloated DB.
 
 #### Scenario: A peak pass stops when it is told to
 - **WHEN** the stop is asked before each burst and says yes after ten
-- **THEN** ten bursts are read, and nothing of the pass reaches the sidecar
+- **THEN** ten bursts are read, and nothing of the pass reaches the media index
 - **TEST** t1741 (`src/libs/kt-media/tests/index_db.rs`)
 
 #### Scenario: Negative thumbnail caches
@@ -344,44 +344,6 @@ decode and a bloated DB.
 - **WHEN** there are more sources than the capacity; the bin and the timeline ask for one moment of a file
 - **THEN** exactly the oldest is evicted, an access moves an entry to the tail; the key is one for both
 - **TEST** t71, t62 (`src/apps/kt-app/src/thumbs.rs`)
-
-### Requirement: Sidecar index DB — a cache invalidated by file identity and additive tables
-`<project>.ktindex.db` SHALL be a cache: loss or corruption is not an error, the DB is recreated.
-The identity of the media is path + size + mtime + xxhash: if size+mtime match → trust; if mtime changed →
-recompute the hash, if it matches → reuse; if it does not match → rebuild ONLY this media_id.
-The batch index SHALL be persisted so that a repeated opening of the file does not scan it.
-New tables SHALL be added additively (`IF NOT EXISTS`), without a schema bump; the analysis numbers
-are stored as integers ×100. Invalidation SHALL remove the records where the media stands on EITHER side of a pair.
-DB errors are cache errors: a silent fallback to the ordinary opening. The UI thread does not touch the DB.
-Why: the old audio seek kept a coarse byte index and rebuilt it on every launch (defect j);
-a schema bump wipes the batch index, peaks and thumbnails of all media of the project; f64 in the DB gives a different number in the
-last digit on "recomputed the same thing"; a uniform `DELETE WHERE media_id` does not see the pair
-where the replaced file is the second one.
-
-#### Scenario: Invalidation by content
-- **WHEN** the content of a file has changed; the mtime is touched without a change of content; the DB is corrupt
-- **THEN** only the sections of this media are rebuilt (the neighbours are intact); the hash matched — reuse; the corrupt DB is recreated without a panic
-- **TEST** t16 (`src/libs/kt-media/tests/index_db.rs`)
-
-#### Scenario: A locked sidecar is a cache miss, not a broken DB
-- **WHEN** another connection of the same process holds the sidecar exclusively past the busy timeout while it is opened; then a garbage DB with stale `-wal`/`-shm` files is opened
-- **THEN** the first opening returns an error and leaves the file and its records intact (they are reused once the lock is gone); only a DB that is not a database, is corrupt or has a foreign schema is recreated, and its `-wal`/`-shm` go with it
-- **TEST** t872 (`src/libs/kt-media/tests/index_db.rs`); the SIGBUS it removes was seen in t640 (`src/apps/kt-app/src/layout_tests.rs`) under load
-
-#### Scenario: The batch index survives opening
-- **WHEN** the file is opened a second time with the same DB; the file has changed
-- **THEN** the second opening does not scan, the index is byte-for-byte equal to a fresh one and functionally equivalent (keyframe_before, sample-accurate audio); the changed file is rescanned
-- **TEST** t34 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`)
-
-#### Scenario: Analysis tables are additive and exact, invalidation is two-sided
-- **WHEN** loudness and sync offset are written and read; the file is replaced
-- **THEN** the round trip is byte-exact (integers ×100); for the replaced file the loudness and ALL pairs involving it are removed, a foreign pair stays intact; the observer of the pyramid sees every burst and does not change it
-- **TEST** t401, t402, t401b (`src/libs/kt-media/tests/index_db.rs`)
-
-#### Scenario: The reel preview is keyed by content (container: capability `compositions`)
-- **WHEN** a reel without a file puts frames and peaks into the sidecar
-- **THEN** the key is (reel, revision, file fingerprint); any divergence → None, one version per reel; `purge_media` does not touch these tables
-- **TEST** t639 (`src/libs/kt-media/tests/index_db.rs`)
 
 ### Requirement: A missing source is a placeholder; returning means swapping on the fly
 An unavailable file SHALL get a `PlaceholderSource` — an ordinary `MediaSource` in an ordinary
@@ -583,26 +545,6 @@ itself can name, and the Flatpak guide sends people to this report.
   candidate of the OS cascade, each "opens" or naming the failing part, and the run ends normally
 - **TEST** t964 (`src/apps/kt-cli/tests/cli.rs`)
 
-### Requirement: Simultaneous openings of one sidecar all succeed
-`MediaIndexDb::open` SHALL succeed for every one of several threads of one process opening the same
-sidecar at the same moment, both when the file does not exist yet and when it exists and no connection
-holds it. The setup of an opening (journal mode, schema) SHALL be taken in turn per sidecar path inside
-the process; an opening of a sidecar that is already in WAL mode with the current schema SHALL NOT
-write; the connection returned SHALL be the opening thread's own. A sidecar held past the busy timeout
-by someone else stays a cache miss (t872).
-Why: a project opening starts the index worker, the thumbnail worker, the reel-preview job and the
-sources together, each opening the sidecar. Every opening wrote (`PRAGMA journal_mode=WAL`, the
-schema); SQLite returned `SQLITE_BUSY` from the journal switch in 0.2 ms without the busy handler, and
-on a new file a dozen openers outwaited the 5 s timeout. The reel preview then lost its disk tier and
-rendered again on reopening — t640 red on a quiet machine, the owner's R.67 complaint by chance.
-
-#### Scenario: A dozen threads open one sidecar at once
-- **WHEN** twelve threads released by one barrier open the same new sidecar, twenty times; then the
-  same twelve open it again after every connection has closed
-- **THEN** every opening succeeds (before: one to three per run failed with "database is locked")
-- **TEST** t1171 (`src/libs/kt-media/tests/index_db.rs`); its UI consequence — the second opening
-  renders the reel zero times — t640 (`src/apps/kt-app/src/layout_tests.rs`)
-
 ### Requirement: The video look-ahead fits the cache until it is read
 One video prefetch pass SHALL ask for the look-ahead window measured by what it asks for: every
 layer of every frame at its own decode size, nearest first, cut at a whole frame within half the
@@ -657,35 +599,6 @@ seek left behind and the frames the picture skipped, none of which was still wan
 - **WHEN** a warmed window is left by a seek and evicted unread; then an entry the latest pass still wants is evicted unread; then an audio burst is evicted unread
 - **THEN** the first are counted as abandoned, not as thrash; the second and the audio burst are thrash
 - **TEST** t1417b (`src/libs/kt-cache/src/lib.rs`)
-
-### Requirement: No lock of the sidecar is held across an fsync
-A connection to the sidecar SHALL NOT hold a SQLite lock that another opening, reader or writer
-waits on while the disk syncs:
-- a commit SHALL NOT sync the WAL (`synchronous=NORMAL` in WAL mode);
-- closing a connection SHALL NOT checkpoint, sync or take the database's EXCLUSIVE lock (no
-  checkpoint on close; the passive auto-checkpoint folds the WAL in).
-
-Both SHALL be set on every opening and SHALL NOT write the file. The `-wal` and `-shm` files MAY
-stay next to the sidecar after the last connection closes.
-
-Why: on the build machine's spinning disks one fsync under a parallel test run took 137 s. A commit
-synced under the write lock, and the last close checkpointed and synced under the EXCLUSIVE lock
-every opening needs. Connections waiting behind them gave up after the 5 s busy timeout, and the
-error became a cache miss: t1171 `DatabaseBusy`, t640 a re-rendered reel, t411 a loudness measured
-again instead of read back. These were red only in the whole-workspace finish.sh run. The same
-stall happens next to a person's project on a spinning disk.
-
-#### Scenario: Two threads use a ready sidecar while every fsync is stalled
-- **WHEN** a ready sidecar was written while the disk answered; then every fsync blocks until
-  released, and two threads released by one barrier each open the sidecar, write a media record and
-  a loudness, read it back and close, five times
-- **THEN** both threads finish within 3 s (under the 5 s busy timeout), with no error and no fsync
-  attempted. Before: one thread's commit hung in the fsync, and the other failed with `DatabaseBusy`
-  ("database is locked") after 5 s; with `synchronous=NORMAL` alone, a close hung in its checkpoint; without the close checkpoint
-  alone, a commit hung and the other thread's write failed with `DatabaseBusy`
-- **TEST** t1460 (`src/libs/kt-media/tests/sidecar_stall.rs`); its consequences in the
-  whole-workspace run: t1171 (`src/libs/kt-media/tests/index_db.rs`), t640 and t1413
-  (`src/apps/kt-app/src/layout_tests.rs`), t411 (`src/apps/kt-app/src/util.rs`)
 
 ### Requirement: The decoder reads what it is asked, once, without corrupting memory
 The RGBA conversion of a decoded picture SHALL write into a frame buffer with
@@ -1002,6 +915,11 @@ rest; a filmstrip wider than its cap ordered its own pictures round in a circle 
 - **THEN** the running job sees the close and the queued one never runs; only the newest save runs; the checkpoint releases; the next job of the panicked lane runs
 - **TEST** t2232 (`src/libs/kt-time/src/sched/tests.rs`)
 
+#### Scenario: An abandoned answer ends its wait
+- **WHEN** the job whose answer is waited for is superseded or cancelled before it answers
+- **THEN** the waiter is told at once, not at the end of its grace
+- **TEST** t3725 (`src/libs/kt-time/src/sched/tests.rs`)
+
 #### Scenario: The cap never evicts what is on screen
 - **WHEN** ten pictures stand under a cap of four and six of them were drawn this frame; then two frames pass
 - **THEN** only the four undrawn are evicted; after the frames move on the cap holds, oldest first
@@ -1099,6 +1017,50 @@ evicted on every lap (spikes of 537/s), and the preview quality changed nothing 
 - **THEN** the job's cache evicts against its base; the dropped cache's want leaves the ledger, but a newer want stands
 - **TEST** t2391, t2392 (`src/libs/kt-cache/src/lib.rs`)
 
+### Requirement: A moment held final costs no decoded frame
+The look-ahead SHALL skip every moment whose final frame the program holds for the current state — a
+kept composite of the display's executor or a moment of the disk prerender — asking none of its source
+frames and none of its stream history. The decoded-frame cache's want SHALL leave out the same moments,
+in memory and on disk alike (a moment's key does not depend on what is decoded, capability `video-plan`):
+the window and the loop without them, the window's peak forgotten when their number moves. The loop SHALL be
+counted again when the held number fell, when it moved by a sixteenth of the loop, and at a lap's end, not on
+every pass. A moment whose kept composite waits to be checked against an edit SHALL count as held until the check
+answers, at most 200 ms after the edit; the prefetch SHALL ask for that check itself, and it SHALL go from the
+playhead outward. A moment is held for the preview quality it was made at only. The cap still grows with what the window needs (kkt-26.11.10 J4) and never goes
+below the cache's base.
+Why: the cache audit (kkt-26.11.22 D2, cut 1) — on the heavy showcase the decoded frames held 7.9 GB of
+10.7 GB resident: the window skipped the kept composites but not the disk prerender, and the want was a
+peak and a loop counted over moments already held. Found-defects 965: while a kept composite's key contained its
+decoded frames, leaving them out of the want lost the composites, and a loop that played from them at 21 frames a
+second fell to 2; with the key of `durable-moment-key` it does not.
+
+#### Scenario: Held moments neither decode nor count
+- **WHEN** a loop over three 640×360 layers is walked by the prefetch passes once with nothing held, then with half its moments held
+- **THEN** the loop's bytes without the held half are half the loop; with half held no source frame of a held moment is asked, and the cap comes down below the whole loop's while still holding the other half and its eighth
+- **TEST** t3605 (`src/libs/kt-engine/tests/frames_cache_growth.rs`)
+
+#### Scenario: A loop plays from its kept composites after its sources are evicted
+- **PATH** put the loop region over four seconds of a dense edit → press Space → the first laps compose, the bars turn bright → let it play on → every lap plays whole, and the memory of decoded frames in Diagnostics has come down
+- **WHEN** a player plays a loop whose frames exceed the cache's base for five laps on the test kit's executor, with a lap of another range between them that evicts the rest
+- **THEN** once the loop is kept whole its sources leave the want and the cap is the base; the laps after that show every moment as a replay, ask no decode and report no incomplete frame, and no moment's key changes from lap to lap
+- **TEST** t4112 (`src/libs/kt-engine/tests/moment_key.rs`)
+
+#### Scenario: An edit elsewhere asks no decode, an edit here asks its own
+- **WHEN** the loop of the scenario above plays from its kept composites, its sources evicted by another range, and a title outside it is edited, then a parameter of an event inside it
+- **THEN** after the first edit no source frame of the loop is asked and the moments are confirmed from the playhead outward; after the second the changed moments' sources are asked within 300 ms, the moment on screen first, and the picture on screen is complete again
+- **TEST** t4113 (`src/libs/kt-engine/tests/moment_key.rs`)
+
+#### Scenario: A moment kept at one quality is not kept at another
+- **PATH** play a loop until its bars are bright → raise the preview quality → the bars are dim and turn bright again as the loop plays → lower it back → the shown moments are there at once
+- **WHEN** a loop is kept whole at one preview quality, and the quality is changed and changed back with nobody composing
+- **THEN** at the other quality the bars draw none of it and the window asks its frames; back at the first a moment is shown without composing
+- **TEST** t3608 (`src/libs/kt-engine/tests/moment_key.rs`)
+
+#### Scenario: The held moments are not counted on every pass
+- **WHEN** a 1500-moment loop fills its kept moments one by one over 1500 passes, then loses one
+- **THEN** the loop is counted at most 18 times over the fill and once more for the loss, and the last want equals a count made then
+- **TEST** t4114 (`src/libs/kt-engine/tests/frames_cache_growth.rs`)
+
 #### Scenario: The stream pacing orders by the bound it has now
 - **WHEN** a renderer build is paced by the player's cache and the cache's bound grows after the build
 - **THEN** the order takes a quarter of the grown bound
@@ -1191,7 +1153,7 @@ default (BT.601, the format's range) SHALL leave the conversion context untouche
 those of every former build; the matrix and range SHALL be part of the context's key. RGB, grey and
 palette pictures keep swscale's own conversion. Primaries are read and reported, not converted.
 Disk caches holding decoded pixels SHALL carry a version that moves with the conversion: the
-sidecar's thumbs (`THUMB_PIXELS_VERSION`, the older ones dropped on the first new write) and the
+media index's thumbs (`THUMB_PIXELS_VERSION`, the older ones dropped on the first new write) and the
 reel strips (`STRIP_ROW_VERSION`).
 Why: found-defects 697 — every source was converted as BT.601, so a BT.709 HD file (most cameras and
 phones) showed shifted colours in the preview and the export (source-colour-matrix design D1–D4).
@@ -1217,6 +1179,249 @@ phones) showed shifted colours in the preview and the export (source-colour-matr
 - **TEST** t2893 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`)
 
 #### Scenario: Thumbs of an older pixel version are not read
-- **WHEN** a sidecar holds thumbs and a size written without a pixel version, and a new thumb is then written
+- **WHEN** the media index holds thumbs and a size written under an older pixel version, and a new thumb is then written
 - **THEN** the size reads as absent until the new write, which drops every older thumb of the media and keeps the new one
 - **TEST** t2894 (`src/libs/kt-media/tests/index_db.rs`)
+
+### Requirement: The project's caches live in a folder beside it, one place per cache
+A named project's caches SHALL live in `kinetren-cache/` in the project's folder, one folder shared by the
+projects in it.
+- **What it holds:** the media index, the reel previews, the persistent cache, the heard mix and the list
+  of earlier renders. Each SHALL have a place of its own.
+- **The persistent cache SHALL be one store** under `results/v<FORMAT>/<device class>/`: the FINAL frames
+  (the disk prerender), with heavy sources' copies under the media's content id. It SHALL NOT store a stream
+  stage's history. It
+  SHALL keep no picture of a stage inside a chain or a layer before the composite.
+  - Frames SHALL be keyed by `durable_hash` over the moment's whole plan, plus the decoder's major, the versions and WGSL hashes of the kernels
+    that ran and `COMPOSITE_PATH_VERSION`. The whole build SHALL NOT be in the key.
+  - `COMPOSITE_PATH_VERSION` SHALL change whenever the composite code outside the kernels changes, held by
+    a guard test.
+  - An entry whose key no longer matches SHALL be a miss and be removed when met. No store SHALL be swept
+    at open.
+- **What it never holds:** anything the project needs to open. Deleting the folder SHALL cost only
+  recomputation.
+- **Marking:** the folder SHALL carry a `CACHEDIR.TAG` and a `README.txt` that says it may be deleted.
+- **Fallback:** where the project's folder cannot be written at all, the folder SHALL be made under the
+  user's data folder (`project-caches/`), under the same cyclic rule, and a notice, the project's facts
+  and the trace SHALL name the place and the reason. The same place SHALL serve an untitled project.
+- **Untitled project:** its folder SHALL move to the new place on the first save.
+- **Old stores:** an old sidecar (`<name>.ktindex.db` with `-wal` and `-shm`) SHALL be imported in the
+  background on the index lane and then deleted; an unreadable one SHALL be deleted after three tries.
+  The former `<data>/render-cache` SHALL be deleted at the first start.
+- **Cyclic writing:** a folder's room SHALL be the smaller of its cap and the disk's free space less a
+  reserve. A write that does not fit, or that the system refuses for lack of space, SHALL first drop the
+  least recently used entries:
+  - first the persistent cache, the heard mix and the source copies in one order, the lowest value per byte
+    first (the measured cost saved per read × the reads in this project ÷ the bytes; least recently used
+    breaks a tie);
+  - then the reel previews and the media index, least recently used first;
+  - never a frame this process used in the last minute.
+
+  If nothing can be dropped, the write SHALL be skipped and counted, never failing a gesture. The first
+  drop of a session in a folder SHALL post one notice naming the folder, with a way to Preferences → "Persistent
+  cache". Nothing SHALL scan or trim at rest.
+- **The registry:** every cache folder SHALL be listed in a registry in the user's data folder, with its
+  size and its projects.
+- **Threads:** no cache SHALL be written by the UI thread.
+
+Why: kkt-26.11.20 line 19 ("у нас не будет все в одной базе sqlite хранится а будет подпапка в папке
+проекта с разными кешами, вот с тем же превью кэшем"). One unbounded SQLite file made a lock or a broken
+write cost every cache of a project (t872), and the prerender of every project shared one cap in the
+user's folder (project-cache-folder D1–D5). kkt-26.11.20b line 2 ("СУТЬ … В КЭШИРОВАНИИ ЧТОБЫ ЭФФЕКТЫ ТЯЖЕЛЫЕ НЕ
+СЧИТАТЬ": the effects' results are the store's point, D1b); line 4: "непринимающая папка - это цикличесская
+запись с подчисткой старого говна и алерт в уведомлениях" (D3, D4).
+
+#### Scenario: The folder, its marks and its fallback
+- **WHEN** a project in a writable folder, one in a read-only folder and an untitled one each open and cache a clip's peaks
+- **THEN** the first has `kinetren-cache/` with `CACHEDIR.TAG` and `README.txt` beside it; the second and third cache under the user's `project-caches/`, and their facts and trace name why
+- **TEST** t3824 (`src/libs/kt-media/tests/cache_folder.rs`), t3825 (`src/libs/kt-media/tests/cache_folder.rs`)
+
+#### Scenario: A broken entry costs only itself
+- **WHEN** an entry is truncated, another's header names a foreign kind, and a third is written by two processes at once
+- **THEN** the first two are misses and are removed, every other entry still hits, and the third reads back whole
+- **TEST** t3826 (`src/libs/kt-media/tests/cache_folder.rs`)
+
+#### Scenario: The registry and a synced folder
+- **WHEN** two projects in two folders are opened, and a third lies in a folder marked as a Dropbox root
+- **THEN** the registry lists the three folders with their projects and sizes, and the third folder carries the "do not sync" attribute
+- **TEST** t3827, t3828 (`src/libs/kt-media/tests/cache_folder.rs`)
+
+#### Scenario: An old sidecar is imported once
+- **WHEN** a project with a `.ktindex.db` from the former build is opened, and separately one with a locked and one with a garbage sidecar
+- **THEN** the peaks, packet index, thumbnails, loudness, sync offsets and reel previews are read from the new folder without decoding, and the three sidecar files are gone; the locked one is kept for the next open, the garbage one is deleted, and nothing waited for the import
+- **TEST** t3831, t3832 (`src/libs/kt-media/tests/cache_folder.rs`)
+
+#### Scenario: A full folder writes in a cycle and says so once
+- **WHEN** a folder with a small cap holds mix runs, picture results, copies and media entries of several ages, new picture results keep arriving, a write meets `ENOSPC` from a test file system, and the loop being played was used a moment ago
+- **THEN** each write first drops the entries of the lowest value per byte among the results, the mix and the copies (a cheap old frame before a costly one), then reels and media by last use, the loop's frames stay, the `ENOSPC` write recounts the room, drops and succeeds on its retry, one notice names the folder for the session, and at rest nothing is scanned or dropped
+- **TEST** t3835, t3836, t3837 (`src/libs/kt-media/tests/cache_folder.rs`)
+
+#### Scenario: A moved, saved or copied project keeps what it can
+- **WHEN** an untitled project with peaks is saved; a project folder is renamed; a project is saved as into another folder
+- **THEN** the untitled cache is in the new folder after the save; the renamed folder's media hit with no file hashed again; the copy's folder holds the media and reel entries and no prerender
+- **TEST** t3838, t3839, t3840 (`src/libs/kt-media/tests/cache_folder.rs`)
+
+### Requirement: The media index is kept by content, one file per entry
+The media index SHALL be kept under `media/` of the cache folder, in a folder per content id (the xxh3-128
+of the whole file). A path map (path, size, modification time → content id) SHALL spare the hash on every
+open; a path inside the project folder SHALL be written relative to it.
+
+The identity rule SHALL stand:
+- if the size and modification time match, the entry is trusted;
+- otherwise the file is hashed: an equal content id is reused, and another is another entry.
+
+Each entry SHALL be one file:
+- with a header that names its kind, the kind's version, the length and a checksum;
+- written to a temporary name and renamed.
+
+A header that does not verify, or another version of the kind, SHALL be a miss, and the file SHALL be
+removed. The rest SHALL be untouched. Further rules:
+- the packet index SHALL be kept, so a second opening does not scan;
+- analysis numbers SHALL be stored as integers ×100;
+- a sync offset SHALL be keyed by both content ids, so a replaced file on either side misses;
+- the reel previews SHALL be kept under `reels/` by (reel, revision, file fingerprint).
+
+A cache error SHALL fall back silently to the ordinary opening. The UI thread SHALL NOT touch the index.
+Every one of several threads of one process opening the folder at the same moment SHALL succeed, and no
+read or write of an entry SHALL wait for a lock of the folder: its one lock is for the cycle's drops and the
+map's compaction, and it is only tried.
+
+Why: the sidecar's rules (defect j; a schema bump wiped every media's index; f64 drifted in the last
+digit; a uniform delete missed the second side of a pair) hold over files. A kind's version replaces the
+whole-file schema bump, and the content id survives a renamed project folder, which the path-keyed rows
+did not (project-cache-folder D1, D2).
+
+#### Scenario: Invalidation by content
+- **WHEN** the content of a file has changed; the mtime is touched without a change of content; an entry file is corrupt
+- **THEN** only the entries of this media are recomputed (the neighbours are intact); the hash matched — reuse; the corrupt entry is removed and recomputed without a panic
+- **TEST** t16 (`src/libs/kt-media/tests/index_db.rs`)
+
+#### Scenario: A locked or half-written entry is a miss, not a broken index
+- **WHEN** an entry is being written by another process (its temporary file present, the final name absent); then a garbage file stands under an entry's name
+- **THEN** the first is a miss that leaves the writer's file alone and is reused once renamed; the garbage file is removed with no other entry touched (the SIGBUS of the former SQLite file, seen in t640 under load, has no counterpart)
+- **TEST** t872 (`src/libs/kt-media/tests/index_db.rs`)
+
+#### Scenario: A dozen threads open one folder at once
+- **WHEN** twelve threads released by one barrier open the same new folder and each write an entry, twenty times; then the same twelve open it again
+- **THEN** every opening succeeds and every entry is there
+- **TEST** t1171 (`src/libs/kt-media/tests/index_db.rs`); its UI consequence — the second opening renders the reel zero times — t640 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: A held lock of the folder stands in nobody's way
+- **WHEN** another process holds the folder's lock and does not let go (its disk does not answer), and two threads each open the folder, note a new content, write a loudness and read it back, a hundred times
+- **THEN** both finish with no error, the map is compacted by no one, and compacts at the next note once the lock is free (before: one connection's fsync under SQLite's locks made the others outwait the busy timeout)
+- **TEST** t1460 (`src/libs/kt-media/tests/sidecar_stall.rs`)
+
+#### Scenario: The batch index survives opening
+- **WHEN** the file is opened a second time with the same cache folder; the file has changed
+- **THEN** the second opening does not scan, the index is byte-for-byte equal to a fresh one and functionally equivalent (keyframe_before, sample-accurate audio); the changed file is rescanned
+- **TEST** t34 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`)
+
+#### Scenario: Analysis entries are exact, invalidation is two-sided
+- **WHEN** loudness and sync offset are written and read; the file is replaced
+- **THEN** the round trip is byte-exact (integers ×100); for the replaced file the loudness and ALL pairs involving it miss, a foreign pair still hits; the observer of the pyramid sees every burst and does not change it
+- **TEST** t401, t402, t401b (`src/libs/kt-media/tests/index_db.rs`)
+
+#### Scenario: The reel preview is keyed by content (container: capability `compositions`)
+- **WHEN** a reel without a file puts frames and peaks into the cache folder
+- **THEN** the key is (reel, revision, file fingerprint); any divergence → None, one version per reel of a project; removing a media's entries does not touch the reels; two projects of the folder with a reel of the same id keep their own, and neither's edit or prune takes what the other shows
+- **TEST** t639 (`src/libs/kt-media/tests/index_db.rs`)
+
+#### Scenario: A renamed project folder still hits
+- **WHEN** a project folder holding its media is renamed and the project is opened again
+- **THEN** every media entry hits through its relative path line, and no file is hashed
+- **TEST** t3829 (`src/libs/kt-media/tests/cache_folder.rs`)
+
+#### Scenario: An untitled project caches its media
+- **PATH** File → New → drag two clips into the bin: their waveforms and filmstrips draw → close the bin and open it again: they draw at once, with no Loading
+- **WHEN** clips are added to an untitled project
+- **THEN** peaks and thumbnails are read back from the user folder's cache after the bin is reopened, with no decode
+- **TEST** t3830 (`src/apps/kt-app/src/layout_tests.rs`)
+
+### Requirement: A cached source carries the identity of what it decodes
+Each source raised for live playback SHALL have an identity in the decoded-frame cache: a file's name, size and
+modification time read when the file was opened; a generator's values and the key of what it hears; a synthetic
+source's parameters; for any other source, and for a file whose metadata could not be read, a number unique in the
+process. The identity SHALL be set in the same step that drops the source's entries of another identity, by the thread
+that will insert, and an insert that names another identity SHALL be refused; so every entry of a source was decoded
+from its current identity, and a frame and its identity are read in one step. Identities SHALL be read off the
+interface's, the compose and the prefetch threads (no file is asked for its metadata while a plan is built).
+Dropping a source's bytes alone (`invalidate_source`) SHALL keep its identity.
+Why: found-defects 965, 1062, 1063 — the key of a finished frame needs to know what an absent frame would be, and
+took it from the project and the disk, which may already be ahead of the decoder.
+
+#### Scenario: The identity and the entries move together
+- **WHEN** a source is adopted, frames are inserted under its identity, it is adopted again under the same identity and then under another, a late insert of the first identity arrives, the source's bytes are invalidated, and it is forgotten
+- **THEN** the frames stay over the same identity and go with another; the late insert is refused; the invalidation drops the bytes and keeps the identity; a forgotten source has none and its frames are named by serials
+- **TEST** t4110 (`src/libs/kt-cache/src/lib.rs`)
+
+#### Scenario: What a source answers for its identity
+- **WHEN** one file is opened twice, copied under another name, touched and opened again, and removed after it was opened; a source's file is replaced under its path and a read then asks a second decoder; a generator is opened, retuned and retuned back, and given another heard series; two placeholders are raised
+- **THEN** the two opens agree; the copy and the touched file differ; the removed file keeps its answer; the source keeps one decoder, and every frame it gives is the old file's; the generator's identity moves with its values and returns with them, and moves with the series; the placeholders differ from each other and are not durable
+- **TEST** t4111 (`src/libs/kt-media/tests/identity.rs`)
+
+### Requirement: A source copy is an intra-frame copy as long as its original
+A source copy in the persistent cache SHALL be written by an offline job with its own short-lived source as a QuickTime
+file (`media/<content id>/copy-<w>x<h>.mov`) whose video is H.264 with every frame a keyframe at the size the adaptive
+rule asks, and whose pictures carry the original's own timestamps one for one; it SHALL hold no sound: a media that
+plays from a copy SHALL read its sound from the original. It SHALL lie in the project's cache folder. The job SHALL run at background priority, pause while the transport plays or an export
+runs, be cancellable at any moment leaving no partial file, and record its binding keyed by the original's identity.
+A camera's copy SHALL be accepted only when its duration and frame count match the original within one frame and its
+audio length within one burst; otherwise it SHALL be refused naming what differs.
+Why: invariant 5 (offline sources); F-MED-002 — a grid-timed copy drifts on fractional rates, and Matroska's
+milliseconds are another picture on a grid that meets the true time; the sound is not what decodes slowly, and a copy
+of it is a second thing that can differ; the owner's A14 — the caches live in the project's folder.
+
+#### Scenario: A copy of fractional-rate footage matches the original
+- **WHEN** a copy is made of a 23.976 fps, 10-bit HEVC fixture with a 5.1 audio stream, and of a VFR fixture
+- **THEN** every picture's pts equals the original's, the duration equals the original's to the tick, every frame is a keyframe, the audio of the source on the copy is byte-equal to the original's, its pictures are the original's at the copy's size within the codec's tolerance, and the file lies under the project's cache folder
+- **TEST** t3440 (`src/libs/kt-media/tests/persistent_cache_copy.rs`)
+
+#### Scenario: Cancel and pause leave no trace
+- **WHEN** a copy job is cancelled halfway, and another is running when Play is pressed
+- **THEN** no temporary or copy file remains; the running job makes no progress while playing and resumes on pause
+- **TEST** t3441 (`src/libs/kt-media/tests/persistent_cache_copy.rs`)
+
+#### Scenario: A mismatched camera copy is refused with its reason
+- **WHEN** a camera copy one second shorter, and one with a different frame count, are offered
+- **THEN** both are refused, the message names the duration and the frame count respectively; a matching one is accepted and bound
+- **TEST** t3442 (`src/libs/kt-media/tests/persistent_cache_copy.rs`)
+
+### Requirement: A source copy's size follows the preview and only heavy sources get one
+In the mode "As in the preview" a file's wanted copy size SHALL be its decode step at the current preview quality,
+clamped to at most 1/2 and at least 1/8 of its native; at a preview quality of 1/1 the original SHALL play. A copy at
+least as large as wanted SHALL be used; a smaller one SHALL be used while a background job makes the wanted size, and
+SHALL be deleted after the swap; lowering the quality SHALL start no job. In the modes 1/2 and 1/4 the size SHALL be
+that fraction; in the mode Off no copy SHALL be read. Without a click, only costly files SHALL get a copy: a long-GOP
+codec above 1920×1080, or one the player measured decoding slower than real time at the wanted size.
+Why: the owner, A10 — "как играем в превью так и храним? и если выбрали лучшее качество то рендерим лучшее чем есть".
+
+#### Scenario: Raising the quality makes a better copy, lowering costs nothing
+- **WHEN** a costly 4K file plays at preview 1/4 with "As in the preview"; the quality is raised to 1/2; then lowered to 1/8; then raised to 1/1
+- **THEN** a 1/4 copy is made and read; at 1/2 the 1/4 copy keeps playing until a 1/2 copy is ready, then the 1/4 file is gone; at 1/8 no job starts and the 1/2 copy is read at 1/8; at 1/1 the original plays; a cheap intra-frame file never gets a copy
+- **TEST** t3449 (`src/libs/kt-engine/tests/persistent_cache.rs`)
+
+### Requirement: Reading a source copy changes sharpness, never framing or sound
+A source opened on a source copy SHALL report the original's native size, pixel aspect, frame rate and duration, and
+deliver pictures at the copy's size as a lower decode step; conform, geometry, masks and the frame plan SHALL be the
+same with and without copies. Switching SHALL replace the PICTURE of a source through the one swap path without moving
+the playhead or resetting the effects' state: the source's decoded pictures and the composites made of them go by its
+identity, its decoded sound and the kept final mix stay. A composite made from a copy SHALL never be stored under the key of a composite of the
+original, in memory or on disk.
+Why: invariant 4 — one truth of coverage; invariant 7 — the plan is the same; a disk tier keyed by the original file
+would replay copy frames after a restart.
+
+#### Scenario: The same plan, a softer picture
+- **WHEN** a project with a fit-conformed 4K event, a mask and a corner-pin is planned with the original and with a 1/2 copy at preview 1/1
+- **THEN** the layer geometry, masks and the fx chain of the plans are equal; only the decode size differs; the composite of the copy differs from the original's only within the copied picture (its pixels against the original's 1/2 decode: t3440)
+- **TEST** t3443 (`src/libs/kt-engine/tests/persistent_cache.rs`)
+
+#### Scenario: Toggling while paused and while playing
+- **WHEN** source copies are switched on and off during playback of a slowed-reverb event and on a pause
+- **THEN** the playhead does not jump, the audio has no reset (the effects' state objects are the same), the coverage bars of the swapped sources' pictures empty and refill, their sound and the other sources keep theirs
+- **TEST** t3444 (`src/libs/kt-engine/tests/persistent_cache.rs`)
+- **TEST** t3612 (`src/libs/kt-cache/src/lib.rs`)
+
+#### Scenario: The disk tier keeps copy and original apart
+- **WHEN** a slow moment is prerendered to the disk tier with copies on, the player is restarted with copies off
+- **THEN** the moment is not restored from the copy's entry; it composes from the original and keeps its own entry
+- **TEST** t3446 (`src/libs/kt-engine/tests/persistent_cache.rs`)

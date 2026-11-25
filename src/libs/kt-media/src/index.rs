@@ -1,27 +1,43 @@
-//! Sidecar media index DB (`<project>.ktindex.db`, SQLite).
-//! Schema and invalidation rules — docs/media-index.md. This is a CACHE: loss or
-//! corruption is not an error, the DB is recreated. Solves defects m (storm of
-//! thumbnail/waveform decodes on scroll/zoom) and j (rescanning files on
-//! every launch).
+//! The media index and the reel previews of a project, as files of its cache folder
+//! (project-cache-folder; capability media-index). Both are CACHES: an entry lost, torn or foreign
+//! is a miss and nothing else. They solve defects m (a storm of thumbnail/waveform decodes on
+//! scroll/zoom) and j (rescanning files on every launch).
+//!
+//! - [`MediaStore`]: what is known of a media file, under `media/<content id>/` — the xxh3-128 of
+//!   the whole file, so a file renamed, copied or used by two projects has one entry. `paths.tsv`
+//!   maps a path, its size and modification time to the id, so the file is not hashed on every open.
+//! - [`ReelStore`]: the previews of reels, under `reels/`, by (reel, revision, files' fingerprint).
 
+use crate::cache_folder::{self, Folder, HEADER};
 use crate::{MediaSource, PEAK_BLOCK_FRAMES};
 use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS};
-use rusqlite::{Connection, OptionalExtension, params};
-use std::path::{Path, PathBuf};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::Path;
+use std::sync::Arc;
 
-// v2: audio_seek/video_keyframes (one row per packet, never written)
-// replaced by packet_index with i64 LE blobs — persisted packet index of
-// FfmpegSource (fast opening of large files). A bump = DB recreation.
-pub const SCHEMA_VERSION: i64 = 2;
 /// The version of the PIXELS a media's thumbs hold (source-colour-matrix): thumbs written under
 /// another version are not read, and the first write under this one drops them. 1: the decode
 /// converts with the source's own matrix and range (before, BT.601 for every source).
-pub const THUMB_PIXELS_VERSION: i64 = 1;
+pub const THUMB_PIXELS_VERSION: u32 = 1;
+
+// the kinds of entry files and their versions: a version moves one kind only
+const PEAKS: (&[u8; 4], u32) = (b"PEAK", 1);
+const PACKETS: (&[u8; 4], u32) = (b"PKTS", 1);
+const THUMBS: (&[u8; 4], u32) = (b"THMB", THUMB_PIXELS_VERSION);
+const THUMB_SIZE: (&[u8; 4], u32) = (b"THSZ", THUMB_PIXELS_VERSION);
+const POSTER: (&[u8; 4], u32) = (b"POST", 1);
+const COMPLETE: (&[u8; 4], u32) = (b"DONE", 1);
+const LOUDNESS: (&[u8; 4], u32) = (b"LOUD", 1);
+const SERIES: &[u8; 4] = b"SERI";
+const SYNC: (&[u8; 4], u32) = (b"SYNC", 1);
+const STRIP: (&[u8; 4], u32) = (b"RSTR", 1);
+const REEL_PEAKS: (&[u8; 4], u32) = (b"RPKS", 1);
+const REEL_REF: (&[u8; 4], u32) = (b"RREF", 1);
 
 #[derive(Debug, thiserror::Error)]
 pub enum IndexError {
-    #[error("sqlite: {0}")]
-    Sqlite(#[from] rusqlite::Error),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -29,31 +45,49 @@ pub enum IndexError {
 /// What happens to the media record on opening.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaEntryStatus {
-    /// Records are current (size/mtime matched, or mtime changed but the hash is the same).
+    /// The content is known (size/mtime matched, or the hash is one the folder holds).
     Reused,
-    /// Content changed or no record existed — sections must be built anew.
+    /// Content the folder has nothing of — sections must be built anew.
     Rebuilt,
 }
 
-pub struct MediaIndexDb {
-    conn: Connection,
-    path: PathBuf,
+/// What a media file IS: the xxh3-128 of its bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ContentId(pub [u8; 16]);
+
+impl std::fmt::Display for ContentId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.iter().try_for_each(|b| write!(f, "{b:02x}"))
+    }
 }
 
-struct FileIdentity {
-    size: i64,
-    mtime_ns: i64,
+impl ContentId {
+    fn parse(s: &str) -> Option<ContentId> {
+        let mut id = [0u8; 16];
+        if s.len() != 32 || !s.is_ascii() {
+            return None;
+        }
+        for (i, b) in id.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok()?;
+        }
+        Some(ContentId(id))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FileIdentity {
+    pub size: u64,
+    pub mtime_ns: i64,
 }
 
 fn file_identity(path: &Path) -> std::io::Result<FileIdentity> {
     let md = std::fs::metadata(path)?;
     let mtime = md.modified()?;
     let ns = mtime.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as i64).unwrap_or(0);
-    Ok(FileIdentity { size: md.len() as i64, mtime_ns: ns })
+    Ok(FileIdentity { size: md.len(), mtime_ns: ns })
 }
 
-fn hash_file(path: &Path) -> std::io::Result<[u8; 16]> {
-    use std::io::Read;
+fn hash_file(path: &Path) -> std::io::Result<ContentId> {
     let mut hasher = xxhash_rust::xxh3::Xxh3::new();
     let mut f = std::fs::File::open(path)?;
     let mut buf = vec![0u8; 1 << 20];
@@ -64,266 +98,218 @@ fn hash_file(path: &Path) -> std::io::Result<[u8; 16]> {
         }
         hasher.update(&buf[..n]);
     }
-    Ok(hasher.digest128().to_le_bytes())
+    Ok(ContentId(hasher.digest128().to_le_bytes()))
 }
 
-/// Is the file not our DB at all — garbage, a damaged file, a foreign schema (`SQLITE_ERROR`
-/// from our own statements)? Busy/locked, I/O, "cannot open" and the like are TRANSIENT: the
-/// file is fine, someone else is using it right now.
-fn is_broken_db(e: &IndexError) -> bool {
-    use rusqlite::ErrorCode;
-    match e {
-        IndexError::Sqlite(rusqlite::Error::SqliteFailure(f, _)) => {
-            matches!(f.code, ErrorCode::NotADatabase | ErrorCode::DatabaseCorrupt | ErrorCode::Unknown)
-        }
-        _ => false,
-    }
+/// `media/paths.tsv`: path, size, modification time → content id. Appended a line a write; a torn
+/// last line is left unread. One per folder and process, shared by its lanes.
+#[derive(Default)]
+pub(crate) struct PathMap {
+    /// The bytes of the file read so far, up to a whole line.
+    read: u64,
+    lines: usize,
+    map: HashMap<String, (FileIdentity, ContentId)>,
+    /// Files hashed whole for this folder (t3829: a renamed project folder hashes none).
+    pub(crate) hashed: u64,
 }
 
-/// Remove a DB that is being recreated WITH its `-wal` and `-shm`. A stale `-wal` would be
-/// replayed into the new file, and a stale `-shm` is the file SQLite truncates when it believes
-/// it is the first user — under a mapping another connection may still hold (t872).
-fn remove_db_files(path: &Path) {
-    let _ = std::fs::remove_file(path);
-    for suffix in ["-wal", "-shm"] {
-        let mut side = path.as_os_str().to_owned();
-        side.push(suffix);
-        let _ = std::fs::remove_file(side);
-    }
-}
+const PATHS: &str = "media/paths.tsv";
 
-/// One lock per sidecar path for the setup of an opening (see `MediaIndexDb::open`). Bounded by
-/// the sidecars a process ever opens — one per project, plus the tests' temporary ones.
-fn open_gate(path: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
-    use std::collections::HashMap;
-    use std::sync::{Arc, Mutex, OnceLock};
-    static GATES: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
-    let key = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-    let mut g = GATES.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner());
-    g.entry(key).or_default().clone()
-}
-
-impl MediaIndexDb {
-    /// Open/create. A broken or foreign DB is silently recreated (rule 3 of
-    /// docs/media-index.md) — this is a cache, it must not fail because of it.
-    ///
-    /// Only a BROKEN one (t872): the sidecar is open in several threads of one process at once
-    /// (index worker, thumbnails, the reopen of a returned file, reel previews), and under load
-    /// an opening gets `database is locked` after its busy timeout. Taking that for "broken"
-    /// deleted the live file under the other connections; the next opening made a new main
-    /// file next to the OLD `-shm`, SQLite found no other user of it (POSIX locks of one process
-    /// do not conflict) and truncated it, and a connection that still had it mapped died with
-    /// SIGBUS in `walIndexRecover` (t640 under load). A transient error is returned to the
-    /// caller — a cache miss, which every caller already tolerates.
-    ///
-    /// The SETUP of an opening is serialised per path inside the process (t1171): setting WAL
-    /// and creating the schema are writes, and the threads a project opening starts open the
-    /// sidecar at the same moment. `PRAGMA journal_mode=WAL` then came back `SQLITE_BUSY` in
-    /// 0.2 ms (SQLite skips the busy handler where waiting could deadlock), and on a new file a
-    /// dozen openers outwaited the busy timeout — the reel preview lost its disk tier (t640 red
-    /// on a quiet machine). Only the opening is serialised: the connection returned is the
-    /// thread's own, as before.
-    pub fn open(path: &Path) -> Result<MediaIndexDb, IndexError> {
-        let gate = open_gate(path);
-        let _setup = gate.lock().unwrap_or_else(|p| p.into_inner());
-        match Self::try_open(path) {
-            Ok(db) => Ok(db),
-            Err(e) if is_broken_db(&e) => {
-                remove_db_files(path);
-                Self::try_open(path)
-            }
-            Err(e) => Err(e),
+impl PathMap {
+    /// Take the lines other lanes and processes wrote. Returns the file's length.
+    fn refresh(&mut self, folder: &Folder) -> u64 {
+        let p = folder.root().join(PATHS);
+        let len = std::fs::metadata(&p).map_or(0, |m| m.len());
+        if len < self.read {
+            // compacted, or the person deleted the folder
+            *self = PathMap { hashed: self.hashed, ..Default::default() };
         }
+        if len > self.read
+            && let Ok(mut f) = std::fs::File::open(&p)
+            && f.seek(SeekFrom::Start(self.read)).is_ok()
+        {
+            let mut buf = Vec::new();
+            let _ = f.read_to_end(&mut buf);
+            let whole = buf.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+            for l in String::from_utf8_lossy(&buf[..whole]).lines() {
+                self.lines += 1;
+                if let Some((k, v)) = path_line(l) {
+                    self.map.insert(k, v);
+                }
+            }
+            self.read += whole as u64;
+        }
+        len
     }
 
-    fn try_open(path: &Path) -> Result<MediaIndexDb, IndexError> {
-        let conn = Connection::open(path)?;
-        // The DB is opened by several threads (index-worker, thumbs, opening of
-        // sources) — short writes must not fail with SQLITE_BUSY. Set before any statement,
-        // so every one of them waits rather than fails at once.
-        conn.busy_timeout(std::time::Duration::from_millis(5000))?;
-        // No lock of the sidecar is held across an fsync (t1460). On a loaded spinning disk one
-        // fsync took 137 s, and a connection waiting behind it gave up after the busy timeout:
-        // a commit synced the WAL under the write lock (synchronous=FULL), the last close
-        // checkpointed and synced under the EXCLUSIVE lock that blocks every opening. NORMAL
-        // keeps a WAL database consistent on power loss (only the last commits roll back — a
-        // cache can lose them); without the close checkpoint the WAL stays next to the file and
-        // the passive auto-checkpoint, which blocks nobody, folds it in.
-        conn.pragma_update(None, "synchronous", "NORMAL")?;
-        conn.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)?;
-        // WAL is a property of the FILE: once set it stays, and every later opening only reads
-        // it — a write here is what collided with the other threads' openings (t1171)
-        let mode: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0))?;
-        if !mode.eq_ignore_ascii_case("wal") {
-            conn.pragma_update(None, "journal_mode", "WAL")?;
+    fn note(&mut self, folder: &Folder, key: String, ident: FileIdentity, id: ContentId) -> std::io::Result<()> {
+        let len = self.refresh(folder);
+        if self.map.get(&key) == Some(&(ident, id)) {
+            return Ok(());
         }
-        let version: Option<i64> = conn
-            .query_row("SELECT value FROM meta WHERE key='schema_version'", [], |r| r.get(0))
-            .optional()
-            .unwrap_or(None);
-        match version {
-            Some(v) if v == SCHEMA_VERSION => {}
-            Some(_) => {
-                // schema bump → full rebuild (rule 2)
-                drop(conn);
-                remove_db_files(path);
-                return Self::try_open(path);
-            }
-            None => {
-                // IMMEDIATE: the write lock is taken up front, under the busy handler — a
-                // deferred BEGIN reads first and then cannot upgrade without risking a deadlock
-                conn.execute_batch(
-                    "BEGIN IMMEDIATE;
-                     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
-                     CREATE TABLE IF NOT EXISTS media (
-                       media_id   INTEGER PRIMARY KEY,
-                       path       TEXT NOT NULL UNIQUE,
-                       size       INTEGER NOT NULL,
-                       mtime_ns   INTEGER NOT NULL,
-                       xxhash     BLOB NOT NULL,
-                       probe_json TEXT NOT NULL DEFAULT '',
-                       built_at   INTEGER NOT NULL DEFAULT 0,
-                       complete   INTEGER NOT NULL DEFAULT 0
-                     );
-                     CREATE TABLE IF NOT EXISTS packet_index (
-                       media_id INTEGER, stream TEXT, data BLOB,
-                       PRIMARY KEY (media_id, stream)
-                     );
-                     CREATE TABLE IF NOT EXISTS audio_peaks (
-                       media_id INTEGER, level INTEGER, channel INTEGER, data BLOB,
-                       PRIMARY KEY (media_id, level, channel)
-                     );
-                     CREATE TABLE IF NOT EXISTS thumbnails (
-                       media_id INTEGER, t_ticks INTEGER, jpeg BLOB,
-                       PRIMARY KEY (media_id, t_ticks)
-                     );
-                     COMMIT;",
-                )?;
-                conn.execute(
-                    "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', ?1)",
-                    params![SCHEMA_VERSION.to_string()],
-                )?;
-            }
+        let mut line = String::new();
+        if len > self.read {
+            // another process died writing the last line: ours starts on its own
+            line.push('\n');
         }
-        // Additive tables are created on EVERY opening (IF NOT EXISTS):
-        // so a new table appears even in existing DBs, without requiring a
-        // SCHEMA_VERSION bump (a bump wipes packet_index/peaks/thumbs of all
-        // project media — too expensive for the sake of one table).
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS poster (
-               media_id INTEGER PRIMARY KEY,
-               t_ticks  INTEGER NOT NULL,
-               score    INTEGER NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS thumb_meta (
-               media_id INTEGER PRIMARY KEY,
-               w        INTEGER NOT NULL,
-               h        INTEGER NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS thumb_pixels (
-               media_id INTEGER PRIMARY KEY,
-               version  INTEGER NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS audio_series (
-               media_id INTEGER PRIMARY KEY,
-               version  INTEGER NOT NULL,
-               data     BLOB NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS loudness (
-               media_id  INTEGER PRIMARY KEY,
-               lufs_x100 INTEGER NOT NULL,
-               dbtp_x100 INTEGER NOT NULL,
-               lra_x100  INTEGER NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS sync_offset (
-               a_media  INTEGER NOT NULL,
-               b_media  INTEGER NOT NULL,
-               ticks    INTEGER NOT NULL,
-               conf_x100 INTEGER NOT NULL,
-               PRIMARY KEY (a_media, b_media)
-             );
-             CREATE TABLE IF NOT EXISTS reel_strip (
-               seq       INTEGER PRIMARY KEY,
-               hash      INTEGER NOT NULL,
-               media_fp  INTEGER NOT NULL,
-               step      INTEGER NOT NULL,
-               end_ticks INTEGER NOT NULL,
-               n         INTEGER NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS reel_frame (
-               seq INTEGER, idx INTEGER, jpeg BLOB,
-               PRIMARY KEY (seq, idx)
-             );
-             CREATE TABLE IF NOT EXISTS reel_peaks (
-               seq INTEGER, level INTEGER, channel INTEGER, data BLOB,
-               PRIMARY KEY (seq, level, channel)
-             );",
-        )?;
-        Ok(MediaIndexDb { conn, path: path.to_path_buf() })
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    /// Identity check of the file and invalidation of ONLY its records
-    /// (rule 1 of docs/media-index.md). Returns (media_id, status).
-    pub fn ensure_media(&mut self, file: &Path) -> Result<(i64, MediaEntryStatus), IndexError> {
-        let ident = file_identity(file)?;
-        let key = file.to_string_lossy().to_string();
-        let row: Option<(i64, i64, i64, Vec<u8>)> = self
-            .conn
-            .query_row(
-                "SELECT media_id, size, mtime_ns, xxhash FROM media WHERE path=?1",
-                params![key],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )
-            .optional()?;
-
-        if let Some((id, size, mtime_ns, stored_hash)) = row {
-            if size == ident.size && mtime_ns == ident.mtime_ns {
-                return Ok((id, MediaEntryStatus::Reused)); // fast path
-            }
-            let hash = hash_file(file)?;
-            if size == ident.size && stored_hash == hash {
-                // the content is the same, only mtime — we update and reuse
-                self.conn.execute(
-                    "UPDATE media SET mtime_ns=?1 WHERE media_id=?2",
-                    params![ident.mtime_ns, id],
-                )?;
-                return Ok((id, MediaEntryStatus::Reused));
-            }
-            // content changed: we clear ONLY this media_id
-            self.purge_media(id)?;
-            self.conn.execute(
-                "UPDATE media SET size=?1, mtime_ns=?2, xxhash=?3, complete=0 WHERE media_id=?4",
-                params![ident.size, ident.mtime_ns, hash.as_slice(), id],
-            )?;
-            return Ok((id, MediaEntryStatus::Rebuilt));
+        line.push_str(&format!("{}\t{}\t{}\t{id}\n", cache_folder::escape(&key), ident.size, ident.mtime_ns));
+        let p = folder.root().join(PATHS);
+        folder.made(p.parent().unwrap_or(folder.root()))?;
+        std::fs::OpenOptions::new().append(true).create(true).open(&p)?.write_all(line.as_bytes())?;
+        self.map.insert(key, (ident, id));
+        self.refresh(folder);
+        if self.lines > 2 * self.map.len() + 64 {
+            self.compact(folder);
         }
-
-        let hash = hash_file(file)?;
-        self.conn.execute(
-            "INSERT INTO media(path, size, mtime_ns, xxhash) VALUES(?1, ?2, ?3, ?4)",
-            params![key, ident.size, ident.mtime_ns, hash.as_slice()],
-        )?;
-        Ok((self.conn.last_insert_rowid(), MediaEntryStatus::Rebuilt))
-    }
-
-    /// Reel tables (`reel_*`, R.58) are deliberately NOT touched here: they are
-    /// keyed by content (reel, edit, media fingerprint), not by
-    /// `media_id`, and a file swap is caught by the fingerprint itself — see `reel_preview`.
-    fn purge_media(&self, media_id: i64) -> Result<(), IndexError> {
-        for table in ["packet_index", "audio_peaks", "thumbnails", "poster", "loudness", "audio_series"] {
-            self.conn
-                .execute(&format!("DELETE FROM {table} WHERE media_id=?1"), params![media_id])?;
-        }
-        // The sync offset is about a PAIR, and the uniform `WHERE media_id=?1` does
-        // not clear it: a file that turned out to be the wrong one invalidates
-        // both sides of each of its pairs (R.49, item 369).
-        self.conn
-            .execute("DELETE FROM sync_offset WHERE a_media=?1 OR b_media=?1", params![media_id])?;
         Ok(())
+    }
+
+    /// Rewrite the live lines. A line another process appends meanwhile is lost: a hash more.
+    fn compact(&mut self, folder: &Folder) {
+        let Ok(l) = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(folder.root().join("lock")) else { return };
+        if l.try_lock().is_err() {
+            return;
+        }
+        let mut text = String::new();
+        for (k, (i, id)) in &self.map {
+            text.push_str(&format!("{}\t{}\t{}\t{id}\n", cache_folder::escape(k), i.size, i.mtime_ns));
+        }
+        let tmp = folder.root().join(format!("media/.paths.{}.tmp", std::process::id()));
+        if std::fs::write(&tmp, &text).and_then(|()| std::fs::rename(&tmp, folder.root().join(PATHS))).is_ok() {
+            (self.read, self.lines) = (text.len() as u64, self.map.len());
+        } else {
+            let _ = std::fs::remove_file(&tmp);
+        }
+    }
+}
+
+fn path_line(l: &str) -> Option<(String, (FileIdentity, ContentId))> {
+    let f: Vec<&str> = l.split('\t').collect();
+    let [path, size, mtime, id] = f.as_slice() else { return None };
+    let ident = FileIdentity { size: size.parse().ok()?, mtime_ns: mtime.parse().ok()? };
+    Some((cache_folder::unescape(path), (ident, ContentId::parse(id)?)))
+}
+
+/// A file's name in the map: relative to the project's folder inside it, absolute elsewhere.
+fn path_key(folder: &Folder, file: &Path) -> String {
+    let abs = std::path::absolute(file).unwrap_or_else(|_| file.to_path_buf());
+    match folder.base().and_then(|b| abs.strip_prefix(b).ok()) {
+        Some(rel) => cache_folder::slashed(rel),
+        None => abs.to_string_lossy().into_owned(),
+    }
+}
+
+/// A file's name in the map of a folder that does not lie beside it: absolute.
+fn absolute_key(file: &Path) -> String {
+    std::path::absolute(file).unwrap_or_else(|_| file.to_path_buf()).to_string_lossy().into_owned()
+}
+
+/// Carry the map's lines from one folder into another (project-cache-folder D4, D6): a line relative to
+/// the first one's project names the same file in the second.
+pub(crate) fn carry_paths(from: &Folder, to: &Folder) -> std::io::Result<()> {
+    let lines: Vec<(String, (FileIdentity, ContentId))> = {
+        let mut m = from.paths.lock().unwrap_or_else(|e| e.into_inner());
+        m.refresh(from);
+        m.map.iter().map(|(k, v)| (k.clone(), *v)).collect()
+    };
+    let mut m = to.paths.lock().unwrap_or_else(|e| e.into_inner());
+    for (k, (ident, id)) in lines {
+        let file = match from.base() {
+            Some(b) => b.join(&k),
+            None => Path::new(&k).to_path_buf(),
+        };
+        let key = path_key(to, &file);
+        if !m.map.contains_key(&key) {
+            m.note(to, key, ident, id)?;
+        }
+    }
+    Ok(())
+}
+
+/// Give the reels one project named in `to` to another (its file's new name).
+pub(crate) fn carry_refs(to: &Folder, was: Option<&Path>, now: &Path, keep: bool) {
+    let dir = to.root().join("reels/refs");
+    let (was, now) = (format!("{}-", tag_of(was)), tag_of(Some(now)));
+    for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if let Some(seq) = name.strip_prefix(&was) {
+            let dest = dir.join(format!("{now}-{seq}"));
+            let _ = if keep { std::fs::copy(e.path(), dest).map(|_| ()) } else { std::fs::rename(e.path(), dest) };
+        }
+    }
+}
+
+/// The records of a `thumbs` file: where each moment's newest JPEG lies, and how far it was read.
+#[derive(Default)]
+struct ThumbIx {
+    read: u64,
+    at: BTreeMap<i64, (u64, u32)>,
+}
+
+/// How many media's thumb records a store keeps.
+const THUMB_IX: usize = 64;
+const THUMB_REC: usize = 24;
+
+/// The media index of a project: a lane's own handle on the shared folder.
+pub struct MediaStore {
+    folder: Arc<Folder>,
+    thumbs: RefCell<HashMap<ContentId, ThumbIx>>,
+    /// Thumb sizes this handle wrote: a filmstrip says its size with every thumb.
+    sized: RefCell<HashMap<ContentId, (u32, u32)>>,
+}
+
+impl MediaStore {
+    /// The media index in the cache folder `root` ([`cache_folder::beside`]), made if needed.
+    pub fn open(root: &Path) -> Result<MediaStore, IndexError> {
+        Ok(Self::of(Folder::open(root)?))
+    }
+
+    pub fn of(folder: Arc<Folder>) -> MediaStore {
+        MediaStore { folder, thumbs: RefCell::default(), sized: RefCell::default() }
+    }
+
+    pub fn folder(&self) -> &Arc<Folder> {
+        &self.folder
+    }
+
+    /// What `file` is: by its path, size and modification time, else by its bytes.
+    pub fn ensure_media(&mut self, file: &Path) -> Result<(ContentId, MediaEntryStatus), IndexError> {
+        let ident = file_identity(file)?;
+        let key = path_key(&self.folder, file);
+        let known = {
+            let mut m = self.folder.paths.lock().unwrap_or_else(|e| e.into_inner());
+            m.refresh(&self.folder);
+            // a line of the folder before it had a project beside it is absolute
+            m.map.get(&key).or_else(|| m.map.get(&absolute_key(file))).copied()
+        };
+        if let Some((i, id)) = known
+            && i == ident
+        {
+            return Ok((id, MediaEntryStatus::Reused));
+        }
+        let id = hash_file(file)?;
+        let held = known.is_some_and(|(_, k)| k == id) || self.folder.root().join(format!("media/{id}")).is_dir();
+        let mut m = self.folder.paths.lock().unwrap_or_else(|e| e.into_inner());
+        m.hashed += 1;
+        m.note(&self.folder, key, ident, id)?;
+        Ok((id, if held { MediaEntryStatus::Reused } else { MediaEntryStatus::Rebuilt }))
+    }
+
+    pub(crate) fn note_path(&self, key_of: &Path, ident: FileIdentity, id: ContentId) -> std::io::Result<()> {
+        let key = path_key(&self.folder, key_of);
+        self.folder.paths.lock().unwrap_or_else(|e| e.into_inner()).note(&self.folder, key, ident, id)
+    }
+
+    fn read(&self, id: ContentId, name: &str, k: (&[u8; 4], u32)) -> Option<Vec<u8>> {
+        self.folder.read(&format!("media/{id}/{name}"), k.0, k.1)
+    }
+
+    fn write(&self, id: ContentId, name: &str, k: (&[u8; 4], u32), payload: &[u8]) -> Result<(), IndexError> {
+        Ok(self.folder.write(&format!("media/{id}/{name}"), k.0, k.1, payload)?)
+    }
+
+    pub(crate) fn has(&self, id: ContentId, name: &str) -> bool {
+        self.folder.root().join(format!("media/{id}/{name}")).exists()
     }
 
     // ---- results of offline analysis (R.49, item 369) --------------------------
@@ -332,122 +318,57 @@ impl MediaIndexDb {
     // “recalculated the same thing” would give a different number in the last digit, and
     // there would be no way to tell “recalculated” from “changed”.
 
-    pub fn set_loudness(
-        &self,
-        media_id: i64,
-        lufs: f64,
-        dbtp: f64,
-        lra: f64,
-    ) -> Result<(), IndexError> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO loudness(media_id, lufs_x100, dbtp_x100, lra_x100) \
-             VALUES(?1, ?2, ?3, ?4)",
-            params![
-                media_id,
-                (lufs * 100.0).round() as i64,
-                (dbtp * 100.0).round() as i64,
-                (lra * 100.0).round() as i64
-            ],
-        )?;
-        Ok(())
+    pub fn set_loudness(&self, id: ContentId, lufs: f64, dbtp: f64, lra: f64) -> Result<(), IndexError> {
+        self.write(id, "loudness", LOUDNESS, &ints(&[lufs, dbtp, lra].map(|v| (v * 100.0).round() as i64)))
+    }
+
+    /// (LUFS, dBTP, LRA) or `None` if not measured yet
+    pub fn loudness(&self, id: ContentId) -> Result<Option<(f64, f64, f64)>, IndexError> {
+        Ok(self.read(id, "loudness", LOUDNESS).and_then(|b| match ints_of(&b).as_slice() {
+            &[a, b, c] => Some((a as f64 / 100.0, b as f64 / 100.0, c as f64 / 100.0)),
+            _ => None,
+        }))
     }
 
     /// The audio-reactive analysis series of a media (gen-audio-reactive), `None` when it is not
     /// stored or was computed by another analysis version. Reached through `listen::SeriesStore`.
-    pub fn audio_series(&self, media_id: i64, version: u32) -> Result<Option<Vec<u8>>, IndexError> {
-        Ok(self
-            .conn
-            .query_row(
-                "SELECT data FROM audio_series WHERE media_id=?1 AND version=?2",
-                params![media_id, version as i64],
-                |r| r.get(0),
-            )
-            .optional()?)
+    pub fn audio_series(&self, id: ContentId, version: u32) -> Result<Option<Vec<u8>>, IndexError> {
+        Ok(self.read(id, "series", (SERIES, version)))
     }
 
-    pub fn put_audio_series(&self, media_id: i64, version: u32, data: &[u8]) -> Result<(), IndexError> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO audio_series(media_id, version, data) VALUES(?1, ?2, ?3)",
-            params![media_id, version as i64, data],
-        )?;
-        Ok(())
+    pub fn put_audio_series(&self, id: ContentId, version: u32, data: &[u8]) -> Result<(), IndexError> {
+        self.write(id, "series", (SERIES, version), data)
     }
 
-    /// (LUFS, dBTP, LRA) or `None` if not measured yet
-    pub fn loudness(&self, media_id: i64) -> Result<Option<(f64, f64, f64)>, IndexError> {
-        let mut st = self
-            .conn
-            .prepare("SELECT lufs_x100, dbtp_x100, lra_x100 FROM loudness WHERE media_id=?1")?;
-        let mut rows = st.query(params![media_id])?;
-        match rows.next()? {
-            Some(r) => {
-                let (a, b, c): (i64, i64, i64) = (r.get(0)?, r.get(1)?, r.get(2)?);
-                Ok(Some((a as f64 / 100.0, b as f64 / 100.0, c as f64 / 100.0)))
-            }
-            None => Ok(None),
-        }
+    /// Shift of B relative to A in ticks, and confidence 0..1. The key is an ORDERED pair: the sign
+    /// of the shift depends on the order. It names both CONTENTS, so a file replaced on either side
+    /// misses (R.49).
+    pub fn set_sync_offset(&self, a: ContentId, b: ContentId, ticks: i64, conf: f64) -> Result<(), IndexError> {
+        let v = ints(&[ticks, (conf * 100.0).round() as i64]);
+        Ok(self.folder.write(&format!("pairs/{a}-{b}"), SYNC.0, SYNC.1, &v)?)
     }
 
-    /// Shift of B relative to A in ticks, and confidence 0..1. The key is an
-    /// ORDERED pair: the sign of the shift depends on the order.
-    pub fn set_sync_offset(
-        &self,
-        a_media: i64,
-        b_media: i64,
-        ticks: i64,
-        conf: f64,
-    ) -> Result<(), IndexError> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO sync_offset(a_media, b_media, ticks, conf_x100) \
-             VALUES(?1, ?2, ?3, ?4)",
-            params![a_media, b_media, ticks, (conf * 100.0).round() as i64],
-        )?;
-        Ok(())
+    pub fn sync_offset(&self, a: ContentId, b: ContentId) -> Result<Option<(i64, f64)>, IndexError> {
+        Ok(self.folder.read(&format!("pairs/{a}-{b}"), SYNC.0, SYNC.1).and_then(|v| match ints_of(&v).as_slice() {
+            &[t, c] => Some((t, c as f64 / 100.0)),
+            _ => None,
+        }))
     }
 
-    pub fn sync_offset(
-        &self,
-        a_media: i64,
-        b_media: i64,
-    ) -> Result<Option<(i64, f64)>, IndexError> {
-        let mut st = self
-            .conn
-            .prepare("SELECT ticks, conf_x100 FROM sync_offset WHERE a_media=?1 AND b_media=?2")?;
-        let mut rows = st.query(params![a_media, b_media])?;
-        match rows.next()? {
-            Some(r) => {
-                let (t, c): (i64, i64) = (r.get(0)?, r.get(1)?);
-                Ok(Some((t, c as f64 / 100.0)))
-            }
-            None => Ok(None),
-        }
+    pub fn is_complete(&self, id: ContentId) -> Result<bool, IndexError> {
+        Ok(self.read(id, "complete", COMPLETE).is_some())
     }
 
-    pub fn is_complete(&self, media_id: i64) -> Result<bool, IndexError> {
-        let c: i64 = self.conn.query_row(
-            "SELECT complete FROM media WHERE media_id=?1",
-            params![media_id],
-            |r| r.get(0),
-        )?;
-        Ok(c != 0)
+    pub fn mark_complete(&self, id: ContentId) -> Result<(), IndexError> {
+        self.write(id, "complete", COMPLETE, &[1])
     }
 
-    pub fn mark_complete(&self, media_id: i64) -> Result<(), IndexError> {
-        self.conn.execute(
-            "UPDATE media SET complete=1, built_at=strftime('%s','now') WHERE media_id=?1",
-            params![media_id],
-        )?;
-        Ok(())
-    }
+    // ---- peaks -------------------------------------------------------------------
 
     /// Build and save a peak pyramid from an audio source.
     /// Level 0 — a block of 256 frames; level n — a block of 256·2ⁿ. Values (min,max) i16.
-    pub fn build_audio_peaks(
-        &mut self,
-        media_id: i64,
-        source: &mut dyn MediaSource,
-    ) -> Result<(), IndexError> {
-        self.build_audio_peaks_until(media_id, source, &mut |_| {}, &|| false).map(|_| ())
+    pub fn build_audio_peaks(&mut self, id: ContentId, source: &mut dyn MediaSource) -> Result<(), IndexError> {
+        self.build_audio_peaks_until(id, source, &mut |_| {}, &|| false).map(|_| ())
     }
 
     /// The same with an observer of bursts (R.49, item 373): the material's loudness
@@ -455,7 +376,7 @@ impl MediaIndexDb {
     /// LUFS on an hour-long source is minutes.
     pub fn build_audio_peaks_until(
         &mut self,
-        media_id: i64,
+        id: ContentId,
         source: &mut dyn MediaSource,
         observe: &mut dyn FnMut(&crate::AudioBurst),
         stop: &dyn Fn() -> bool,
@@ -463,38 +384,318 @@ impl MediaIndexDb {
         let Some(pyramid) = PeakPyramid::build_until(source, observe, stop) else {
             return Ok(false);
         };
-        let tx = self.conn.transaction()?;
-        tx.execute("DELETE FROM audio_peaks WHERE media_id=?1", params![media_id])?;
-        for (level, channels) in pyramid.levels.iter().enumerate() {
-            for (ch, blocks) in channels.iter().enumerate() {
-                tx.execute(
-                    "INSERT INTO audio_peaks(media_id, level, channel, data) VALUES(?1,?2,?3,?4)",
-                    params![media_id, level as i64, ch as i64, peaks_blob(blocks)],
-                )?;
-            }
-        }
-        tx.commit()?;
+        self.put_pyramid(id, &pyramid)?;
         Ok(true)
     }
 
-    // ---- reel PREVIEW on disk (R.58, item 463) --------------------------------
-    //
-    // A reel has no file, and `media(path, size, mtime, xxhash)` is not its home:
-    // the key is the CONTENT. `seq` — the reel id (survives save→load, t431),
-    // `hash` — the edit (`kt_engine::content_hash`), `media_fp` — the fingerprint of the
-    // reel's tree files (path, size, mtime): the file's revision does not see it, and
-    // without the fingerprint a swapped source would show the old strip.
-    // One version per reel: a new record evicts the previous one entirely.
+    pub(crate) fn put_pyramid(&self, id: ContentId, p: &PeakPyramid) -> Result<(), IndexError> {
+        self.write(id, "peaks", PEAKS, &pyramid_bytes(p))
+    }
 
-    /// Save the frame strip and the reel's peak pyramid in one transaction.
-    /// `frames[i]` — the JPEG of frame `i * step`, `None` — the frame was absent (no
-    /// row). `hash`/`media_fp` are stored as i64 bitwise.
-    #[allow(clippy::too_many_arguments)]
-    /// The FRAMES of the strip — in their own transaction, RIGHT AFTER the frame stage
-    /// (R.67). Previously the write was single and came only after the audio stage: a strip
-    /// that had already reached the screen did not survive to disk if the task was cancelled
-    /// (pause, edit, close) — and on the next project opening the reel was rendered
-    /// anew (“the composition preview is AGAIN not saved”).
+    /// The whole pyramid of a media, one file read.
+    pub fn pyramid(&self, id: ContentId) -> Result<Option<PeakPyramid>, IndexError> {
+        Ok(self.read(id, "peaks", PEAKS).and_then(|b| pyramid_of(&b)))
+    }
+
+    /// A channel's pyramid level: Vec<(min, max)> by blocks.
+    pub fn audio_peaks(&self, id: ContentId, level: u32, channel: u32) -> Result<Option<Vec<(i16, i16)>>, IndexError> {
+        Ok(self.pyramid(id)?.and_then(|p| p.levels.into_iter().nth(level as usize)?.into_iter().nth(channel as usize)))
+    }
+
+    // ---- the packet index --------------------------------------------------------
+
+    /// Save the packet index of a stream (`stream` = “audio” | “video”);
+    /// values are pts in the stream's timebase, an i64 LE blob.
+    pub fn put_packet_index(&self, id: ContentId, stream: &str, pts: &[i64]) -> Result<(), IndexError> {
+        self.write(id, &format!("packets-{stream}"), PACKETS, &ints(pts))
+    }
+
+    /// The stream's packet index, if saved. None = not built
+    /// (an empty Vec is a valid index of a file without such a stream).
+    pub fn packet_index(&self, id: ContentId, stream: &str) -> Result<Option<Vec<i64>>, IndexError> {
+        Ok(self.read(id, &format!("packets-{stream}"), PACKETS).map(|b| ints_of(&b)))
+    }
+
+    // ---- thumbs: one file of records a media, appended ------------------------------
+
+    /// JPEG thumbnail at time t (ticks), if already built.
+    pub fn thumbnail(&self, id: ContentId, t_ticks: i64) -> Result<Option<Vec<u8>>, IndexError> {
+        Ok(self.thumb_in(id, t_ticks, t_ticks).map(|(_, j)| j))
+    }
+
+    /// The nearest thumbnail within tolerance max_dist ticks (item 14, round 7): the bin
+    /// scrub reuses thumbs written by the filmstrip with another step.
+    pub fn thumbnail_near(&self, id: ContentId, t_ticks: i64, max_dist: i64) -> Result<Option<(i64, Vec<u8>)>, IndexError> {
+        let (a, b) = (t_ticks.saturating_sub(max_dist), t_ticks.saturating_add(max_dist));
+        Ok(self.thumb_in(id, a, b).filter(|(t, _)| t.abs_diff(t_ticks) <= max_dist.unsigned_abs()))
+    }
+
+    /// The record nearest the middle of `a..=b`.
+    fn thumb_in(&self, id: ContentId, a: i64, b: i64) -> Option<(i64, Vec<u8>)> {
+        let rel = format!("media/{id}/thumbs");
+        let mut all = self.thumbs.borrow_mut();
+        if all.len() >= THUMB_IX && !all.contains_key(&id) {
+            all.clear();
+        }
+        let ix = all.entry(id).or_default();
+        ix.refresh(&self.folder, &rel);
+        let mid = a + (b - a) / 2;
+        let got = ix.at.range(a..=b).min_by_key(|(t, _)| t.abs_diff(mid)).map(|(t, at)| (*t, *at)).and_then(|(t, (at, len))| {
+            let mut f = std::fs::File::open(self.folder.root().join(&rel)).ok()?;
+            f.seek(SeekFrom::Start(at)).ok()?;
+            let mut rec = vec![0u8; THUMB_REC + len as usize];
+            f.read_exact(&mut rec).ok()?;
+            let j = thumb_record(&rec).filter(|(rt, _)| *rt == t)?.1.to_vec();
+            Some((t, j))
+        });
+        match got.is_some() {
+            true => self.folder.used(&rel),
+            false => self.folder.missed(cache_folder::Tenant::Media),
+        }
+        got
+    }
+
+    pub fn put_thumbnail(&self, id: ContentId, t_ticks: i64, jpeg: &[u8]) -> Result<(), IndexError> {
+        Ok(self.folder.append(&format!("media/{id}/thumbs"), THUMBS.0, THUMBS.1, &thumb_bytes(t_ticks, jpeg))?)
+    }
+
+    pub(crate) fn put_thumbs(&self, id: ContentId, thumbs: &[(i64, Vec<u8>)]) -> Result<(), IndexError> {
+        let all: Vec<u8> = thumbs.iter().flat_map(|(t, j)| thumb_bytes(*t, j)).collect();
+        Ok(self.folder.append(&format!("media/{id}/thumbs"), THUMBS.0, THUMBS.1, &all)?)
+    }
+
+    /// Media poster: the moment of the most informative frame (item 4, round 9).
+    /// `t_ticks < 0` — “no informative frame” (negative cache: audio,
+    /// broken video) — not searched again.
+    pub fn poster(&self, id: ContentId) -> Result<Option<i64>, IndexError> {
+        Ok(self.read(id, "poster", POSTER).and_then(|b| ints_of(&b).first().copied()))
+    }
+
+    pub fn put_poster(&self, id: ContentId, t_ticks: i64, score: i64) -> Result<(), IndexError> {
+        self.write(id, "poster", POSTER, &ints(&[t_ticks, score]))
+    }
+
+    /// The size at which the media's thumbs are written (R.62, t719): thumbs without it are not
+    /// read, they are rebuilt on the first request. Thumbs whose pixels are of another
+    /// `THUMB_PIXELS_VERSION` (written before the decode took the source's colour matrix) count as
+    /// absent the same way.
+    pub fn thumb_size(&self, id: ContentId) -> Result<Option<(u32, u32)>, IndexError> {
+        Ok(self.read(id, "thumb-size", THUMB_SIZE).and_then(|b| match ints_of(&b).as_slice() {
+            &[w, h] => Some((w as u32, h as u32)),
+            _ => None,
+        }))
+    }
+
+    /// Written BEFORE the thumb it describes: a media whose thumbs are of an older
+    /// `THUMB_PIXELS_VERSION` loses them here, so none of them is read once the size is set.
+    pub fn put_thumb_size(&mut self, id: ContentId, w: u32, h: u32) -> Result<(), IndexError> {
+        let p = self.folder.root().join(format!("media/{id}/thumbs"));
+        if p.exists() && cache_folder::header_of(&p).is_none_or(|h| !cache_folder::is_header(&h, THUMBS.0, THUMBS.1)) {
+            let _ = std::fs::remove_file(&p);
+        }
+        if self.sized.borrow().get(&id) == Some(&(w, h)) && self.has(id, "thumb-size") {
+            return Ok(());
+        }
+        self.write(id, "thumb-size", THUMB_SIZE, &ints(&[w as i64, h as i64]))?;
+        self.sized.borrow_mut().insert(id, (w, h));
+        Ok(())
+    }
+}
+
+impl ThumbIx {
+    /// Take the records appended since; a file of another kind or version is removed.
+    fn refresh(&mut self, folder: &Folder, rel: &str) {
+        let p = folder.root().join(rel);
+        let len = std::fs::metadata(&p).map_or(0, |m| m.len());
+        if len < self.read {
+            *self = ThumbIx::default();
+        }
+        if len <= self.read {
+            return;
+        }
+        let Ok(mut f) = std::fs::File::open(&p) else { return };
+        if self.read == 0 {
+            let mut h = [0u8; HEADER];
+            if f.read_exact(&mut h).is_err() || !cache_folder::is_header(&h, THUMBS.0, THUMBS.1) {
+                drop(f);
+                let _ = std::fs::remove_file(&p);
+                return;
+            }
+            self.read = HEADER as u64;
+        } else if f.seek(SeekFrom::Start(self.read)).is_err() {
+            return;
+        }
+        let mut buf = Vec::new();
+        if f.read_to_end(&mut buf).is_err() {
+            return;
+        }
+        let mut at = 0;
+        while let Some((t, j)) = buf.get(at..).and_then(thumb_record) {
+            self.at.insert(t, (self.read + at as u64, j.len() as u32));
+            at += THUMB_REC + j.len();
+        }
+        self.read += at as u64;
+        if at < buf.len() && torn(&buf[at..]) {
+            // a record a process died writing: what comes after it could not be read
+            drop(f);
+            if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&p) {
+                let _ = f.set_len(self.read);
+            }
+        }
+    }
+}
+
+/// Is what follows the last whole record not just one still being written?
+fn torn(rest: &[u8]) -> bool {
+    match rest.get(..THUMB_REC) {
+        // the record's whole length stands there and its check failed, or it is no record at all
+        Some(h) => &h[..4] != b"KTHR" || rest.len() >= THUMB_REC + u32::from_le_bytes(h[12..16].try_into().unwrap()) as usize,
+        None => false,
+    }
+}
+
+/// `KTHR`, the moment, the length, the xxh3-64 of the JPEG, the JPEG.
+fn thumb_bytes(t: i64, jpeg: &[u8]) -> Vec<u8> {
+    let mut b = Vec::with_capacity(THUMB_REC + jpeg.len());
+    b.extend_from_slice(b"KTHR");
+    b.extend_from_slice(&t.to_le_bytes());
+    b.extend_from_slice(&(jpeg.len() as u32).to_le_bytes());
+    b.extend_from_slice(&xxhash_rust::xxh3::xxh3_64(jpeg).to_le_bytes());
+    b.extend_from_slice(jpeg);
+    b
+}
+
+fn thumb_record(b: &[u8]) -> Option<(i64, &[u8])> {
+    let h = b.get(..THUMB_REC)?;
+    if &h[..4] != b"KTHR" {
+        return None;
+    }
+    let t = i64::from_le_bytes(h[4..12].try_into().ok()?);
+    let len = u32::from_le_bytes(h[12..16].try_into().ok()?) as usize;
+    let sum = u64::from_le_bytes(h[16..24].try_into().ok()?);
+    let j = b.get(THUMB_REC..THUMB_REC + len)?;
+    (xxhash_rust::xxh3::xxh3_64(j) == sum).then_some((t, j))
+}
+
+fn ints(v: &[i64]) -> Vec<u8> {
+    v.iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+
+fn ints_of(b: &[u8]) -> Vec<i64> {
+    b.chunks_exact(8).map(|c| i64::from_le_bytes(c.try_into().unwrap())).collect()
+}
+
+/// A pyramid in one payload: the levels, per level the channels, per channel its blocks' count and blob.
+fn pyramid_bytes(p: &PeakPyramid) -> Vec<u8> {
+    let mut b = Vec::new();
+    b.extend_from_slice(&(p.levels.len() as u32).to_le_bytes());
+    for level in &p.levels {
+        b.extend_from_slice(&(level.len() as u32).to_le_bytes());
+        for blocks in level {
+            b.extend_from_slice(&(blocks.len() as u32).to_le_bytes());
+            b.extend_from_slice(&peaks_blob(blocks));
+        }
+    }
+    b
+}
+
+fn pyramid_of(b: &[u8]) -> Option<PeakPyramid> {
+    let mut at = 0;
+    let n = |at: &mut usize| -> Option<usize> {
+        let v = b.get(*at..*at + 4)?;
+        *at += 4;
+        Some(u32::from_le_bytes(v.try_into().ok()?) as usize)
+    };
+    let mut levels = Vec::new();
+    for _ in 0..n(&mut at)? {
+        let mut level = Vec::new();
+        for _ in 0..n(&mut at)? {
+            let blocks = n(&mut at)?;
+            level.push(peaks_from_blob(b.get(at..at + blocks * 4)?));
+            at += blocks * 4;
+        }
+        levels.push(level);
+    }
+    Some(PeakPyramid { levels })
+}
+
+// ---- reel previews (R.58, item 463) --------------------------------------------------------------
+
+/// The reel previews of a project.
+///
+/// A reel has no file: the key is the CONTENT. `seq` — the reel id (survives save→load, t431),
+/// `hash` — the edit (`kt_engine::content_hash`), `media_fp` — the fingerprint of the reel's tree
+/// files (path, size, mtime): the edit does not see a file's swap, and without the fingerprint a
+/// swapped source would show the old strip.
+///
+/// The folder is shared by the projects in it, so a preview is kept under its whole key and each
+/// project (`tag`) names the one version of each of its reels under `reels/refs/`; a version no
+/// project names goes.
+pub struct ReelStore {
+    folder: Arc<Folder>,
+    tag: String,
+}
+
+impl ReelStore {
+    /// The reel previews in the cache folder `root`, of the project file named `project` (`None` — an
+    /// untitled one).
+    pub fn open(root: &Path, project: Option<&Path>) -> Result<ReelStore, IndexError> {
+        Ok(Self::of(Folder::open(root)?, project))
+    }
+
+    pub fn of(folder: Arc<Folder>, project: Option<&Path>) -> ReelStore {
+        ReelStore { folder, tag: tag_of(project) }
+    }
+
+    fn entry(seq: i64, hash: u64, media_fp: u64) -> String {
+        format!("{:016x}-{hash:016x}-{media_fp:016x}", seq as u64)
+    }
+
+    fn ref_path(&self, seq: i64) -> String {
+        format!("reels/refs/{}-{:016x}", self.tag, seq as u64)
+    }
+
+    /// Name `entry` as this project's version of the reel; the version named before goes when no
+    /// other project names it.
+    fn take(&self, seq: i64, entry: &str) -> Result<(), IndexError> {
+        let rel = self.ref_path(seq);
+        let before = self.folder.read(&rel, REEL_REF.0, REEL_REF.1).and_then(|b| String::from_utf8(b).ok());
+        if before.as_deref() == Some(entry) {
+            return Ok(());
+        }
+        self.folder.write(&rel, REEL_REF.0, REEL_REF.1, entry.as_bytes())?;
+        if let Some(b) = before {
+            self.drop_unnamed(&b);
+        }
+        Ok(())
+    }
+
+    fn refs(&self) -> Vec<(String, String)> {
+        let dir = self.folder.root().join("reels/refs");
+        std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let b = self.folder.read(&format!("reels/refs/{name}"), REEL_REF.0, REEL_REF.1)?;
+                Some((name, String::from_utf8(b).ok()?))
+            })
+            .collect()
+    }
+
+    fn drop_unnamed(&self, entry: &str) {
+        if self.refs().iter().any(|(_, e)| e == entry) {
+            return;
+        }
+        let _ = std::fs::remove_dir_all(self.folder.root().join("reels").join(entry));
+        self.folder.gone(&format!("reels/{entry}/strip"));
+    }
+
+    /// The FRAMES of the strip — RIGHT AFTER the frame stage (R.67): previously the write was single
+    /// and came only after the audio stage, so a strip that had already reached the screen did not
+    /// survive to disk if the task was cancelled (pause, edit, close). `frames[i]` — the JPEG of frame
+    /// `i * step`, `None` — the frame was absent.
     pub fn put_reel_frames(
         &mut self,
         seq: i64,
@@ -504,316 +705,88 @@ impl MediaIndexDb {
         end_ticks: i64,
         frames: &[Option<&[u8]>],
     ) -> Result<(), IndexError> {
-        let tx = self.conn.transaction()?;
-        for table in ["reel_strip", "reel_frame", "reel_peaks"] {
-            tx.execute(&format!("DELETE FROM {table} WHERE seq=?1"), params![seq])?;
+        let entry = Self::entry(seq, hash, media_fp);
+        let mut b = ints(&[step, end_ticks, frames.len() as i64]);
+        for j in frames {
+            b.extend_from_slice(&j.map_or(u32::MAX, |j| j.len() as u32).to_le_bytes());
+            b.extend_from_slice(j.unwrap_or_default());
         }
-        tx.execute(
-            "INSERT INTO reel_strip(seq, hash, media_fp, step, end_ticks, n) \
-             VALUES(?1,?2,?3,?4,?5,?6)",
-            params![seq, hash as i64, media_fp as i64, step, end_ticks, frames.len() as i64],
-        )?;
-        for (idx, jpeg) in frames.iter().enumerate() {
-            if let Some(j) = jpeg {
-                tx.execute(
-                    "INSERT INTO reel_frame(seq, idx, jpeg) VALUES(?1,?2,?3)",
-                    params![seq, idx as i64, *j],
-                )?;
-            }
-        }
-        tx.commit()?;
-        Ok(())
+        // the peaks of the strip before are not this one's
+        let _ = std::fs::remove_file(self.folder.root().join(format!("reels/{entry}/peaks")));
+        self.folder.write(&format!("reels/{entry}/strip"), STRIP.0, STRIP.1, &b)?;
+        self.take(seq, &entry)
     }
 
-    /// The PEAKS of the same strip — in a separate transaction and LATER. They are written
-    /// only to a row with the same key: if the edit diverged, the peaks are not ours.
-    /// There is no flag in the schema: “peaks exist” means a non-empty `reel_peaks`, and
-    /// bumping `schema_version` (which wipes the packet index, peaks and thumbs of ALL
-    /// project media) for the sake of one boolean is not allowed.
-    pub fn put_reel_peaks(
-        &mut self,
-        seq: i64,
-        hash: u64,
-        media_fp: u64,
-        peaks: &PeakPyramid,
-    ) -> Result<(), IndexError> {
-        let same: Option<i64> = self
-            .conn
-            .query_row(
-                "SELECT n FROM reel_strip WHERE seq=?1 AND hash=?2 AND media_fp=?3",
-                params![seq, hash as i64, media_fp as i64],
-                |r| r.get(0),
-            )
-            .optional()?;
-        if same.is_none() {
-            return Ok(()); // there is no strip with this key — the peaks have nowhere to go
+    /// The PEAKS of the same strip, LATER. They are written only beside a strip with the same key: if
+    /// the edit diverged, the peaks are not ours.
+    pub fn put_reel_peaks(&mut self, seq: i64, hash: u64, media_fp: u64, peaks: &PeakPyramid) -> Result<(), IndexError> {
+        let entry = Self::entry(seq, hash, media_fp);
+        if !self.folder.root().join(format!("reels/{entry}/strip")).exists() {
+            return Ok(());
         }
-        let tx = self.conn.transaction()?;
-        tx.execute("DELETE FROM reel_peaks WHERE seq=?1", params![seq])?;
-        for (level, channels) in peaks.levels.iter().enumerate() {
-            for (ch, blocks) in channels.iter().enumerate() {
-                tx.execute(
-                    "INSERT INTO reel_peaks(seq, level, channel, data) VALUES(?1,?2,?3,?4)",
-                    params![seq, level as i64, ch as i64, peaks_blob(blocks)],
-                )?;
-            }
-        }
-        tx.commit()?;
-        Ok(())
+        Ok(self.folder.write(&format!("reels/{entry}/peaks"), REEL_PEAKS.0, REEL_PEAKS.1, &pyramid_bytes(peaks))?)
     }
 
     /// The reel preview, if the disk holds EXACTLY this edit with the SAME
     /// files; any mismatch — `None`, and the reel is rendered anew.
-    pub fn reel_preview(
-        &self,
-        seq: i64,
-        hash: u64,
-        media_fp: u64,
-    ) -> Result<Option<ReelPreviewRow>, IndexError> {
-        let head: Option<(i64, i64, i64)> = self
-            .conn
-            .query_row(
-                "SELECT step, end_ticks, n FROM reel_strip WHERE seq=?1 AND hash=?2 AND media_fp=?3",
-                params![seq, hash as i64, media_fp as i64],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .optional()?;
-        let Some((step, end_ticks, n)) = head else { return Ok(None) };
-        let mut frames: Vec<Option<Vec<u8>>> = vec![None; n.max(0) as usize];
-        let mut st = self.conn.prepare("SELECT idx, jpeg FROM reel_frame WHERE seq=?1")?;
-        let mut rows = st.query(params![seq])?;
-        while let Some(r) = rows.next()? {
-            let idx: i64 = r.get(0)?;
-            if let Some(slot) = usize::try_from(idx).ok().and_then(|i| frames.get_mut(i)) {
-                *slot = Some(r.get(1)?);
-            }
-        }
-        let mut levels: Vec<Vec<Vec<(i16, i16)>>> = Vec::new();
-        let mut st = self
-            .conn
-            .prepare("SELECT data FROM reel_peaks WHERE seq=?1 AND level=?2 AND channel=?3")?;
-        'levels: for level in 0i64.. {
-            let mut channels = Vec::with_capacity(AUDIO_CHANNELS);
-            for ch in 0..AUDIO_CHANNELS as i64 {
-                let blob: Option<Vec<u8>> =
-                    st.query_row(params![seq, level, ch], |r| r.get(0)).optional()?;
-                match blob {
-                    Some(b) => channels.push(peaks_from_blob(&b)),
-                    None => break 'levels,
-                }
-            }
-            levels.push(channels);
-        }
+    pub fn reel_preview(&self, seq: i64, hash: u64, media_fp: u64) -> Result<Option<ReelPreviewRow>, IndexError> {
+        let entry = Self::entry(seq, hash, media_fp);
+        let Some(b) = self.folder.read(&format!("reels/{entry}/strip"), STRIP.0, STRIP.1) else { return Ok(None) };
+        let Some((step, end_ticks, frames)) = strip_of(&b) else { return Ok(None) };
+        self.take(seq, &entry)?;
         // PEAKS MAY BE ABSENT: frames are written earlier, and a strip without an
         // envelope is a legitimate intermediate state (R.67).
-        let has_peaks = !levels.is_empty();
-        Ok(Some(ReelPreviewRow {
-            step,
-            end_ticks,
-            frames,
-            peaks: PeakPyramid { levels },
-            has_peaks,
-        }))
+        let peaks = self.folder.read(&format!("reels/{entry}/peaks"), REEL_PEAKS.0, REEL_PEAKS.1).and_then(|b| pyramid_of(&b));
+        let has_peaks = peaks.is_some();
+        Ok(Some(ReelPreviewRow { step, end_ticks, frames, peaks: peaks.unwrap_or(PeakPyramid { levels: Vec::new() }), has_peaks }))
     }
 
-    /// Remove the previews of reels that are no longer in the project. Returns the
-    /// number of removed reels.
+    /// Forget this project's previews of reels that are no longer in it. Returns the
+    /// number of forgotten reels.
     pub fn prune_reels(&mut self, keep: &[i64]) -> Result<usize, IndexError> {
-        let stored: Vec<i64> = {
-            let mut st = self.conn.prepare("SELECT seq FROM reel_strip")?;
-            let rows = st.query_map([], |r| r.get::<_, i64>(0))?;
-            rows.collect::<Result<Vec<_>, _>>()?
-        };
-        let gone: Vec<i64> = stored.into_iter().filter(|s| !keep.contains(s)).collect();
-        if gone.is_empty() {
-            return Ok(0);
-        }
-        let tx = self.conn.transaction()?;
-        for seq in &gone {
-            for table in ["reel_strip", "reel_frame", "reel_peaks"] {
-                tx.execute(&format!("DELETE FROM {table} WHERE seq=?1"), params![seq])?;
+        let mine = format!("{}-", self.tag);
+        let mut gone = 0;
+        for (name, entry) in self.refs() {
+            let seq = name.strip_prefix(&mine).and_then(|s| u64::from_str_radix(s, 16).ok()).map(|s| s as i64);
+            if seq.is_some_and(|s| !keep.contains(&s)) {
+                std::fs::remove_file(self.folder.root().join("reels/refs").join(&name))?;
+                self.drop_unnamed(&entry);
+                gone += 1;
             }
         }
-        tx.commit()?;
-        Ok(gone.len())
-    }
-
-    /// Save the packet index of a stream (`stream` = “audio” | “video”);
-    /// values are pts in the stream's timebase, an i64 LE blob.
-    pub fn put_packet_index(
-        &self,
-        media_id: i64,
-        stream: &str,
-        pts: &[i64],
-    ) -> Result<(), IndexError> {
-        let mut blob = Vec::with_capacity(pts.len() * 8);
-        for &v in pts {
-            blob.extend_from_slice(&v.to_le_bytes());
-        }
-        self.conn.execute(
-            "INSERT OR REPLACE INTO packet_index(media_id, stream, data) VALUES(?1,?2,?3)",
-            params![media_id, stream, blob],
-        )?;
-        Ok(())
-    }
-
-    /// The stream's packet index, if saved. None = not built
-    /// (an empty Vec is a valid index of a file without such a stream).
-    pub fn packet_index(
-        &self,
-        media_id: i64,
-        stream: &str,
-    ) -> Result<Option<Vec<i64>>, IndexError> {
-        let blob: Option<Vec<u8>> = self
-            .conn
-            .query_row(
-                "SELECT data FROM packet_index WHERE media_id=?1 AND stream=?2",
-                params![media_id, stream],
-                |r| r.get(0),
-            )
-            .optional()?;
-        Ok(blob.map(|b| {
-            b.chunks_exact(8)
-                .map(|c| i64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
-                .collect()
-        }))
-    }
-
-    /// JPEG thumbnail at time t (ticks), if already built.
-    pub fn thumbnail(&self, media_id: i64, t_ticks: i64) -> Result<Option<Vec<u8>>, IndexError> {
-        Ok(self
-            .conn
-            .query_row(
-                "SELECT jpeg FROM thumbnails WHERE media_id=?1 AND t_ticks=?2",
-                params![media_id, t_ticks],
-                |r| r.get(0),
-            )
-            .optional()?)
-    }
-
-    /// The nearest thumbnail within tolerance max_dist ticks (item 14, round 7): the bin
-    /// scrub reuses thumbs written by the filmstrip with another step. BETWEEN
-    /// on PK (media_id, t_ticks) — range scan, ABS only on the candidates.
-    pub fn thumbnail_near(
-        &self,
-        media_id: i64,
-        t_ticks: i64,
-        max_dist: i64,
-    ) -> Result<Option<(i64, Vec<u8>)>, IndexError> {
-        Ok(self
-            .conn
-            .query_row(
-                "SELECT t_ticks, jpeg FROM thumbnails \
-                 WHERE media_id=?1 AND t_ticks BETWEEN ?2-?3 AND ?2+?3 \
-                 ORDER BY ABS(t_ticks-?2) LIMIT 1",
-                params![media_id, t_ticks, max_dist],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()?)
-    }
-
-    /// Media poster: the moment of the most informative frame (item 4, round 9).
-    /// `t_ticks < 0` — “no informative frame” (negative cache: audio,
-    /// broken video) — not searched again.
-    pub fn poster(&self, media_id: i64) -> Result<Option<i64>, IndexError> {
-        Ok(self
-            .conn
-            .query_row("SELECT t_ticks FROM poster WHERE media_id=?1", params![media_id], |r| {
-                r.get(0)
-            })
-            .optional()?)
-    }
-
-    pub fn put_poster(&self, media_id: i64, t_ticks: i64, score: i64) -> Result<(), IndexError> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO poster(media_id, t_ticks, score) VALUES(?1,?2,?3)",
-            params![media_id, t_ticks, score],
-        )?;
-        Ok(())
-    }
-
-    /// The size at which the media's thumbs are written (R.62, t719). Sidecars built before
-    /// the thumbs were conformed to the source's form have NO such row: their thumbs
-    /// 320×180 are squashed, and they must not be read — they are rebuilt on the
-    /// first request. The table is additive: no schema bump (and loss of the index and
-    /// peaks of all media) is needed for this.
-    /// Thumbs whose pixels are of another `THUMB_PIXELS_VERSION` (written before the decode
-    /// took the source's colour matrix) count as absent the same way.
-    pub fn thumb_size(&self, media_id: i64) -> Result<Option<(u32, u32)>, IndexError> {
-        if !self.thumb_pixels_current(media_id)? {
-            return Ok(None);
-        }
-        Ok(self
-            .conn
-            .query_row("SELECT w, h FROM thumb_meta WHERE media_id=?1", params![media_id], |r| {
-                Ok((r.get::<_, i64>(0)? as u32, r.get::<_, i64>(1)? as u32))
-            })
-            .optional()?)
-    }
-
-    fn thumb_pixels_current(&self, media_id: i64) -> Result<bool, IndexError> {
-        let v: Option<i64> = self
-            .conn
-            .query_row("SELECT version FROM thumb_pixels WHERE media_id=?1", params![media_id], |r| r.get(0))
-            .optional()?;
-        Ok(v == Some(THUMB_PIXELS_VERSION))
-    }
-
-    /// Written BEFORE the thumb it describes: a media whose thumbs are of an older
-    /// `THUMB_PIXELS_VERSION` loses them here, so none of them is read once the size is set.
-    pub fn put_thumb_size(&mut self, media_id: i64, w: u32, h: u32) -> Result<(), IndexError> {
-        let stale = !self.thumb_pixels_current(media_id)?;
-        let tx = self.conn.transaction()?;
-        if stale {
-            tx.execute("DELETE FROM thumbnails WHERE media_id=?1", params![media_id])?;
-            tx.execute(
-                "INSERT OR REPLACE INTO thumb_pixels(media_id, version) VALUES(?1,?2)",
-                params![media_id, THUMB_PIXELS_VERSION],
-            )?;
-        }
-        tx.execute(
-            "INSERT OR REPLACE INTO thumb_meta(media_id, w, h) VALUES(?1,?2,?3)",
-            params![media_id, w as i64, h as i64],
-        )?;
-        tx.commit()?;
-        Ok(())
-    }
-
-    pub fn put_thumbnail(
-        &self,
-        media_id: i64,
-        t_ticks: i64,
-        jpeg: &[u8],
-    ) -> Result<(), IndexError> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO thumbnails(media_id, t_ticks, jpeg) VALUES(?1,?2,?3)",
-            params![media_id, t_ticks, jpeg],
-        )?;
-        Ok(())
-    }
-
-    /// Read a channel's pyramid level: Vec<(min, max)> by blocks.
-    pub fn audio_peaks(
-        &self,
-        media_id: i64,
-        level: u32,
-        channel: u32,
-    ) -> Result<Option<Vec<(i16, i16)>>, IndexError> {
-        let blob: Option<Vec<u8>> = self
-            .conn
-            .query_row(
-                "SELECT data FROM audio_peaks WHERE media_id=?1 AND level=?2 AND channel=?3",
-                params![media_id, level as i64, channel as i64],
-                |r| r.get(0),
-            )
-            .optional()?;
-        Ok(blob.map(|b| peaks_from_blob(&b)))
+        Ok(gone)
     }
 }
 
+/// What a project calls its versions by: the project file's name, so a renamed folder keeps it.
+fn tag_of(project: Option<&Path>) -> String {
+    let name = project.and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    format!("{:016x}", xxhash_rust::xxh3::xxh3_64(name.as_bytes()))
+}
+
+type Strip = (i64, i64, Vec<Option<Vec<u8>>>);
+
+fn strip_of(b: &[u8]) -> Option<Strip> {
+    let head = ints_of(b.get(..24)?);
+    let n = usize::try_from(head[2]).ok()?;
+    let mut at = 24;
+    let mut frames = Vec::with_capacity(n.min(1024));
+    for _ in 0..n {
+        let len = u32::from_le_bytes(b.get(at..at + 4)?.try_into().ok()?);
+        at += 4;
+        if len == u32::MAX {
+            frames.push(None);
+            continue;
+        }
+        frames.push(Some(b.get(at..at + len as usize)?.to_vec()));
+        at += len as usize;
+    }
+    Some((head[0], head[1], frames))
+}
+
 /// A pyramid level blob: interleaved (min:i16, max:i16) LE per block — one
-/// format for `audio_peaks` and `reel_peaks`.
-fn peaks_blob(blocks: &[(i16, i16)]) -> Vec<u8> {
+/// format for a media's and a reel's peaks.
+pub(crate) fn peaks_blob(blocks: &[(i16, i16)]) -> Vec<u8> {
     let mut blob = Vec::with_capacity(blocks.len() * 4);
     for &(mn, mx) in blocks {
         blob.extend_from_slice(&mn.to_le_bytes());
@@ -822,7 +795,7 @@ fn peaks_blob(blocks: &[(i16, i16)]) -> Vec<u8> {
     blob
 }
 
-fn peaks_from_blob(b: &[u8]) -> Vec<(i16, i16)> {
+pub(crate) fn peaks_from_blob(b: &[u8]) -> Vec<(i16, i16)> {
     b.chunks_exact(4)
         .map(|c| (i16::from_le_bytes([c[0], c[1]]), i16::from_le_bytes([c[2], c[3]])))
         .collect()
@@ -843,7 +816,7 @@ pub struct ReelPreviewRow {
     pub has_peaks: bool,
 }
 
-/// In-memory peak pyramid (test 15 compares it with a naive recomputation).
+/// Peak pyramid (test 15 compares it with a naive recomputation).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PeakPyramid {
     /// levels[level][channel][block] = (min, max)

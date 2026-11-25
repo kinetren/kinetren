@@ -177,6 +177,50 @@ pub fn sandbox() -> Sandbox {
     *SANDBOX.get_or_init(|| sandbox_of(&SystemEnv, std::path::Path::new("/.flatpak-info").exists()))
 }
 
+/// The cargo target directory an executable was built into, or `None` — an installed one: the folder
+/// cargo marks with `CACHEDIR.TAG`, or the parent of a `<profile>` folder with `deps` beside the
+/// executable (a nextest archive carries no mark). Pure over `exists`.
+pub fn cargo_target_of(exe: &std::path::Path, exists: &dyn Fn(&std::path::Path) -> bool) -> Option<PathBuf> {
+    let dir = exe.parent()?;
+    let profile = if dir.file_name().is_some_and(|n| n == "deps" || n == "examples") { dir.parent()? } else { dir };
+    let marked = profile.ancestors().skip(1).take(3).find(|d| exists(&d.join("CACHEDIR.TAG")));
+    match marked {
+        Some(d) => Some(d.to_path_buf()),
+        None if exists(&profile.join("deps")) => Some(profile.parent()?.to_path_buf()),
+        None => None,
+    }
+}
+
+/// Where a TOOL of ours (kt-cli) keeps what it writes (own-data-dir, found-defects 829): an explicit
+/// `KINETREN_DATA_DIR`, else — run out of a cargo target directory, so a test, a bench, a script or a
+/// hand run of a developer — `<target>/run-data`, else the program's directory, which an installed
+/// kt-cli shares. Reading what the program left (its trace, its locks, its FFmpeg choice) is
+/// [`data_dir`]'s.
+pub fn tool_dir_of(env: &dyn Env, target: Option<PathBuf>) -> PathBuf {
+    match (env.var_os("KINETREN_DATA_DIR").map(PathBuf::from).filter(|p| p.is_absolute()), target) {
+        (None, Some(t)) => t.join("run-data"),
+        _ => resolve(env).data,
+    }
+}
+
+/// [`tool_dir_of`] of this process.
+pub fn tool_dir() -> PathBuf {
+    let target = std::env::current_exe().ok().and_then(|e| cargo_target_of(&e, &|p| p.exists()));
+    tool_dir_of(&SystemEnv, target)
+}
+
+/// The live rig's variables: a program started with one of them is our run, not a person's.
+pub const RIG_VARS: &[&str] = &["KT_LIVE_CTL", "KT_GEOM_DUMP"];
+
+/// A program started by a rig ([`RIG_VARS`]) SHALL have been given a data directory of its own
+/// (own-data-dir): the variable that asks for it, or `None` when all is well. The program refuses to
+/// start on a `Some`: it would write into the person's recovery, journal and locks.
+pub fn rig_without_data_dir(env: &dyn Env) -> Option<&'static str> {
+    let set = |n: &str| env.var_os(n).is_some_and(|v| !v.is_empty());
+    let rig = RIG_VARS.iter().copied().find(|v| set(v))?;
+    (!set("KINETREN_DATA_DIR") && !(env.os() == Os::Linux && set("XDG_DATA_HOME"))).then_some(rig)
+}
+
 /// The local directory of this machine (downloads).
 pub fn local_dir() -> PathBuf {
     system().local.clone()
@@ -195,6 +239,18 @@ pub fn ffmpeg_download_dir() -> PathBuf {
 /// it, newest first, so a folder an earlier pin left keeps working (ffmpeg-9).
 pub fn ffmpeg_download_root() -> PathBuf {
     local_dir().join("ffmpeg")
+}
+
+/// Where the caches of projects live whose own folder takes no files, and of untitled projects
+/// (project-cache-folder D4): `<data>/project-caches`.
+pub fn project_caches_root(data: &std::path::Path) -> PathBuf {
+    data.join("project-caches")
+}
+
+/// The list of every cache folder the program made (project-cache-folder D3):
+/// `<data>/cache-folders.tsv`.
+pub fn cache_folders_registry(data: &std::path::Path) -> PathBuf {
+    data.join("cache-folders.tsv")
 }
 
 /// No per-user root was found; the program should say so once.
@@ -238,6 +294,89 @@ pub fn canonical(p: &std::path::Path) -> std::io::Result<PathBuf> {
     // a path that is not UTF-8 is left as the system gave it: a lossy copy would name another file
     let plain = c.to_str().map(|s| plain_path(s, Os::NATIVE).into_owned());
     Ok(plain.map(PathBuf::from).unwrap_or(c))
+}
+
+/// What the disk under `dir` has: the bytes free for this user and its size. `None` — it cannot say.
+pub fn disk_space(dir: &std::path::Path) -> Option<(u64, u64)> {
+    disk_space_sys(dir)
+}
+
+// the fields' widths differ between unix systems
+#[cfg(unix)]
+#[allow(clippy::unnecessary_cast)]
+fn disk_space_sys(dir: &std::path::Path) -> Option<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    let mut st = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    if unsafe { libc::statvfs(c.as_ptr(), st.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let st = unsafe { st.assume_init() };
+    let block = st.f_frsize as u64;
+    Some((st.f_bavail as u64 * block, st.f_blocks as u64 * block))
+}
+
+#[cfg(windows)]
+fn disk_space_sys(dir: &std::path::Path) -> Option<(u64, u64)> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let w: Vec<u16> = dir.as_os_str().encode_wide().chain([0]).collect();
+    let (mut free, mut total) = (0u64, 0u64);
+    let ok = unsafe { GetDiskFreeSpaceExW(w.as_ptr(), &mut free, &mut total, std::ptr::null_mut()) };
+    (ok != 0).then_some((free, total))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn disk_space_sys(_: &std::path::Path) -> Option<(u64, u64)> {
+    None
+}
+
+/// Mark a folder as one Dropbox does not sync (`com.dropbox.ignored`: an extended attribute, on
+/// Windows a data stream of the folder). `false` — the file system takes no such mark.
+pub fn mark_unsynced(dir: &std::path::Path) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let Ok(c) = std::ffi::CString::new(dir.as_os_str().as_bytes()) else { return false };
+        let v = b"1";
+        unsafe { libc::setxattr(c.as_ptr(), c"user.com.dropbox.ignored".as_ptr(), v.as_ptr().cast(), v.len(), 0) == 0 }
+    }
+    #[cfg(windows)]
+    {
+        let mut s = dir.as_os_str().to_owned();
+        s.push(":com.dropbox.ignored");
+        std::fs::write(s, b"1").is_ok()
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        let _ = dir;
+        false
+    }
+}
+
+/// Whether [`mark_unsynced`]'s mark stands on `dir`.
+pub fn is_unsynced(dir: &std::path::Path) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let Ok(c) = std::ffi::CString::new(dir.as_os_str().as_bytes()) else { return false };
+        let mut v = [0u8; 4];
+        let n = unsafe {
+            libc::getxattr(c.as_ptr(), c"user.com.dropbox.ignored".as_ptr(), v.as_mut_ptr().cast(), v.len())
+        };
+        n == 1 && v[0] == b'1'
+    }
+    #[cfg(windows)]
+    {
+        let mut s = dir.as_os_str().to_owned();
+        s.push(":com.dropbox.ignored");
+        std::fs::read(s).is_ok_and(|b| b == b"1")
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        let _ = dir;
+        false
+    }
 }
 
 /// Project locks (capability `durability`): the lock of a project is a file in

@@ -575,3 +575,53 @@ fn t1132_the_toolbar_overflows_into_a_menu() {
 
 
 
+
+/// Test 3938 (window-chrome, `v26.10` U10): the wheel over a toolbar that does not fit slides its row;
+/// the transport stays, the menu holds only what is not wholly in view, a wide window resets the slide.
+/// - **PATH** narrow the window → hover the toolbar → turn the wheel down → the row slides left and
+///   Render comes into view → turn it up → the row is back
+#[test]
+fn t3938_the_wheel_slides_a_narrow_toolbar() {
+    use egui_kittest::kittest::Queryable;
+    let mut h = harness_sized(900.0, 800.0);
+    for _ in 0..3 {
+        h.step();
+    }
+    let screen = h.ctx.content_rect();
+    let render = |h: &egui_kittest::Harness<'_, crate::app::KtApp>| {
+        h.query_by_label(crate::icons::RENDER).map(|n| n.rect())
+    };
+    let play = |h: &egui_kittest::Harness<'_, crate::app::KtApp>| h.get_by_label(crate::icons::PLAY).rect();
+    assert!(render(&h).is_none(), "Render does not fit a 900-wide row");
+    let at = play(&h).center();
+    let home = play(&h);
+    let wheel = |h: &mut egui_kittest::Harness<'_, crate::app::KtApp>, dy: f32| {
+        h.hover_at(at);
+        h.step();
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, dy),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        for _ in 0..40 {
+            h.step();
+        }
+    };
+    wheel(&mut h, -2000.0);
+    let r = render(&h).expect("the wheel brought Render into the row");
+    let more = h.get_by_label(crate::icons::MORE).rect();
+    assert!(screen.contains_rect(r) && r.right() <= more.left(), "Render is wholly in view: {r:?}, more {more:?}");
+    assert_eq!(play(&h), home, "the transport does not slide");
+    assert!(h.state().tb_scroll > 0.0);
+    wheel(&mut h, 2000.0);
+    assert_eq!(h.state().tb_scroll, 0.0, "the wheel back puts the row back");
+    assert!(render(&h).is_none());
+    wheel(&mut h, -300.0);
+    assert!(h.state().tb_scroll > 0.0);
+    h.set_size(egui::vec2(1700.0, 900.0));
+    for _ in 0..4 {
+        h.step();
+    }
+    assert_eq!(h.state().tb_scroll, 0.0, "a row that fits does not stay slid");
+}

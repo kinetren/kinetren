@@ -13,6 +13,7 @@ Thumbs.db
 *.ktindex.db
 *.ktindex.db-wal
 *.ktindex.db-shm
+kinetren-cache/
 
 # Python cache
 __pycache__/

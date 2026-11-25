@@ -101,6 +101,8 @@ with libav*"), `export` (the encoder cascade).
 - `read_video_span_sizes` decodes each picture once for every size asked at it (D7, t1454);
   `video_cursor` says where the decoder stands, for a caller choosing among decoders of one file;
   `video_reach_from(at, start)` answers the reach rule for a decoder once it stands at `at` (decode-waste D2).
+- A copy's calls (persistent-cache): `Source::next_video` walks the pictures in order with their own times,
+  `video_time_base` and `audio_end` are facts of the file; a `MuxConfig.time_base` keeps them one for one.
 - The muxer: `MuxConfig.threads` (0 = `auto`, in the open report's options, t1456); conversion is a
   separate `VideoConverter` per thread, `write_video_frame` takes the frames in order (D3, D4).
 - `iostats::{VDEC_FRAMES, VDEC_NS, VIDEO_REOPENS, RGBA_*}` — the decode counters `kt-cli export

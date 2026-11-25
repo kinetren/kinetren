@@ -113,4 +113,79 @@ fn t407_master_gain_is_not_part_of_the_measurement() {
     // a repeat of the same export gives the same number: the measurement is deterministic
     let b = render_raw_audio(&p, sources(), |_| Ok(())).unwrap().loudness.unwrap().lufs.unwrap();
     assert_eq!(a, b, "loudness measurement is non-deterministic");
+
+    // the document's program stage IS part of the mix and of the measurement (loudness-norms): +3 dB
+    // under its ceiling is 3 LU
+    let mut staged = p.clone();
+    staged.program = Some(ProgramStage { gain_db: 3.0, measured: None });
+    let off = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let s = kt_engine::export::render_raw_audio_range(
+        &staged,
+        sources(),
+        None,
+        kt_engine::program::params(&staged),
+        &off,
+        |_| {},
+        |_| Ok(()),
+    )
+    .unwrap();
+    let c = s.loudness.unwrap().lufs.unwrap();
+    assert!((c - a - 3.0).abs() <= 0.1, "a program gain of 3 dB measures {:.2} LU", c - a);
+    assert!((s.program.unwrap().took_lu).abs() < 0.05, "the limiter took nothing: {:?}", s.program);
+}
+
+/// A 1 kHz tone whose channels have levels of their own by the second.
+struct Sides(SyntheticSource);
+
+impl kt_media::MediaSource for Sides {
+    fn info(&self) -> &kt_media::MediaInfo {
+        self.0.info()
+    }
+    fn read_audio_burst(&mut self, idx: i64) -> Result<kt_media::AudioBurst, kt_media::MediaError> {
+        let mut b = self.0.read_audio_burst(idx)?;
+        for (i, f) in b.data.chunks_exact_mut(AUDIO_CHANNELS).enumerate() {
+            let at = idx * kt_time::AUDIO_BURST_FRAMES as i64 + i as i64;
+            // 3–6 s: the left 12 dB over the right; 8–10 s: the right silent; 12–13 s: over the ceiling
+            let (l, r) = match at / 48_000 {
+                3..6 => (0.8, 0.2),
+                8..10 => (0.4, 0.0),
+                12 => (1.95, 1.95),
+                _ => (0.4, 0.4),
+            };
+            f[0] *= l;
+            f[1] *= r;
+        }
+        Ok(b)
+    }
+    fn read_video_frame(&mut self, pts: Tick, q: Option<kt_media::Quality>) -> Result<kt_media::VideoFrame, kt_media::MediaError> {
+        self.0.read_video_frame(pts, q)
+    }
+    fn keyframe_before(&self, pts: Tick) -> Option<Tick> {
+        self.0.keyframe_before(pts)
+    }
+}
+
+/// t3921: a stereo sound with the left channel 12 dB over the right for 3 s, the right one silent for
+/// 2 s and a second over the ceiling is measured twice: the three findings stand at their times, the same
+/// twice; a good stretch has none.
+#[test]
+fn t3921_the_findings_stand_at_their_times() {
+    use kt_fx::audio::findings::SoundFinding;
+    let sides = || -> Vec<(MediaId, Box<dyn kt_media::MediaSource>)> {
+        vec![(MediaId(1), Box::new(Sides(SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Sine { hz: 1000.0 }))))]
+    };
+    let mut p = project_with(0.0, 16.0);
+    p.loudness = LoudnessTarget::of(LoudnessStandard::Streaming);
+    let run = || render_raw_audio(&p, sides(), |_| Ok(())).unwrap();
+    let (a, b) = (run(), run());
+    assert_eq!(a.spans, b.spans, "two measurements differ");
+    let sec = |f: u64| f as f64 / 48_000.0;
+    let got: Vec<_> = a.spans.iter().map(|s| (s.what, sec(s.from), sec(s.to))).collect();
+    let want = [(SoundFinding::Louder(0), 3.0, 6.0), (SoundFinding::Silent(1), 8.0, 10.0), (SoundFinding::OverCeiling, 12.0, 13.0)];
+    assert_eq!(got.len(), want.len(), "{got:?}");
+    for (g, w) in got.iter().zip(&want) {
+        assert!(g.0 == w.0 && (g.1 - w.1).abs() <= 0.11 && (g.2 - w.2).abs() <= 0.11, "{g:?} against {w:?}");
+    }
+    assert!((a.spans[0].value - 12.0).abs() < 0.2, "the difference: {:?}", a.spans[0]);
+    assert!(a.spans[2].value > -1.0 && a.spans[2].value < 0.5, "the peak: {:?}", a.spans[2]);
 }

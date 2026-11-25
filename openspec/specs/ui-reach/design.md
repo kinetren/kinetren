@@ -763,3 +763,36 @@ and t3710 reach their kinds through the window's gallery (`create_from_edit`). T
 
 A remembered "last created kind" for the item. His answer chose the track, and a memory would give two
 answers to one click.
+
+## window-chrome (2026-11-24, v26.10 T7, T8, W3)
+
+### D5. Folds and buttons (T8, T7)
+
+- The per-chain fold draws its body unindented (`CollapsingHeader::show_unindented`): no indent, no line.
+- Copy/Paste the chain and the envelope become icon buttons (Phosphor `copy`, `clipboard`), each with its existing
+  hint through `KtApp::hint`; their catalog names become the accessible names. Where `presets-everywhere`'s head
+  menu lands, these buttons go into it.
+
+### D6. Titles (W3)
+
+`KtApp::event_name(clip)`: a title's first 24 characters of text (a counter's kind name: it does not draw its text); a
+generator's kind name; a reel's name; a file's base name (40 characters). Effects: "<name> — Effects", a linked pair
+"<name> + sound — Effects", a larger group "<name> and its linked tracks — Effects". A transition: "<a> / <b> —
+Transition", at an edge "<name> — Edge transition" (it was "Transition 12", an id, against the plan's table). A morpher:
+"Morpher M1, 00:00:03:00" — it has no name of its own: the row and the start are what the timeline shows. The number
+("#2149") is weak and small: in the chain's fold head after "Video"/"Audio", and in the action row of the transition and
+morpher windows.
+
+## gen-sound-reels (2026-11-24, found-defects 1001)
+
+The sound pairs are the MODEL's command (`SetGenSound`), not a list of `AddClip` the window computes from the open timeline:
+values ("apply to all", a kind change) reach every reel, a command built from one timeline cannot, and an event of a reel
+expanded in place got its pair by the root's track number (the command runs in the working view, so it carries the strips'
+rows). The model takes whether the kind sounds as an argument: it does
+not know the generators' sources.
+
+## fold-margin (2026-11-24, found-defects 833)
+
+Unindented (window-chrome T8), a chain's body started 4 points inside the window, under its 8-point resize edge: a curve's
+first key stands at the graph's left edge, the edge took its click and the selection stayed (live `curve_keys`). The fold
+has a margin of 10 points with no line.

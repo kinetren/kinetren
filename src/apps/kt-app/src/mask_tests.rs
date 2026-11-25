@@ -231,6 +231,8 @@ fn t1282_the_preview_click_and_playback_around_masks() {
     let (mut h, clip) = crate::layout_tests::harness_geom_ctl();
     let owner = MaskOwner::Picture(clip);
     with_path(&mut h, clip);
+    // the playhead runs by the clock: a frame that stood for a composite played past the event (found-defects 844)
+    h.state_mut().compose_grace = std::time::Duration::ZERO;
     assert!(!h.state().player.transport.is_playing());
     let corner = at(&h, owner, (0.97, 0.95));
     click_at(&mut h, corner, egui::Modifiers::NONE);

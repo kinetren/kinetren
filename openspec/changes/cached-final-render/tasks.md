@@ -1,45 +1,37 @@
 # Tasks: cached-final-render
 
-> The owner answered Q1–Q3 (kkt-26.11.20 A16); an executor builds it in stage 24 on the orchestrator's go. Tests reserved: t3322–t3335, t3870–t3876. Base: orch `ec30cb02`,
-> revised on `5e7a8ea9` after his answers (Q1 b, Q2 a, Q3 b).
+> IMPLEMENTATION-READY (revision 3, 2026-11-24, orch `229c694b`). The owner answered (kkt-26.11.20 A16: Q20 b, Q21 a, Q22 b). Tests: t3322–t3335, t3870–t3876, t4138–t4141.
+> Areas: EXPORT, kt-ffmpeg (`muxer_impl.rs`, new `nal.rs`, `gop.rs`), kt-plugin-api + plugins (two facts), CACHE (`Tenant::Render`), DIALOG. One at a time with
+> `loudness-norms` and `export-into-surface` 4 (EXPORT, DIALOG). 1.1 may go alone, at once. Read: design D1–D8; kt-ffmpeg and kt-engine `CLAUDE.md` (the export part). Commit per section; target-prune after each.
 
 ## 0. Notes first
 
-- [x] 0.1 F-EXP-003 gains the owner's later word (X1, U5); `features-index.py --check` green
-- [x] 0.2 proposal, design (D1–D10, class walk D9), deltas `export`, `video-plan`;
-      `openspec validate cached-final-render --strict`
-- [x] 0.3 his answers Q1–Q3 (kkt-26.11.20 lines 21–22: draft render, yes, SEI) (orchestrator: `docs/user-feedback.md`, `docs/owner-checks.md`); found-defects
-      773 gets its verdict from Q1; `v26.10-index.md` X1 and `kkt-26.11.18b-index.md` U5 point here
+- [x] 0.1 F-EXP-003 gains the owner's later word (X1, U5)
+- [x] 0.2 proposal, design (D1–D13), deltas `export`, `video-plan`; `--strict`
+- [x] 0.3 his answers folded in
 
-## 1. The index
+## 1. Names
 
-- [ ] 1.1 the fingerprint (D3); t3323
-- [ ] 1.2 per-frame keys at the export's quality and the per-GOP hash, written as SEI (D5); `renders.tsv` in
-      the project's cache folder; the strip tool; t3870, t3871;
-      t3322, t3324
-- [ ] 1.3 the durable key's layout guard; t3335
+- [x] 1.1 (change-free branch `adopt-sources`, 2026-11-25) `adopt_sources` in every offline cache (D1); t4138 (red today: two exports of two projects with one media id and Posterize before Datamosh in one process); row 1068 closed; commit alone
+- [ ] 1.2 `Plugin::{reads_time, reads_progress}`, the `false` answers; `picture_key`, `shape`; t3335, t4139; `cargo test -p kt-plugin-api -p kt-engine` and the plugin crates; commit
 
-## 2. Keyframes and parameter sets
+## 2. The file
 
-- [ ] 2.1 closed GOPs at edit identity changes, spacing from there (D2); t3325
-- [ ] 2.2 in-band parameter sets, `avc3`/`hev1` in MP4 (D4); t3326
+- [ ] 2.1 `kt-ffmpeg/src/nal.rs`, `gop.rs` (SEI, `GopWriter`, hash); t4140; `Muxer::set_gops`, forced IDR per encoder, `open_encoder` taken out, `avc3`/`hev1`
+- [ ] 2.2 `gop_plan` (kt-engine `cached_render.rs`), the fingerprint; t3322, t3323, t3325, t3326, t3324
+- [ ] 2.3 `Tenant::Render`, `renders/`; the reader of a table and of SEIs; the strip; t3870, t4141; commit
 
 ## 3. The copy
 
-- [ ] 3.1 `Muxer` packet input; a reader of our own outputs' packets by the GOP table
-- [ ] 3.2 candidate lookup, ordering by index hash, whole-GOP matching, re-stamping; encoder restart around
-      copies; t3327–t3330
-- [ ] 3.3 the preview's tier stays out (counter); t3331
+- [ ] 3.1 `reuse`, the verification; `Muxer::copy_gop`, flush and reopen; t3328, t3329
+- [ ] 3.2 spans in `export_pipeline` and the serial export, the pre-roll per span, the counts; t3327, t3330, t3331; t1451, t2805, t3998 green; commit
 
 ## 4. The window and kt-cli
 
-- [ ] 4.1 the "Cached render" step, the strip, the estimate; summary; i18n in every catalog; `reach_tests`,
-      `layout_tests`, font tests; live scenario with screenshots; t3332, t3334
-- [ ] 4.2 `kt-cli export --cached`; t3333
-- [ ] 4.3 What's new line; F-EXP-003 status update
+- [ ] 4.1 the section, the strip, the summary, "Remove the render index"; i18n ×5; reach, layout, font tests; live `cached_render` (a screenshot per step); t3332, t3334, t3871
+- [ ] 4.2 `kt-cli export --cached [--look]`, `strip-index`; t3333; `trace … export` prints the spans
+- [ ] 4.3 What's new ("a second render of a project copies what did not change"); F-EXP-003; registry X1, U5; the idle check with the section open; commit
 
-## 5. The draft render
+## 5. The draft
 
-- [ ] 5.1 the option in the render window, the prerender's frames decoded and scaled, the rest at the
-      preview's quality, the draft tag, the summary; kt-cli `export --draft`; i18n; t3872–t3876; planned
-      live scenario `draft_render` with a screenshot per step
+- [ ] 5.1 `DraftSource`, the mode, the window's option, `kt-cli export --draft`; i18n ×5; t3872–t3876; live `draft_render`; found-defects 773 closed by the two modes; commit

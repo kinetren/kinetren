@@ -64,6 +64,8 @@ pub struct LayerSrc<'a> {
     /// while the bytes differ — by address the GPU would return the old texture and the
     /// old memoized composite (t496, t211).
     pub content: u64,
+    /// What names the frame whether or not it is decoded now (durable-moment-key D2).
+    pub leaf: Leaf,
     /// The layer's CHAIN INPUT (R.46, item 318; refined in R.58, item 459): the frame
     /// that the chain receives is `src_scale` times larger than Quality. 1 —
     /// exactly Quality, as it always was. For a LEAF this is the decode scale step;
@@ -224,6 +226,8 @@ impl NestSrc<'_> {
 /// What and how the layer's frame is blended with: the neighbour (for cache keys) and the weight in 4096ths.
 #[derive(Debug, Clone, Copy)]
 pub struct LayerBlend {
+    /// What names the neighbour, as `LayerSrc::leaf` does.
+    pub leaf: Leaf,
     pub cache_idx: i64,
     pub k: u32,
     /// The content serial number of the NEIGHBOUR (item 409): the blended frame is a
@@ -264,7 +268,51 @@ pub struct FramePlan<'a> {
     pub layers: Vec<PlanLayer<'a>>,
 }
 
+/// What a layer's frame is, by its source and not by the cache (durable-moment-key D2): the identity of
+/// what is decoded and the decode size, a stream stage's own key. Zero — nothing names it: the cache
+/// knows no identity (a private cache of an export, a thumbnail, a hand-written plan), or the layer is a
+/// reel, whose plan is hashed whole; the content serial then names the frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Leaf {
+    pub key: u64,
+    /// The name outlives the process.
+    pub durable: bool,
+    /// A procedural source, or a stream stage, drew it (what a key of the disk names beside it).
+    pub drawn: bool,
+    pub stream: bool,
+}
+
+impl Leaf {
+    /// A frame of `ident` decoded at `w`×`h`.
+    pub fn frame(ident: Option<kt_cache::SourceIdent>, w: u32, h: u32, drawn: bool) -> Leaf {
+        match ident {
+            Some(i) => {
+                let key = kt_plugin_api::stream::mix(i.key, ((w as u64) << 32) | h as u64).max(1);
+                Leaf { key, durable: i.durable, drawn, stream: false }
+            }
+            None => Leaf { drawn, ..Default::default() },
+        }
+    }
+}
+
 impl FramePlan<'_> {
+    /// Every frame of the plan, at any depth, has a name that outlives the process: its picture may be
+    /// written to and read from disk.
+    pub fn durable(&self) -> bool {
+        fn src(s: &LayerSrc<'_>) -> bool {
+            let own = match &s.input {
+                LayerInput::Nest(n) => n.plan.durable(),
+                _ => s.leaf.key != 0 && s.leaf.durable,
+            };
+            let blend = s.blend.as_ref().is_none_or(|b| b.leaf.key != 0 && b.leaf.durable);
+            own && blend && s.reads.iter().all(|(_, r)| src(r))
+        }
+        self.layers.iter().all(|l| match l {
+            PlanLayer::One { src: s, .. } => src(s),
+            PlanLayer::Dissolve { a, b, .. } => src(a) && src(b),
+        })
+    }
+
     /// Some layer of the plan, at any depth of its reels and track stages, has no input frame
     /// (no-partial-picture): the composite cannot come out complete, and an executor knows it before
     /// it uploads, encodes or reads back anything. Exactly the starvation `resolve` finds; a frame
@@ -310,6 +358,9 @@ pub struct GpuBackendInfo {
     /// A software rasterizer (llvmpipe/lavapipe) is correct and counts as “GPU
     /// present” (R.29); the flag is for diagnostics only.
     pub software: bool,
+    /// The driver and its version: video is byte-equal on one device and one driver only
+    /// (invariant 11), so what is kept on disk names it.
+    pub driver: String,
 }
 
 /// The plan of one frame through a chain, with no timeline behind it (the effect thumbnails).
@@ -344,6 +395,7 @@ pub fn chain_plan_with<'a>(
         source: SourceId(0),
         cache_idx: 0,
         content,
+        leaf: Default::default(),
         src_scale: 1,
         input: LayerInput::Frame(Some(frame)),
         fx: LayerChain::Borrowed(fx),

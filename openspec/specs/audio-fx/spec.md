@@ -405,10 +405,12 @@ When a paired kind's slot is added to, edited on or removed from an event, the m
 same undo step, give every linked event of the other kind (video ↔ audio) the counterpart slot: the
 n-th slot of a paired kind matches the n-th slot of its counterpart; values and curves copied, a
 missing one appended at the chain's end, an extra one removed. The slot's bypass and masks SHALL stay
-each side's own. A morpher patch SHALL hand the counterpart of each enabled paired slot, with its
-curves, to the events of the other kind, unless the patch holds that slot itself.
+each side's own. A morpher patch SHALL hold both halves as its own slots by the same rule (capability
+`morpher`, "A patch holds both halves of a paired device, each switchable"); no half SHALL be derived
+at render time.
 Why: kkt-26.11.03b D1 — adding VHS Tape to an event with audio must put its sound on that audio,
 visible and switchable off; presets, paste, automation and morpher batches go through the same doors.
+kkt-26.11.18b item 3 — the derived half of a morpher could not be switched off.
 
 #### Scenario: VHS Tape on a linked pair
 - **WHEN** VHS Tape with head A clogged is set on a video event linked to an audio event with a gain;
@@ -425,17 +427,17 @@ visible and switchable off; presets, paste, automation and morpher batches go th
 - **TEST** t1461c (`src/libs/kt-model/tests/sim_pairs.rs`)
 
 #### Scenario: A morpher layer's tape reaches the sound
-- **WHEN** a patch carries VHS Tape with a tracking curve; then bypassed; then holding the sound itself; a patch carrying only the sound
-- **THEN** its audio chain is `vhs_tape_sound` with the curve in the same position; bypassed — none; held — one; the video chain of the sound-only patch is `vhs_tape`
-- **TEST** t1461b (`src/libs/kt-model/tests/sim_pairs.rs`)
+- **WHEN** a patch carries VHS Tape with a tracking curve; then the picture slot bypassed; then the sound half bypassed instead; a patch given only the sound
+- **THEN** its audio chain is `vhs_tape_sound` with the curve in the same position; picture bypassed — the sound stays; sound bypassed — none on the audio, the tape on the video; the sound-only patch holds `vhs_tape` on its picture chain too
+- **TEST** t1461b (`src/libs/kt-model/tests/sim_pairs.rs`, rewritten: the derivation is gone and "bypassed — none" now reads per half)
 
 #### Scenario: The deck's sound on the linked audio in the effects window
 - **PATH** a video event linked to its audio → VHS Tape added to the picture → the effects window
-  shows both halves' chains, each with the deck face and its Sound section (Hi-Fi / Normal / Mix,
-  mono/stereo linear tracks, Dolby B, the audio head) → click "Normal (linear)" on the audio half's
-  face → both halves switch to the linear track
+  shows one VHS Tape node with a picture lane and a sound lane; its deck face beside the graph has the
+  Sound section (Hi-Fi / Normal / Mix, mono/stereo linear tracks, Dolby B, the audio head) → click the
+  sound lane → click "Normal (linear)" on the face → both halves switch to the linear track
 - **WHEN** the person adds VHS Tape to the picture and presses "Normal (linear)" on the audio's face
-- **THEN** the audio chain holds `vhs_tape_sound`, two Sound sections are drawn, and both halves'
+- **THEN** the audio chain holds `vhs_tape_sound`, the Sound section is drawn for the selected half, and both halves'
   `audio_out` is Normal in the MODEL
 - **TEST** t1468 (`src/apps/kt-app/src/vhs_tape_tests.rs`), live `vhs_sound` (`src/scripts/live/vhs_sound.py`)
 

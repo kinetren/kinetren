@@ -19,7 +19,7 @@ pub trait SeriesStore {
     fn put(&mut self, file: &Path, series: &AudioSeries);
 }
 
-impl SeriesStore for crate::index::MediaIndexDb {
+impl SeriesStore for crate::index::MediaStore {
     fn get(&mut self, file: &Path) -> Option<AudioSeries> {
         let (id, _) = self.ensure_media(file).ok()?;
         AudioSeries::from_bytes(self.audio_series(id, VERSION).ok()??)

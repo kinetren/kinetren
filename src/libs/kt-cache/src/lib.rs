@@ -7,6 +7,7 @@
 //! Key: (source_id, kind{Audio | Video{quality}}, idx). Quality is part of the key:
 //! entries of different qualities are not interchangeable.
 
+pub use kt_media::SourceIdent;
 use kt_media::{AudioBurst, Quality, VideoFrame};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -114,6 +115,9 @@ impl Default for CacheConfig {
         CacheConfig { max_audio_bytes: 64 << 20, max_video_bytes: 512 << 20 }
     }
 }
+
+/// Reads what sources decode now (`BurstCache::ident_reader`).
+pub type IdentReader = Arc<dyn Fn(&[SourceId]) -> Vec<Option<SourceIdent>> + Send + Sync>;
 
 /// The next content serial number of the process (`Entry::serial`).
 static NEXT_SERIAL: AtomicU64 = AtomicU64::new(1);
@@ -250,6 +254,9 @@ struct Inner {
     /// item 409). Bounded, oldest first.
     past: HashMap<BurstKey, u64>,
     past_order: std::collections::VecDeque<BurstKey>,
+    /// What each live source decodes (durable-moment-key D1): every entry of a source that has one was
+    /// decoded from it.
+    idents: HashMap<SourceId, SourceIdent>,
     /// A loop is kept (`keep_loop`).
     looping: bool,
     /// The laps the player marked (`lap`).
@@ -426,6 +433,7 @@ impl BurstCache {
                 want_pass: 0,
                 past: HashMap::new(),
                 past_order: std::collections::VecDeque::new(),
+                idents: HashMap::new(),
                 looping: false,
                 lap: 0,
                 window_bytes: [0, 0],
@@ -609,13 +617,53 @@ impl BurstCache {
         }
     }
 
+    /// A frame with its serial, and what the source decodes NOW, in one look (durable-moment-key D1): the
+    /// identity comes back whether or not the frame is there, and a frame that is there was decoded from
+    /// it.
+    pub fn get_video_leaf(
+        &self,
+        source: SourceId,
+        quality: Option<Quality>,
+        idx: i64,
+    ) -> (Option<(Arc<VideoFrame>, u64)>, Option<SourceIdent>) {
+        let key = BurstKey { source, kind: BurstKind::video(quality), idx };
+        let mut inner = self.inner.lock().unwrap();
+        let ident = inner.idents.get(&source).copied();
+        let got = self.take(&mut inner, key).map(|(p, serial)| match p {
+            Payload::Video(f) => (f, serial),
+            Payload::Audio(_) => unreachable!("video key holds audio payload"),
+        });
+        (got, ident)
+    }
+
+    /// What sources decode now, in one look.
+    pub fn idents(&self, of: &[SourceId]) -> Vec<Option<SourceIdent>> {
+        let inner = self.inner.lock().unwrap();
+        of.iter().map(|s| inner.idents.get(s).copied()).collect()
+    }
+
+    /// [`BurstCache::idents`] as a reader that outlives a call (a shared renderer build): nothing is known
+    /// once the cache is gone.
+    pub fn ident_reader(self: &Arc<Self>) -> IdentReader {
+        let weak = Arc::downgrade(self);
+        Arc::new(move |of| weak.upgrade().map_or_else(|| vec![None; of.len()], |c| c.idents(of)))
+    }
+
+    /// What the source decodes now.
+    pub fn ident(&self, source: SourceId) -> Option<SourceIdent> {
+        self.inner.lock().unwrap().idents.get(&source).copied()
+    }
+
     pub fn get(&self, key: BurstKey) -> Option<Payload> {
         self.get_stamped(key).map(|(p, _)| p)
     }
 
     /// `get` + the serial number of the entry’s content (item 409).
     pub fn get_stamped(&self, key: BurstKey) -> Option<(Payload, u64)> {
-        let mut inner = self.inner.lock().unwrap();
+        self.take(&mut self.inner.lock().unwrap(), key)
+    }
+
+    fn take(&self, inner: &mut Inner, key: BurstKey) -> Option<(Payload, u64)> {
         inner.recency_counter += 1;
         let counter = inner.recency_counter;
         let is_audio = key.kind == BurstKind::Audio;
@@ -677,17 +725,34 @@ impl BurstCache {
         );
     }
 
+    /// A worker's video (durable-moment-key D1): decoded from `from`, and refused when that is no longer
+    /// what the source decodes — an old decoder's last span behind a replaced source.
+    pub fn insert_video_from(&self, source: SourceId, from: SourceIdent, quality: Option<Quality>, idx: i64, span: i64, frame: Arc<VideoFrame>) -> bool {
+        let key = BurstKey { source, kind: BurstKind::video(quality), idx };
+        self.insert_with_holds(key, Payload::Video(frame), span.max(1), 0, Some(from))
+    }
+
+    /// The same for audio.
+    pub fn insert_audio_from(&self, source: SourceId, from: SourceIdent, burst: Arc<AudioBurst>) -> bool {
+        let key = BurstKey { source, kind: BurstKind::Audio, idx: burst.idx };
+        self.insert_with_holds(key, Payload::Audio(burst), 1, 0, Some(from))
+    }
+
     pub fn insert(&self, key: BurstKey, payload: Payload) {
         self.insert_spanned(key, payload, 1);
     }
 
     fn insert_spanned(&self, key: BurstKey, payload: Payload, span: i64) {
-        self.insert_with_holds(key, payload, span, 0);
+        self.insert_with_holds(key, payload, span, 0, None);
     }
 
-    /// `holds_added` is taken in the same step as the insert: eviction cannot pass between them.
-    fn insert_with_holds(&self, key: BurstKey, payload: Payload, span: i64, holds_added: u32) {
+    /// `holds_added` is taken in the same step as the insert: eviction cannot pass between them. `from` —
+    /// what it was decoded from: `false` when the source decodes something else now.
+    fn insert_with_holds(&self, key: BurstKey, payload: Payload, span: i64, holds_added: u32, from: Option<SourceIdent>) -> bool {
         let mut inner = self.inner.lock().unwrap();
+        if from.is_some() && inner.idents.get(&key.source).copied() != from {
+            return false;
+        }
         let bytes = payload.bytes();
         let is_audio = payload.is_audio();
         if !is_audio {
@@ -754,6 +819,7 @@ impl BurstCache {
                 f();
             }
         }
+        true
     }
 
     /// An entry dropped before its first read: thrash while the latest prefetch pass still
@@ -895,7 +961,7 @@ impl BurstCache {
 
     /// `insert_video` that takes a hold in the same step.
     pub fn insert_video_held(&self, source: SourceId, quality: Option<Quality>, idx: i64, frame: Arc<VideoFrame>) {
-        self.insert_with_holds(BurstKey { source, kind: BurstKind::video(quality), idx }, Payload::Video(frame), 1, 1);
+        self.insert_with_holds(BurstKey { source, kind: BurstKind::video(quality), idx }, Payload::Video(frame), 1, 1, None);
     }
 
     /// Give back one hold of each key; the entries go back to the LRU, where they already are.
@@ -922,24 +988,61 @@ impl BurstCache {
     /// Drop all entries of the source (the file changed on disk; the parameters
     /// of the generator were reconfigured — R.53, item 411). It goes by the index
     /// `by_source`, and not by the whole cache: it is called on every edit.
+    /// Drop the bytes of a source; what it decodes stays known.
     pub fn invalidate_source(&self, source: SourceId) {
+        self.drop_source(&mut self.inner.lock().unwrap(), source);
+    }
+
+    /// The source decodes `ident` from now on (durable-moment-key D1): entries and remembered serials of
+    /// another identity go in the same step, so a frame and the identity it was decoded from are never
+    /// apart. The same identity keeps them. Called by the thread that will insert, or before it starts.
+    pub fn adopt(&self, source: SourceId, ident: SourceIdent) {
         let mut inner = self.inner.lock().unwrap();
-        let keys: Vec<BurstKey> =
-            inner.by_source.remove(&source).map(|k| k.into_iter().collect()).unwrap_or_default();
+        if inner.idents.insert(source, ident) != Some(ident) {
+            self.drop_source(&mut inner, source);
+        }
+    }
+
+    /// The source's PICTURES are decoded from another file from now on, its sound from the same one (a
+    /// copy of a heavy source, persistent-cache D3): the pictures go, the bursts stay.
+    pub fn adopt_picture(&self, source: SourceId, ident: SourceIdent) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.idents.insert(source, ident) != Some(ident) {
+            self.drop_of(&mut inner, source, |k| !matches!(k.kind, BurstKind::Audio));
+        }
+    }
+
+    /// The source is no more: its bytes and its identity go.
+    pub fn forget(&self, source: SourceId) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.idents.remove(&source);
+        self.drop_source(&mut inner, source);
+    }
+
+    fn drop_source(&self, inner: &mut Inner, source: SourceId) {
+        self.drop_of(inner, source, |_| true);
+    }
+
+    fn drop_of(&self, inner: &mut Inner, source: SourceId, gone: impl Fn(&BurstKey) -> bool) {
+        let all = inner.by_source.remove(&source).unwrap_or_default();
+        let (keys, left): (Vec<BurstKey>, Vec<BurstKey>) = all.into_iter().partition(&gone);
+        if !left.is_empty() {
+            inner.by_source.insert(source, left.into_iter().collect());
+        }
         self.stats.invalidate_scan_steps.fetch_add(keys.len() as u64, Ordering::Relaxed);
         kt_time::trace::ev(kt_time::trace::Ev::CacheInvalidate).a(source.0).b(keys.len() as u64).emit();
-        inner.past.retain(|k, _| k.source != source);
-        inner.past_order.retain(|k| k.source != source);
+        inner.past.retain(|k, _| k.source != source || !gone(k));
+        inner.past_order.retain(|k| k.source != source || !gone(k));
         for key in keys {
             let entry = inner.map.remove(&key).unwrap();
             inner.lru.remove(&entry.recency);
             if entry.holds > 0 {
                 inner.held_bytes -= entry.payload.bytes();
             }
-            uncount(&mut inner, &entry);
+            uncount(inner, &entry);
         }
-        inner.coverage.retain(|(s, _), _| *s != source);
-        self.report(&inner);
+        inner.coverage.retain(|(s, kind), _| *s != source || !gone(&BurstKey { source, kind: *kind, idx: 0 }));
+        self.report(inner);
         self.epoch.fetch_add(1, Ordering::AcqRel);
     }
 
@@ -1070,22 +1173,6 @@ mod v12_tests {
         s.remove_range(0, 30);
         assert!(s.query(0..40).is_empty());
     }
-}
-
-#[cfg(test)]
-mod postfx_tests {
-    use super::*;
-
-    fn vframe(bytes: usize) -> Arc<VideoFrame> {
-        Arc::new(VideoFrame {
-            pts: kt_time::Tick(0),
-            width: 2,
-            height: 2,
-            rgba: vec![7u8; bytes].into_boxed_slice(),
-            has_alpha: false,
-        })
-    }
-
 }
 
 #[cfg(test)]
@@ -1406,6 +1493,70 @@ mod serial_tests {
         c.insert_video(s, q, 0, frame());
         let after = c.get_video_stamped(s, q, 0).unwrap().1;
         assert!(after != first && after != over, "after the source changed the address is new bytes");
+    }
+
+    /// t4110 (durable-moment-key D1): the identity and the entries move together. The same identity keeps
+    /// them, another drops them with their remembered serials; an insert of the identity before is refused,
+    /// video and audio; an invalidation drops the bytes and keeps the identity, a forgotten source has none.
+    #[test]
+    fn t4110_the_identity_and_the_entries_move_together() {
+        let c = BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: 1 << 20 });
+        let (s, other, q) = (SourceId(5), SourceId(6), Some(Quality { width: 4, height: 4 }));
+        let (a, b) = (SourceIdent::of("a"), SourceIdent::of("b"));
+        assert_eq!(c.ident(s), None);
+        assert!(!c.insert_video_from(s, a, q, 0, 1, frame()), "nothing is known of the source yet");
+        c.adopt(s, a);
+        c.insert_video(other, q, 0, frame());
+        assert!(c.insert_video_from(s, a, q, 0, 1, frame()) && c.insert_audio_from(s, a, Arc::new(AudioBurst::silence(0))));
+        let (got, ident) = c.get_video_leaf(s, q, 0);
+        assert_eq!(ident, Some(a));
+        let serial = got.expect("held").1;
+        assert!(matches!(c.get_video_leaf(s, q, 1), (None, Some(i)) if i == a), "known before its frame is");
+        let epoch = c.epoch();
+        c.adopt(s, a);
+        assert!(c.contains_video(s, q, 0) && c.contains_audio(s, 0) && c.epoch() == epoch, "the same identity keeps all");
+        c.adopt(s, b);
+        assert!(!c.contains_video(s, q, 0) && !c.contains_audio(s, 0), "another drops the source's entries");
+        assert!(c.contains_video(other, q, 0), "and nothing else");
+        // the old decoder's last span
+        assert!(!c.insert_video_from(s, a, q, 0, 1, frame()) && !c.insert_audio_from(s, a, Arc::new(AudioBurst::silence(0))));
+        assert!(!c.contains_video(s, q, 0) && !c.contains_audio(s, 0), "a late insert of the old identity landed");
+        assert!(c.insert_video_from(s, b, q, 0, 1, frame()));
+        assert_ne!(c.get_video_leaf(s, q, 0).0.unwrap().1, serial, "the remembered serial of the old bytes is gone");
+        c.invalidate_source(s);
+        assert!(!c.contains_video(s, q, 0) && c.ident(s) == Some(b), "bytes go, what the source decodes stays");
+        c.forget(s);
+        assert_eq!(c.ident(s), None);
+        c.insert_video(s, q, 0, frame());
+        assert!(matches!(c.get_video_leaf(s, q, 0), (Some(_), None)), "a private cache names its frames by serials");
+        assert_ne!(SourceIdent::once(), SourceIdent::once());
+    }
+
+    /// Test 3612 (persistent-cache D3): a source whose PICTURES come from another file from now on keeps its
+    /// decoded sound and the sound's coverage; a late picture of the old file is refused, and the same
+    /// identity again drops nothing.
+    #[test]
+    fn t3612_a_swapped_picture_keeps_the_sound() {
+        let c = BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: 1 << 20 });
+        let (s, q) = (SourceId(7), Some(Quality { width: 4, height: 4 }));
+        let (file, copy) = (SourceIdent::of("file"), SourceIdent::of("copy"));
+        c.adopt(s, file);
+        assert!(c.insert_video_from(s, file, q, 0, 1, frame()) && c.insert_audio_from(s, file, Arc::new(AudioBurst::silence(0))));
+        let (video, audio) = (BurstKind::video(q), BurstKind::Audio);
+        assert!(!c.coverage(s, video, 0..4).is_empty() && !c.coverage(s, audio, 0..4).is_empty());
+        let bytes = c.audio_bytes();
+        c.adopt_picture(s, copy);
+        assert!(!c.contains_video(s, q, 0) && c.contains_audio(s, 0));
+        assert!(c.coverage(s, video, 0..4).is_empty() && !c.coverage(s, audio, 0..4).is_empty());
+        assert_eq!((c.video_bytes(), c.audio_bytes()), (0, bytes));
+        assert!(!c.insert_video_from(s, file, q, 0, 1, frame()), "the file's last span, after the swap");
+        assert!(c.insert_video_from(s, copy, q, 0, 1, frame()));
+        let epoch = c.epoch();
+        c.adopt_picture(s, copy);
+        assert!(c.contains_video(s, q, 0) && c.epoch() == epoch, "the same picture drops nothing");
+        // what stayed is the source's still: it goes with it
+        c.forget(s);
+        assert!(!c.contains_audio(s, 0) && c.audio_bytes() == 0);
     }
 }
 

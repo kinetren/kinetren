@@ -28,6 +28,18 @@ pub(crate) fn no_device() -> bool {
     none
 }
 
+/// Step frames until `done` holds: what another thread makes true (a decode, a composite, a build, a
+/// job) is waited for as long as it takes, never for a number of frames (found-defects 844; the bound is
+/// `test_deadline`, a guard against a hang).
+pub(crate) fn step_until(h: &mut Harness<'_, KtApp>, what: &str, done: impl Fn(&KtApp) -> bool) {
+    let deadline = kt_time::test_deadline();
+    while !done(h.state()) {
+        assert!(std::time::Instant::now() < deadline, "{what} never happened");
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
 pub fn harness() -> Harness<'static, KtApp> {
     harness_lang(crate::i18n::Lang::Ru)
 }
@@ -1398,6 +1410,8 @@ fn t120_space_hold_boosts_playback() {
     }
     h.step();
 
+    // gestures are judged by the clock here: a frame does not stand for a composite (found-defects 844)
+    h.state_mut().compose_grace = std::time::Duration::ZERO;
     // --- a single press still toggles the transport
     let before = h.state().player.transport.is_playing();
     h.key_press(egui::Key::Space);
@@ -3250,7 +3264,7 @@ fn t185_gpu_loss_notice_once() {
     }
     let mut h = harness();
     h.state_mut().player.set_video_gpu(Some(std::sync::Arc::new(DeadGpu(
-        kt_engine::GpuBackendInfo { name: "test".into(), backend: "Test".into(), software: true },
+        kt_engine::GpuBackendInfo { name: "test".into(), backend: "Test".into(), software: true, driver: String::new() },
     ))));
     // force a recomposition (the preview key has already settled on the previous
     // frames): key reset → compose calls the executor → DeviceLost →
@@ -3305,6 +3319,7 @@ fn t3819_a_lost_shared_device_poisons_both_and_the_work_is_saved() {
             name: "shared".into(),
             backend: "Test".into(),
             software: true,
+            driver: String::new(),
         }))));
         // the same loss on the compute side: a job failed, the host is marked unusable
         kt_plugin_api::compute::fail("the device was lost".into());
@@ -4157,7 +4172,8 @@ fn t211_returned_source_replaces_its_placeholder() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Test t2541 (t211's class): a file that comes back to disk gets its waveform. The index asks
+/// Test t2541 (t211's class; found-defects 976, 977): a file that comes back to disk gets its waveform, the
+/// generators that hear it hear it anew, and the effect cells of a window are asked again. The index asks
 /// every media once, at opening: an absent file errs and gets no peaks, and the return swapped the
 /// player's decoder alone — the returned file's waveform stayed empty for the rest of the session.
 #[test]
@@ -4215,7 +4231,13 @@ fn t2541_a_returned_file_gets_its_waveform() {
     crate::icons::install_fonts(&h.ctx);
     h.step();
     assert!(h.state().index.wait_idle());
+    h.step();
+    h.step();
     assert!(!h.state().peaks.lock().unwrap().contains_key(&MediaId(1)), "scene guard: the absent file has a waveform");
+    // what was heard of it before, and what the effect cells show of it, go with it (found-defects 976, 977)
+    let key = file.to_string_lossy().into_owned();
+    kt_engine::listen::put(&key, std::sync::Arc::new(kt_plugin_api::audio_series::AudioSeries::from_bytes(Vec::new()).unwrap()));
+    let scene = h.state().scene_rev();
     // the file comes back where it was
     std::fs::copy(crate::util::tests::fixture("sine48k_stereo.flac"), &file).unwrap();
     h.state_mut().offline.lock().unwrap().clear();
@@ -4226,10 +4248,14 @@ fn t2541_a_returned_file_gets_its_waveform() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(h.state().index.wait_idle());
+    h.step();
+    h.step();
     assert!(
         h.state().peaks.lock().unwrap().contains_key(&MediaId(1)),
         "the returned file's waveform was never built"
     );
+    assert!(kt_engine::listen::get(&key).is_none(), "the generators hear the file as it was before it came back");
+    assert_ne!(h.state().scene_rev(), scene, "the effect cells show the placeholder still");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -6425,7 +6451,7 @@ fn t356_repeated_notice_still_marks_unread() {
     // a project write error arrives as a warning, exactly
     let app = h.state_mut();
     app.notices.clear();
-    app.project_path = Some(unwritable_path("save"));
+    app.project_path = Some(unwritable_path("t356"));
     app.model_rev += 1;
     app.dirty_content = true;
     app.save();
@@ -6920,25 +6946,23 @@ fn t503_gesture_frame_touches_no_media_paths() {
     assert_eq!(h.state().player.worker_spawns(), spawns, "the level gesture raised the sources");
 }
 
-/// Test 504 (R.53, item 413): a pseudo-path does NOT open the sidecar DB. A generator
-/// has no file, yet opening sqlite (connection + WAL pragma + schema version) hung on
-/// every parameter edit
-/// and on every clip placement.
+/// Test 504 (R.53, item 413): a pseudo-path does NOT open the cache folder. A generator
+/// has no file, yet opening the index hung on every parameter edit and on every clip placement.
 #[test]
-fn t504_pseudo_path_never_opens_sqlite() {
+fn t504_pseudo_path_never_opens_the_cache_folder() {
     crate::plugins::install();
     let dir = std::env::temp_dir().join(format!("kt-t504-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let db = dir.join("x.ktindex.db");
+    let db = dir.join("kinetren-cache");
     assert!(!db.exists());
 
     let src = crate::util::open_source_indexed("gen:solid:c=ff8800", Some(&db));
     assert!(src.is_ok(), "the generator must open");
-    assert!(!db.exists(), "the pseudo-path opened the sidecar DB");
+    assert!(!db.exists(), "the pseudo-path opened the cache folder");
 
     let src = crate::util::open_source_indexed("synth:ramp", Some(&db));
     assert!(src.is_ok());
-    assert!(!db.exists(), "the test schema opened the sidecar DB");
+    assert!(!db.exists(), "the test schema opened the cache folder");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -7245,7 +7269,8 @@ fn t242_morph_editor_shows_target_mode_and_timing() {
         "a frozen list has no place for the layer explanation"
     );
     assert!(
-        h.query_by_label_contains("#1").is_some(),
+        // (the window's own weak "#n" is not the list — window-chrome D6)
+        crate::reach_tests::painted_texts(&h).iter().any(|t| t.src.contains("#1") && t.src != "#1"),
         "the frozen list must be visible by name"
     );
 }
@@ -10360,7 +10385,6 @@ fn t517_double_click_on_label_resets_param() {
 /// (rule 10: there is one place for display).
 #[test]
 fn t518_unknown_kind_is_loud_and_widget_hints_reach_the_status_line() {
-    use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
     h.state_mut().create_generator(GeneratorKind::default_text());
@@ -10659,12 +10683,8 @@ fn t541_param_edit_repaints_the_preview_without_moving_the_playhead() {
     let gesture = h.state().fx_editors[0].gesture;
 
     // let the preview settle: the key is computed, the composite is full
-    for _ in 0..40 {
-        if h.state().preview_key.is_some_and(|k| k.2) {
-            break;
-        }
-        h.step();
-    }
+    let whole = !no_device();
+    step_until(&mut h, "the preview's picture", |a| a.preview_key.is_some_and(|k| k.2 || !whole));
     let before = h.state().preview_key;
     let content_before = h.state().preview_content;
     assert!(before.is_some(), "the preview never got computed");
@@ -10682,18 +10702,9 @@ fn t541_param_edit_repaints_the_preview_without_moving_the_playhead() {
     }
     // ...and the program MUST rebuild the preview: the version of the content of the
     // sources went into the key
-    let mut repainted = false;
-    for _ in 0..60 {
-        h.step();
-        if h.state().preview_content != content_before {
-            repainted = true;
-            break;
-        }
-    }
-    assert!(
-        repainted,
-        "the parameter edit did not move the preview key — the old frame would have stayed on screen"
-    );
+    step_until(&mut h, "the rebuilt preview after the parameter edit (the old frame stays on screen)", |a| {
+        a.preview_content != content_before
+    });
     assert_eq!(
         h.state().preview_key.map(|k| k.0),
         before.map(|k| k.0),
@@ -11517,8 +11528,7 @@ fn t601_scrolling_does_not_order_reel_work() {
 /// The owner’s complaint: “the compositions’ preview on the timeline, it seems, is not
 /// cached, and every project opening builds it anew”. What is asserted is the
 /// consequence: a second `KtApp::open` of the same file gets the reel’s frames and
-/// envelope with ZERO real renders — from the sidecar
-/// `<project>.ktindex.db`. But a substitution of the source (mtime) is a miss and a
+/// envelope with ZERO real renders — from the project's cache folder. But a substitution of the source (mtime) is a miss and a
 /// re-render: the reel’s revision does not see the file substitution; the media fingerprint
 /// in the key catches it.
 #[test]
@@ -12803,6 +12813,9 @@ pub(crate) fn harness_news_template() -> (Harness<'static, KtApp>, NewsScene) {
 #[test]
 fn t680_reel_preview_keys_are_per_instance() {
     use kt_model::*;
+    // the previews' lane is held: both requests are seen queued, however soon a worker would take one
+    let held = kt_time::sched::Vote::new(kt_time::sched::why::PLAYING);
+    held.set(true);
     let (mut h, s) = harness_news_template();
 
     // without overrides both editions share ONE key: projects that
@@ -14226,13 +14239,7 @@ fn t722b_project_rule_change_repaints_the_paused_preview() {
         app.player.set_preview_quality(kt_media::Quality { width: 36, height: 64 });
         app.player.seek(Tick(30_000));
     }
-    for _ in 0..120 {
-        h.step();
-        if h.state().preview_key.is_some_and(|k| k.2) {
-            break;
-        }
-    }
-    assert!(h.state().preview_key.is_some_and(|k| k.2), "the preview never got computed");
+    step_until(&mut h, "the preview's picture", |a| a.preview_key.is_some_and(|k| k.2));
     let top_dark = |app: &KtApp| -> bool {
         let (_, (w, hgt), _) = app.preview_key.unwrap();
         assert!(hgt > 4 && app.preview_buf.len() >= (w * hgt * 4) as usize);
@@ -14245,15 +14252,9 @@ fn t722b_project_rule_change_repaints_the_paused_preview() {
     st.conform = ConformRule::Fill;
     st.settings_explicit = true;
     assert!(h.state_mut().apply(Command::SetSettings { settings: st }));
-    let mut repainted = false;
-    for _ in 0..120 {
-        h.step();
-        if h.state().preview_key.is_some_and(|k| k.2) && !top_dark(h.state()) {
-            repainted = true;
-            break;
-        }
-    }
-    assert!(repainted, "the “fill” rule was applied, but the preview stayed with margins while paused");
+    step_until(&mut h, "the “fill” rule on the paused preview (it stays with margins)", |a| {
+        a.preview_key.is_some_and(|k| k.2) && !top_dark(a)
+    });
 }
 
 /// Test 740 (R.62, change B): the render window LISTS the muted
@@ -15168,7 +15169,7 @@ pub(crate) fn painted_in_fx_window(h: &mut Harness<'_, KtApp>, clip: kt_model::C
         let w = win(h)?;
         let found = crate::reach_tests::painted_texts(h).into_iter().find(|t| t.src == label).map(|t| t.rect);
         if let Some(r) = found
-            && w.shrink(24.0).contains_rect(r)
+            && w.shrink2(egui::vec2(6.0, 24.0)).contains_rect(r)
         {
             return Some(r);
         }
@@ -16080,6 +16081,51 @@ fn t759_transform_form_groups_pairs_sliders_and_reset() {
     );
 }
 
+/// Test t3270 (found-defects 845; capability `distribution`): the dump's `compose.current` names the picture
+/// of the moment asked. While the composite of a seek or of an edit is on its way the picture drawn is the former one, and
+/// a live scenario reads no pixel of it.
+#[test]
+fn t3270_the_dump_says_whether_the_picture_is_the_one_asked() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
+    use kt_model::*;
+    let (mut h, clip) = harness_geom_ctl();
+    let wait = |h: &mut Harness<'_, KtApp>, what: &str| {
+        let until = kt_time::test_deadline();
+        while !h.state().preview_current {
+            assert!(std::time::Instant::now() < until, "{what}: the picture never came");
+            h.step();
+        }
+    };
+    wait(&mut h, "the opening");
+    // an answer does not come within the frame that asks
+    h.state_mut().compose_grace = std::time::Duration::ZERO;
+    for what in ["a seek", "an edit"] {
+        let before = h.state().preview_key;
+        match what {
+            "a seek" => h.state().player.seek(kt_time::Tick(30_000)),
+            _ => {
+                let (g, pos) = {
+                    let c = h.state().model.clip(clip).expect("event");
+                    (EventGeometry { pos_x: 0.1, ..c.geometry }, c.geometry_pos)
+                };
+                h.state_mut().apply(Command::SetGeometry { id: clip, geometry: g, pos, auto: Vec::new() });
+            }
+        }
+        let asked = h.state().complete_composites;
+        h.step();
+        assert!(
+            !h.state().preview_current || h.state().complete_composites > asked,
+            "{what}: the picture of {before:?} is called the one asked"
+        );
+        wait(&mut h, what);
+        assert!(h.state().complete_composites > asked, "{what}: no composite was drawn");
+        assert!(h.state().preview_key.is_some_and(|k| k.2), "{what}: a whole picture");
+    }
+    h.state_mut().compose_grace = crate::app::COMPOSE_GRACE;
+}
+
 /// Test 762b (R.64): a gesture over an ANIMATED parameter sets a key.
 ///
 /// Rule 17 to the letter: the on-screen frame and the FX window field edit the same
@@ -16518,6 +16564,8 @@ fn t764_controls_hide_while_playing_and_cost_nothing_idle() {
     }
     let (mut h, _clip) = harness_geom_ctl();
     assert!(h.state().geom_ctl_drawn, "scene: during pause the controls are drawn");
+    // the playhead runs by the clock: a frame that stood for a composite played past the event (found-defects 844)
+    h.state_mut().compose_grace = std::time::Duration::ZERO;
 
     // --- PLAYBACK: no controls ---------------------------------------------
     h.state_mut().geom_ctl_drawn = false;
@@ -18929,6 +18977,10 @@ fn t918_no_window_grows_by_itself() {
         for ppp in [1.0f32, 1.1, 1.2, 1.25, 1.5] {
             let mut h = harness_scaled(1600.0, 900.0, ppp);
             let layers = opened_layers(&mut h, open);
+            // Diagnostics opens at its floors a frame late (found-defects 1005): what is judged is the
+            // size it opened to, however slow the frame that opened it
+            h.step();
+            h.step();
             let rect = |h: &Harness<'static, KtApp>| -> Vec<egui::Rect> {
                 layers
                     .iter()
@@ -19962,6 +20014,33 @@ fn t1604_a_failed_render_says_what_failed() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Test 3998b (render-result-check D2): a finished render whose written numbers fell short of the
+/// announced ones says both numbers of each pair; one that ended at its totals says neither.
+#[test]
+fn t3998b_a_short_render_says_both_numbers() {
+    let texts = |stats: kt_engine::export::ExportStats| -> Vec<String> {
+        let mut h = harness_lang(Lang::En);
+        scripted_render(h.state_mut());
+        h.state_mut().render_job.as_mut().unwrap().on_result(Ok(stats));
+        for _ in 0..3 {
+            h.step();
+        }
+        shown_texts(&h)
+    };
+    let full = kt_engine::export::ExportStats {
+        video_frames: 517,
+        announced_video: 517,
+        audio_frames: 413_364,
+        announced_audio: 413_364,
+        ..Default::default()
+    };
+    let said = texts(kt_engine::export::ExportStats { video_frames: 516, audio_frames: 412_672, ..full.clone() });
+    assert!(said.iter().any(|t| t == "frames written: 516 of 517"), "{said:?}");
+    assert!(said.iter().any(|t| t == "sound written: 412672 of 413364 samples"), "{said:?}");
+    let said = texts(full);
+    assert!(!said.iter().any(|t| t.contains(" written: ")), "a full render says a difference: {said:?}");
+}
+
 /// Test 965 (hw-encode-context D6): the encoder list offers a device encoder only with its device,
 /// and the progress row names the device.
 ///
@@ -20121,6 +20200,8 @@ pub(crate) fn r72_transport_scene() -> Harness<'static, KtApp> {
     let mut h = harness();
     {
         let app = h.state_mut();
+        // gestures are judged by the clock here: a frame does not stand for a composite (found-defects 844)
+        app.compose_grace = std::time::Duration::ZERO;
         let mut p = app.model.project().clone();
         p.media.push(MediaRef::new(MediaId(1), "synth:1"));
         let mut c = sample_clip(ClipId(1));
@@ -21375,7 +21456,11 @@ fn t2903_the_window_states_the_size_and_the_prediction() {
     let mut h = harness_lang(Lang::En);
     // four seconds to render: an edit length with no event (as a foreign file's trailing gap)
     let mut p = h.state().model.project().clone();
-    p.timeline_end = Some(kt_time::Tick(4 * 90_000));
+    // the render's range starts after the moment the preview has shown: on a warm executor (another
+    // test of the process compiled its pipelines) that one is measured
+    let from = 2 * 90_000;
+    p.timeline_end = Some(kt_time::Tick(from + 4 * 90_000));
+    p.region = Some(kt_model::Region { start: kt_time::Tick(from), end: kt_time::Tick(from + 4 * 90_000) });
     h.state_mut().model = kt_model::TimelineModel::new(p);
     h.state().player.set_preview_quality(kt_media::Quality { width: 640, height: 360 });
     render_settings_scene(&mut h);
@@ -21394,7 +21479,7 @@ fn t2903_the_window_states_the_size_and_the_prediction() {
     // the range plays: every frame of it measured at 4 ms of device time at 640×360
     let step = 90_000 / 25;
     for i in 0..cost.frames as i64 {
-        h.state().player.note_preview_cost(kt_time::Tick(i * step), 4_000_000, (640, 360));
+        h.state().player.note_preview_cost(kt_time::Tick(from + i * step), 4_000_000, (640, 360));
     }
     h.step();
     let cost = h.state().render_cost();
@@ -22068,4 +22153,404 @@ fn t3127_transition_with_next_is_one_item_and_opens_its_window() {
     assert_eq!(t.kind, TransitionKind::Crossfade, "the item makes a dissolve");
     assert_eq!(h.state().model.undo_depth(), depth + 1, "one history step");
     assert!(h.state().transition_editors.iter().any(|e| e.id == t.id && e.open), "its window did not open");
+}
+
+/// Test 3936 (window-chrome, `v26.10` W1 and T9): the project's title, the meters' glow and the resting
+/// status line are painted UNDER the effects window moved over them, and over the panels.
+/// - **PATH** open the effects window → drag its title over the meters → the window is opaque, the glow
+///   ends at its edge → drag it to the top over the project title → the title does not show through
+#[test]
+fn t3936_a_window_over_the_glow_and_the_title_shows_neither() {
+    fn walk(shape: &egui::Shape, at: usize, f: &mut dyn FnMut(usize, &egui::Shape)) {
+        match shape {
+            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, at, f)),
+            s => f(at, s),
+        }
+    }
+    let mut h = r72_transport_scene();
+    let clip = {
+        let app = h.state_mut();
+        let id = app.model.project().clips[0].id;
+        app.open_fx_editor(id);
+        app.fx_editors[0].clip
+    };
+    h.state_mut().sw_render = Some(false);
+    for _ in 0..4 {
+        h.step();
+    }
+    let window = move |h: &Harness<'_, KtApp>| {
+        h.ctx.memory(|m| m.area_rect(egui::Id::new(("fx", clip)))).expect("the effects window")
+    };
+    let drag = |h: &mut Harness<'_, KtApp>, to: egui::Vec2| {
+        let w = window(h);
+        let grab = egui::pos2(w.left() + w.width() * 0.5, w.top() + 12.0);
+        h.drag_at(grab);
+        h.step();
+        for k in 1..=4 {
+            h.hover_at(grab + to * (k as f32 / 4.0));
+            h.step();
+        }
+        h.drop_at(grab + to);
+        h.step();
+        h.step();
+    };
+    let (mut title, mut halo, mut hint) = (None, None, None);
+    let look = |h: &Harness<'_, KtApp>, title: &mut Option<(usize, egui::Rect)>, halo: &mut Option<(usize, egui::Rect)>, hint: &mut Option<usize>| {
+        let w = window(h);
+        let meters = h.state().meter_glow.map(|(r, ..)| r);
+        let name = h.state().last_title.clone();
+        let mut frame = None;
+        for (i, cs) in h.output().shapes.iter().enumerate() {
+            walk(&cs.shape, i, &mut |i, s| match s {
+                egui::Shape::Text(t) if t.galley.text() == name => *title = Some((i, t.visual_bounding_rect())),
+                egui::Shape::Text(t) if t.galley.text() == tr(k::hint::IDLE) => *hint = Some(i),
+                egui::Shape::Mesh(m) if meters.is_some_and(|r| m.calc_bounds().right() == r.left() && m.calc_bounds().width() > 70.0) => {
+                    *halo = Some((i, m.calc_bounds()))
+                }
+                egui::Shape::Rect(r) if r.fill.a() == 255 && r.rect.contains_rect(w.shrink(3.0)) && !r.rect.contains_rect(w.expand(3.0)) => {
+                    frame = Some(i)
+                }
+                _ => {}
+            });
+        }
+        frame.expect("the window's opaque ground")
+    };
+    // over the project's title
+    let w = window(&h);
+    drag(&mut h, egui::vec2(-w.left(), 2.0 - w.top()));
+    let ground = look(&h, &mut title, &mut halo, &mut hint);
+    let (at, rect) = title.expect("the project title is drawn");
+    assert!(window(&h).intersects(rect), "the window stands over the title: {:?} {rect:?}", window(&h));
+    assert!(at < ground, "the title is painted over the window ({at} after {ground})");
+    if let Some(i) = hint {
+        assert!(i < ground, "the resting status line is painted over the window");
+    }
+    // over the meters' halo
+    let w = window(&h);
+    drag(&mut h, egui::vec2(W - 40.0 - w.right(), 40.0));
+    for _ in 0..3 {
+        h.state_mut().meter.feed(0.8, 0.8);
+        h.step();
+    }
+    let ground = look(&h, &mut title, &mut halo, &mut hint);
+    let (at, rect) = halo.expect("the meters' halo is drawn");
+    assert!(window(&h).intersects(rect), "the window stands over the halo: {:?} {rect:?}", window(&h));
+    assert!(at < ground, "the halo is painted over the window ({at} after {ground})");
+    // registered before the panels (egui's areas forgotten inside a frame, as the live rig does when it
+    // opens a project), it comes back over them
+    let under = crate::app::under_windows();
+    let screen = egui::RawInput { screen_rect: Some(h.ctx.content_rect()), ..Default::default() };
+    h.ctx.begin_pass(screen);
+    h.ctx.memory_mut(|m| {
+        m.reset_areas();
+        m.areas_mut().move_to_top(under);
+    });
+    let _ = h.ctx.end_pass();
+    h.step();
+    h.step();
+    let at = |h: &Harness<'_, KtApp>, l: egui::LayerId| h.ctx.memory(|m| m.layer_ids().position(|x| x == l));
+    let (layer, panels) = (at(&h, under).expect("an area"), at(&h, egui::LayerId::background()).expect("the panels"));
+    assert!(layer > panels, "the panels are painted over the layer for good");
+}
+
+/// Test 3937 (window-chrome, `v26.10` T5): a window that started maximized goes back to a normal size
+/// before a drag — 80 % of the screen when it has none, the remembered one otherwise — from the header
+/// strip and from the toolbar alike; a window that has been normal keeps the window manager's size.
+/// - **PATH** start the program maximized → drag the toolbar's empty space → the window becomes smaller
+///   and follows the pointer → double-click to maximize → drag again → the same normal size
+#[test]
+fn t3937_a_window_started_maximized_drags_at_a_normal_size() {
+    use egui::ViewportCommand as V;
+    let monitor = egui::vec2(1920.0, 1080.0);
+    let start = || {
+        let mut h = harness();
+        h.ctx.data_mut(|d| d.clear());
+        h.state_mut().window_was_normal = false;
+        let v = h.input_mut().viewports.entry(egui::ViewportId::ROOT).or_default();
+        v.maximized = Some(true);
+        v.monitor_size = Some(monitor);
+        v.outer_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, monitor));
+        h.step();
+        h
+    };
+    let drag = |h: &mut Harness<'_, KtApp>, at: egui::Pos2| -> Vec<V> {
+        h.drag_at(at);
+        h.step();
+        h.hover_at(at + egui::vec2(20.0, 6.0));
+        h.step();
+        h.output().viewport_output.values().flat_map(|v| v.commands.clone()).collect()
+    };
+    let strip = |h: &Harness<'_, KtApp>| {
+        use egui_kittest::kittest::Queryable;
+        let play = h.get_by_label(crate::icons::PLAY).rect();
+        egui::pos2(W - 3.0, play.center().y)
+    };
+    let sizes = |cmds: &[V]| {
+        cmds.iter().filter_map(|c| if let V::InnerSize(s) = c { Some(*s) } else { None }).collect::<Vec<_>>()
+    };
+    for toolbar in [false, true] {
+        let mut h = start();
+        let at = if toolbar { strip(&h) } else { egui::pos2(W * 0.5, 1.0) };
+        let cmds = drag(&mut h, at);
+        assert!(cmds.iter().any(|c| matches!(c, V::Maximized(false))), "toolbar {toolbar}: not restored: {cmds:?}");
+        assert_eq!(sizes(&cmds), [monitor * 0.8], "toolbar {toolbar}: 80 % of the screen");
+        let pos = cmds.iter().find_map(|c| if let V::OuterPosition(p) = c { Some(*p) } else { None }).expect("placed");
+        assert!((pos.x..=pos.x + monitor.x * 0.8).contains(&at.x), "under the pointer: {pos:?}");
+        h.step();
+        let next: Vec<V> = h.output().viewport_output.values().flat_map(|v| v.commands.clone()).collect();
+        assert!(next.iter().any(|c| matches!(c, V::StartDrag)), "then it moves: {next:?}");
+    }
+    // a window over the whole screen that is not maximized (what eframe and winit make of a saved
+    // maximized one on X11): given a normal size and maximized in truth, once
+    let mut h = harness();
+    h.state_mut().start_frames = crate::window_frame::STARTED - 1;
+    {
+        let v = h.input_mut().viewports.entry(egui::ViewportId::ROOT).or_default();
+        v.maximized = Some(false);
+        v.monitor_size = Some(egui::vec2(W, H));
+    }
+    h.step();
+    let cmds: Vec<V> = h.output().viewport_output.values().flat_map(|v| v.commands.clone()).collect();
+    assert_eq!(sizes(&cmds), [egui::vec2(W, H) * 0.8], "a normal size: {cmds:?}");
+    assert!(cmds.iter().any(|c| matches!(c, V::Maximized(true))), "and maximized in truth");
+    h.step();
+    let cmds: Vec<V> = h.output().viewport_output.values().flat_map(|v| v.commands.clone()).collect();
+    assert!(sizes(&cmds).is_empty(), "once");
+    // the remembered normal size
+    let mut h = start();
+    h.ctx.data_mut(|d| d.insert_persisted(egui::Id::new("kt-window-normal-size"), [1200.0f32, 700.0]));
+    let cmds = drag(&mut h, egui::pos2(W * 0.5, 1.0));
+    assert_eq!(sizes(&cmds), [egui::vec2(1200.0, 700.0)], "the size of the last run");
+    // a window that stood at a normal size: the window manager knows it
+    let mut h = start();
+    h.input_mut().viewports.get_mut(&egui::ViewportId::ROOT).unwrap().maximized = Some(false);
+    h.step();
+    assert_eq!(crate::window_frame::normal_size(&h.ctx), Some(h.ctx.content_rect().size()), "remembered");
+    h.input_mut().viewports.get_mut(&egui::ViewportId::ROOT).unwrap().maximized = Some(true);
+    h.step();
+    let cmds = drag(&mut h, egui::pos2(W * 0.5, 1.0));
+    assert!(sizes(&cmds).is_empty(), "the window manager's own size: {cmds:?}");
+    assert!(cmds.iter().any(|c| matches!(c, V::Maximized(false))));
+    assert_eq!(crate::window_frame::restored_size(Some(monitor), monitor), monitor * 0.8, "a whole-screen size is none");
+}
+
+/// Test t3830 (project-cache-folder D4): an untitled project's media are cached in the user's folder:
+/// the waveform and the thumbnail of a clip are read back from there by services started anew (the bin
+/// closed and opened, the next File → New), and no entry is computed or written again.
+/// - **PATH** File → New → drag two clips into the bin: their waveforms and filmstrips draw → close the
+///   bin and open it again: they draw at once, with no Loading
+#[test]
+fn t3830_an_untitled_project_caches_its_media() {
+    use kt_media::cache_folder::{Folder, Tenant};
+    use kt_model::*;
+    let mut h = harness();
+    let root = h.state().cache_folder().expect("an untitled project has a place");
+    assert!(root.starts_with(crate::journal::data_dir()), "{root:?}");
+    let clips = [(MediaId(1), "testsrc_12s.mp4"), (MediaId(2), "muxed_av.mp4")].map(|(id, f)| (id, crate::util::tests::fixture(f)));
+    for (id, path) in &clips {
+        h.state_mut().apply(Command::AddMedia { id: *id, path: path.clone() });
+        let path = path.clone();
+        h.state_mut().thumbs.add_media(*id, path.clone());
+        let cache = h.state().cache_folder();
+        h.state().index.enqueue(cache, vec![(*id, path)]);
+    }
+    let key = |id: MediaId| crate::thumbs::ThumbKey { media: id, t: 0 };
+    // what a service serves: the first pass computes, the second only reads
+    let serve = |thumbs: &crate::thumbs::ThumbService, peaks: &std::sync::Mutex<std::collections::HashMap<MediaId, crate::util::Peaks>>| {
+        let deadline = kt_time::test_deadline();
+        for (id, _) in &clips {
+            thumbs.request(key(*id));
+        }
+        loop {
+            let drawn = clips.iter().all(|(id, _)| matches!(thumbs.state(&key(*id)), crate::thumbs::ThumbState::Ready(_)));
+            if drawn && clips.iter().all(|(id, _)| peaks.lock().unwrap().contains_key(id)) {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "a waveform or a thumbnail never came");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    };
+    serve(&h.state().thumbs, &h.state().peaks);
+    assert!(h.state().index.wait_idle() && h.state().thumbs.wait_idle());
+    let folder = Folder::open(&root).unwrap();
+    let hits = folder.counts(Tenant::Media).0;
+    assert_eq!(folder.sizes()[&Tenant::Media].1, 2, "an entry a media");
+    // every file of the two entries, as it was written
+    let files = || -> Vec<(std::path::PathBuf, u64, std::time::SystemTime)> {
+        let mut v = Vec::new();
+        for e in std::fs::read_dir(root.join("media")).unwrap().flatten().filter(|e| e.path().is_dir()) {
+            for f in std::fs::read_dir(e.path()).unwrap().flatten() {
+                let md = f.metadata().unwrap();
+                v.push((f.path(), md.len(), md.modified().unwrap()));
+            }
+        }
+        v.sort();
+        v
+    };
+    let written = files();
+    assert!(written.iter().any(|f| f.0.ends_with("peaks")) && written.iter().any(|f| f.0.ends_with("thumbs")), "{written:?}");
+
+    let peaks: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<MediaId, crate::util::Peaks>>> = Default::default();
+    let svc = crate::util::IndexService::start(peaks.clone(), Default::default());
+    let thumbs = crate::thumbs::ThumbService::start(h.state().model.project(), None);
+    svc.enqueue(Some(root.clone()), clips.to_vec());
+    serve(&thumbs, &peaks);
+    assert!(svc.wait_idle() && thumbs.wait_idle());
+    assert!(folder.counts(Tenant::Media).0 > hits, "nothing was read from the folder");
+    assert_eq!(files(), written, "an entry was computed and written again");
+}
+
+/// Test t3842 (project-cache-folder D3, ui-reach): Preferences list every cache folder with its projects
+/// and size; a folder whose project is gone is marked, its Delete takes it from the disk and the list; a
+/// cap set below a folder's size marks it full and is kept, and its next write drops its oldest entries;
+/// the list is read when it comes on screen and after a change, never per frame. A notice of a full folder
+/// carries a button to the section.
+/// - **PATH** Edit → Preferences → section “Persistent cache”: two folders listed with sizes, one marked
+///   “no project here” → Delete on that row: the row goes and the total drops → the cap of the other row
+///   set to 2 GB: its size shows against it, marked full
+#[test]
+fn t3842_preferences_list_the_cache_folders() {
+    crate::alone::own_process!();
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    use kt_media::cache_folder::{Folder, registry};
+    let mut h = harness_lang(crate::i18n::Lang::En);
+    let dir = std::env::temp_dir().join(format!("kt-t3842-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let make = |n: &str, project: bool| {
+        let d = dir.join(n);
+        std::fs::create_dir_all(&d).unwrap();
+        let kt = d.join("film.kt");
+        if project {
+            std::fs::write(&kt, b"x").unwrap();
+        }
+        let root = kt_media::cache_folder::beside(&kt);
+        let f = Folder::open(&root).unwrap();
+        f.set_free_for_tests(Some(1 << 50));
+        f.set_protect_for_tests(Some(std::time::Duration::ZERO));
+        for i in 0..3u64 {
+            f.write(&format!("media/m{i}/peaks"), b"PEAK", 1, &vec![1u8; 1 << 20]).unwrap();
+            f.age_for_tests(&format!("media/m{i}"), 1000 + i, 1, 0);
+        }
+        registry::note(&root, Some(&kt));
+        f.flush();
+        root
+    };
+    let (live, orphan) = (make("live", true), make("gone", false));
+    // the orphan was made by another run of the program: it is not open here
+    Folder::forget(&orphan);
+    // this test's rows only: another test of the process may have listed its own
+    let ours = |p: &std::path::Path| p.starts_with(&dir);
+    for r in registry::list() {
+        if !ours(&r.folder) {
+            registry::remove(&r.folder);
+        }
+    }
+    let wait = |h: &mut Harness<'static, KtApp>, what: &str, until: &dyn Fn(&Harness<'static, KtApp>) -> bool| {
+        let deadline = kt_time::test_deadline();
+        while !until(h) {
+            assert!(std::time::Instant::now() < deadline, "{what}");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            h.step();
+        }
+    };
+    crate::reach_tests::open_preferences(&mut h);
+    let texts = |h: &Harness<'static, KtApp>| crate::reach_tests::painted_texts(h).into_iter().map(|t| t.drawn).collect::<Vec<_>>();
+    let has = |h: &Harness<'static, KtApp>, t: &str| h.query_all_by_label_contains(t).count();
+    wait(&mut h, "the folders are not listed", &|h| has(h, "live") > 0 && has(h, "gone") > 0);
+    assert_eq!(has(&h, tr(k::prefs::CACHE_NO_PROJECT)), 1, "the orphan is marked once: {:?}", texts(&h));
+    assert!(has(&h, "3.0 MB") >= 2 && has(&h, "6.0 MB") == 1, "the sizes and their total: {:?}", texts(&h));
+    let reads = h.state().start.caches.reads;
+    for _ in 0..20 {
+        h.step();
+    }
+    assert_eq!(h.state().start.caches.reads, reads, "the open window reads the folders again");
+
+    let rows = h.state().start.caches.rows_for_tests();
+    let at = rows.iter().position(|r| r.folder == orphan).unwrap();
+    let r = crate::widgets::field_probe::rect_of(&format!("prefs.cache.{at}.delete")).unwrap();
+    // the window opened tall enough for the list: every row is on screen, not below its fold
+    let win = h.ctx.memory(|m| m.area_rect(egui::Id::new("kt_prefs"))).unwrap();
+    assert!(win.contains_rect(r), "the list stands below the window's fold: {r:?} in {win:?}");
+    assert!(texts(&h).iter().any(|t| t.contains("gone")), "the orphan's row is not drawn: {:?}", texts(&h));
+    crate::reach_tests::click_at(&mut h, r.center());
+    wait(&mut h, "the orphan's row stays", &|h| has(h, "gone") == 0);
+    assert!(!orphan.exists(), "the folder stays on the disk");
+    assert!(!registry::list().iter().any(|r| r.folder == orphan));
+    assert!(live.join("media/m0/peaks").exists(), "the other folder was touched");
+    assert_eq!(has(&h, "6.0 MB"), 0, "the total did not drop");
+
+    // the cap below the size: typed as a person does, here through the row's own job
+    let f = Folder::open(&live).unwrap();
+    h.state_mut().set_cache_cap(live.clone(), 2 << 20);
+    wait(&mut h, "the folder is not marked full", &|h| has(h, &crate::tf!(k::prefs::CACHE_FULL, "3.0 MB")) == 1);
+    assert_eq!(registry::cap(&live), Some(2 << 20), "the cap is not kept");
+    f.write("media/new/peaks", b"PEAK", 1, &[1u8; 1000]).unwrap();
+    assert!(!live.join("media/m0/peaks").exists(), "the oldest entry stays past the cap");
+    assert!(live.join("media/m2/peaks").exists());
+
+    // the notice, its button and where it leads
+    h.state_mut().start.prefs_open = false;
+    h.step();
+    wait(&mut h, "no notice of the full folder", &|h| h.state().notices.iter().any(|n| n.action.is_some()));
+    let n = h.state().notices.iter().filter(|n| n.action.is_some()).count();
+    assert_eq!(n, 1, "the folder says it once");
+    h.state_mut().notices_open = true;
+    h.step();
+    h.step();
+    h.get_by_label(tr(k::prefs::CACHE_OPEN)).click();
+    for _ in 0..3 {
+        h.step();
+    }
+    assert!(h.state().start.prefs_open, "the button does not open Preferences");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// t3107 (render-loudness-norms, F-EXP-010, `v26.10` T14): the render's loudness stands against its
+/// norms. A mix at −23 LUFS / −3 dBTP / balanced is all plain; a peak over −1 dBTP, a silent channel
+/// and channels 10 LU apart are drawn in the error colour, 4 LU apart in amber; each row prints its
+/// norm next to the value.
+#[test]
+fn t3107_render_loudness_values_stand_against_their_norms() {
+    use crate::render_dialog::{Verdict, loudness_rows};
+    use kt_fx::audio::loudness::{ChannelLoudness, Loudness};
+    let ch = |lufs: Option<f64>, dbtp: f64| ChannelLoudness { lufs, dbtp };
+    let mix = |lufs: f64, dbtp: f64, l: Option<f64>, r: Option<f64>| Loudness {
+        lufs: Some(lufs),
+        lra: 6.0,
+        dbtp,
+        channels: [ch(l, dbtp), ch(r, dbtp)],
+    };
+    let ebu = kt_model::LoudnessTarget::default();
+    let stream = kt_model::LoudnessTarget::of(kt_model::LoudnessStandard::Streaming);
+    let judged = |l: &Loudness, t| loudness_rows(l, t, None).iter().map(|r| r.verdict).collect::<Vec<_>>();
+    let verdicts = |l: &Loudness| judged(l, &ebu);
+    use Verdict::*;
+    assert_eq!(verdicts(&mix(-23.0, -3.0, Some(-26.0), Some(-26.0))), vec![Ok, Ok, Ok, Ok], "a good mix");
+    let streaming = mix(-14.2, -1.5, Some(-17.0), Some(-17.4));
+    assert_eq!(judged(&streaming, &stream), vec![Ok, Ok, Ok, Ok], "a streaming mix against its project");
+    assert_eq!(judged(&streaming, &ebu)[0], Bad, "the same mix against −23: the norm is the project's");
+    assert_eq!(verdicts(&mix(-23.0, -0.4, Some(-26.0), Some(-26.0)))[1], Bad, "a peak over −1 dBTP");
+    assert_eq!(verdicts(&mix(-26.0, -3.0, Some(-26.0), None))[3], Bad, "a silent channel");
+    assert_eq!(verdicts(&mix(-23.0, -3.0, Some(-24.0), Some(-34.0)))[3], Bad, "10 LU apart");
+    assert_eq!(verdicts(&mix(-23.0, -3.0, Some(-24.0), Some(-28.0)))[3], Off, "4 LU apart");
+    assert_eq!(verdicts(&mix(-21.0, -3.0, Some(-24.0), Some(-24.0)))[0], Off, "2 LU off");
+    assert_eq!(verdicts(&mix(-19.0, -3.0, Some(-22.0), Some(-22.0)))[0], Bad, "4 LU off");
+    let did = |took_lu| kt_engine::export::ProgramReport { gain_db: 5.5, took_lu, deepest_db: 4.0 };
+    let stage = |took| loudness_rows(&streaming, &stream, Some(&did(took)))[4].clone();
+    assert_eq!((stage(0.4).verdict, stage(1.6).verdict), (Ok, Off), "the limiter took over 1 LU");
+    assert_eq!(verdicts(&mix(-6.0, -3.0, Some(-9.0), Some(-9.0)))[0], Bad, "too loud for any delivery");
+
+    // the drawn table: the bad values carry the error probe, every row prints its norm
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+    let bad = mix(-23.0, -0.4, Some(-24.0), None);
+    let mut h = egui_kittest::Harness::new_ui(move |ui| crate::render_dialog::loudness_table(ui, &bad, &ebu, None));
+    crate::icons::install_fonts(&h.ctx);
+    h.run();
+    use egui_kittest::kittest::Queryable;
+    for norm in ["norm -23 LUFS ± 1", "norm ≤ -1 dBTP", tr(k::render::LOUD_NORM_CHANNELS), "Sound — 2 outside the norm"] {
+        assert!(h.query_by_label(norm).is_some(), "“{norm}” is printed");
+    }
+    assert!(h.query_by_label("L -24.0 · R silent LUFS").is_some(), "the channels row");
+    assert!(crate::widgets::field_probe::rect_of("render.loud.bad").is_some(), "a bad value is marked as one");
 }

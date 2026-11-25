@@ -5,7 +5,8 @@ A sound chain whose slots name their inputs SHALL be executed by the event's pro
 on buffers from the render thread's pool: a held output goes to every slot that names it, a Merge
 sums Background and mix × Foreground (Sum) or crossfades them (Crossfade) in that fixed order, and
 before a Merge the input with less look-ahead SHALL be delayed by the difference so both sides are
-aligned; the chain's look-ahead and its tail SHALL be those of the path to the Output. A
+aligned; the chain's look-ahead and its tail SHALL be those of the path to the Output. A Merge's mode SHALL be its
+lane's: a picture's blend mode on a sound chain, or a sum on a picture chain, is refused with the slot. A
 compressor's key socket MAY take an arm of its own chain. A warp, the stream's sound or an
 edge reading inside an arm SHALL read its own source window (a sound read, as the picture's read),
 consuming it as the chain's input consumes the source today; a branch on the sound lane is accepted
@@ -17,7 +18,7 @@ Why: invariants 1–3 and 11; the layer strength's dry ring is the same alignmen
 #### Scenario: A line is the chain, sample for sample
 - **WHEN** every audio golden and the showcase render through the graph path with empty input fields
 - **THEN** the samples equal the line's; GOLDEN_AUDIO holds; four warm seconds allocate nothing
-- **TEST** t3212 (`src/libs/kt-engine/tests/golden_export.rs`)
+- **TEST** t3212 (`src/libs/kt-engine/tests/audio_graph.rs`), t3292 (`src/libs/kt-engine/tests/mixdown_alloc.rs`), GOLDEN_AUDIO (`src/libs/kt-engine/tests/golden_export.rs`)
 
 #### Scenario: Parallel compression and a look-ahead arm
 - **WHEN** an event sums its source with a compressed arm, then with an arm through a look-ahead limiter
@@ -32,9 +33,14 @@ Why: invariants 1–3 and 11; the layer strength's dry ring is the same alignmen
 #### Scenario: Slowed in a sound arm reads its own window
 - **WHEN** an event sums its dry source with an arm holding Slowed at 0.5×
 - **THEN** the arm equals the event whose chain is that arm's path, sample for sample; the dry side is today's line; two runs give the same bytes
-- **TEST** t3229 (`src/libs/kt-engine/tests/audio_graph.rs`)
+- **TEST** t3229, t3293 (beside a look-ahead side), t3294 (after a seek), t3295 (looped) (`src/libs/kt-engine/tests/audio_graph.rs`)
 
 #### Scenario: Tails and state follow the graph
 - **WHEN** a reverb stands in one arm and a dangling node in another; the arm is rewired; a value is edited
 - **THEN** the tail is the reverb's; the dangling node does not ring; the rewire rebuilds as a reorder does, the value edit keeps the state
 - **TEST** t3216, t3217 (`src/libs/kt-engine/tests/audio_graph.rs`)
+
+#### Scenario: A Merge's mode is its lane's
+- **WHEN** a Merge with a picture's blend mode stands on an audio event's chain, or one with Sum on a video event's
+- **THEN** the edit is refused with the slot, wired or not; each mode on its own lane is accepted and a Merge's class follows it
+- **TEST** t3298 (`src/libs/kt-model/tests/fx_graph.rs`)

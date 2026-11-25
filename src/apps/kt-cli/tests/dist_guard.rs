@@ -1184,6 +1184,89 @@ fn t1670_fixture_runs_that_meet_do_not_spoil_each_other() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Test t3613 (found-defects 1068, the class): an offline job's frame cache adopts its sources' names. A memo
+/// of the process is keyed by what a cache says of its sources; one that says nothing is keyed by media id.
+#[test]
+fn t3613_every_offline_cache_adopts_its_sources() {
+    // file, how many caches of it adopt elsewhere or decode no file, why
+    const ELSEWHERE: &[(&str, usize, &str)] = &[
+        ("libs/kt-engine/src/player.rs", 1, "the player's workers adopt, each before its first decode"),
+        ("apps/kt-app/src/fx_thumbs.rs", 1, "`open_wanted` adopts each source as it opens it"),
+        ("apps/kt-cli/src/framecost.rs", 1, "measures plans and orders: nothing is decoded or composed"),
+        ("apps/kt-cli/src/main.rs", 2, "`probe --time`'s audio fetcher, and the simulated playback of blank frames"),
+    ];
+    fn walk(d: &Path, out: &mut Vec<PathBuf>) {
+        for e in std::fs::read_dir(d).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    let src = repo().join("src");
+    let mut files = Vec::new();
+    for d in ["apps", "libs"] {
+        walk(&src.join(d), &mut files);
+    }
+    let (mut bad, mut seen) = (Vec::new(), 0);
+    for f in files {
+        let rel = f.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/");
+        if rel.contains("/tests/") || rel.ends_with("_tests.rs") || rel.ends_with("tests.rs") || rel.starts_with("libs/kt-cache/") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&f).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        let end = lines.iter().position(|l| l.starts_with("#[cfg(test)]")).unwrap_or(lines.len());
+        let mut bare = 0;
+        for n in (0..end).filter(|&n| lines[n].contains("BurstCache::new(")) {
+            seen += 1;
+            if !lines[n..(n + 14).min(end)].iter().any(|l| l.contains("adopt_source")) {
+                bare += 1;
+            }
+        }
+        let allowed = ELSEWHERE.iter().find(|e| e.0 == rel).map_or(0, |e| e.1);
+        if bare != allowed {
+            bad.push(format!("{rel}: {bare} caches with no `adopt_sources` beside them, {allowed} explained"));
+        }
+    }
+    assert!(seen >= 8, "the walk found {seen} caches: it misses the code");
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// Test t3271 (found-defects 845; capability `distribution`): a live scenario reads the screen's picture only
+/// through a reader that waits for the picture of the last gesture: `kt_live`'s own readers call `picture()`,
+/// and a scenario that reads the screen itself calls it too.
+#[test]
+fn t3271_a_live_reader_waits_for_its_picture() {
+    let live = repo().join("src/scripts/live");
+    let lib = std::fs::read_to_string(live.join("kt_live.py")).unwrap();
+    let body = |name: &str| {
+        let at = lib.find(&format!("    def {name}(self")).unwrap_or_else(|| panic!("kt_live.{name}"));
+        let rest = &lib[at + 8..];
+        rest[..rest.find("\n    def ").unwrap_or(rest.len())].to_string()
+    };
+    for name in ["pixel", "ink_box", "pixel_settled"] {
+        assert!(body(name).contains("self.picture()"), "kt_live.{name} reads a picture nobody waited for");
+    }
+    for name in ["brightness", "brightness_red"] {
+        assert!(body(name).contains("self.pixel("), "kt_live.{name} reads past `pixel`");
+    }
+    assert!(body("_after_gesture").contains("self._gestured = True"), "a gesture makes the picture one to wait for");
+    for e in std::fs::read_dir(&live).unwrap().flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        // the README's pictures wait for a still frame with no Loading (its own `settled`)
+        if !name.ends_with(".py") || ["kt_live.py", "readme_shots.py"].contains(&name.as_str()) {
+            continue;
+        }
+        let text = std::fs::read_to_string(e.path()).unwrap();
+        if ["probe.pixels(", "screen_image()", "_pixel_direct(", "_pixel_shot("].iter().any(|r| text.contains(r)) {
+            assert!(text.contains(".picture()"), "{name} reads the screen itself and waits for no picture");
+        }
+    }
+}
+
 /// t1671 (test-stability): a test waits for what must happen with `kt_time::test_deadline()`. A
 /// bound of its own measures the machine: "the download did not end" in 20 s, "probe not
 /// published" in 45 s, "writing the restore record took 44 s", all on correct code. What is left
@@ -1191,8 +1274,6 @@ fn t1670_fixture_runs_that_meet_do_not_spoil_each_other() {
 #[test]
 fn t1671_a_test_does_not_bound_its_wait_by_the_clock() {
     const LIMIT_IS_THE_CHECK: &[(&str, &str)] = &[
-        // inside the 5 s busy timeout: a thread still running here sits behind a lock across an fsync
-        ("libs/kt-media/tests/sidecar_stall.rs", "from_secs(3)"),
         // the output ring is the yardstick of audio after a jump, and the video must follow it
         ("libs/kt-engine/tests/video_stall.rs", "from_millis(250)"),
         ("libs/kt-engine/tests/video_stall.rs", "from_millis(900)"),
@@ -1219,6 +1300,9 @@ fn t1671_a_test_does_not_bound_its_wait_by_the_clock() {
         ("libs/kt-time/src/shutdown.rs", "t0.elapsed() < Duration::from_secs(5)"),
         ("apps/kt-app/src/exit_watch.rs", "Instant::now() + Duration::from_millis(20)"),
         ("libs/kt-engine/tests/decode_storm.rs", "t0.elapsed() < kt_time::shutdown::WAIT"),
+        // the exit watcher's moment as the program sets it: what ends under it is the check (found-defects 972)
+        ("libs/kt-engine/tests/close_segment.rs", "Instant::now() + std::time::Duration::from_secs(8)"),
+        ("libs/kt-gpu/tests/exit_hook.rs", "Instant::now() + Duration::from_millis(1200)"),
     ];
     fn walk(d: &Path, out: &mut Vec<PathBuf>) {
         for e in std::fs::read_dir(d).unwrap().flatten() {

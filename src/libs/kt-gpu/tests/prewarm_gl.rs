@@ -40,6 +40,7 @@ fn t2128_a_prewarmed_gl_engine_keeps_composing() {
         source: SourceId(3),
         cache_idx: 0,
         content: 3,
+        leaf: Default::default(),
         src_scale: 1,
         input: kt_engine::video_plan::LayerInput::Frame(Some(frame)),
         fx: kt_engine::LayerChain::Borrowed(&fx),

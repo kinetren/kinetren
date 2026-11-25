@@ -156,6 +156,9 @@ What could NOT be found and why: reddit (r/editors, r/premiere, r/VideoEditing) 
 
 We take it, but in parts and in the right order. **First of all — the matte display**, as a separate small stage: right now we have six knobs, none of which can be tuned against anything, and that is not a "shortcoming of the key" but the reason our key is decorative. Second — operations on the matte (clip black/white, choke, alpha blur) and a meaningful despill with brightness return, because without them the matte display would only show the problem without letting us fix it. Garbage/holdout masks — not here: they depend entirely on F-MSK-001, and until then honestly write "partial". A move to a color-difference formula (analogue of Screen Balance) is a candidate for the next wave: it gives quality, but it requires a second branch in the core for byte-for-byte compatibility of old projects, and without the matte display nobody would see its improvement anyway.
 
+Design `chroma-key-upgrade` revision 3 (2026-11-24): the colour-difference model under the existing tolerance and softness
+(measured along the key axis), choke and soften, despill with the luma restored, Matte/Status/Screen in the Viewer, Analyze.
+
 ## Sources
 
 - Keylight (The Foundry), node reference — modes View, Screen Matte, Screen Balance, Despill Bias, Inside/Outside Mask, Replace Method:

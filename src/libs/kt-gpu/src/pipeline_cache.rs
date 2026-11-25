@@ -13,6 +13,7 @@ static DIR: OnceLock<PathBuf> = OnceLock::new();
 /// set — no disk tier: tests set none, so no test writes into the tree or the home folder.
 pub fn set_cache_dir(dir: PathBuf) {
     let _ = DIR.set(dir);
+    crate::seeds::open();
 }
 
 /// The folder set by [`set_cache_dir`], if any (the pass-time seeds live there too, gpu-throughput D2).
@@ -56,7 +57,7 @@ impl DiskCache {
             return None;
         }
         let path = dir.join(format!("{}.bin", key(info, role, shaders)?));
-        let data = std::fs::read(&path).ok();
+        let data = crate::holds::file("pipeline cache read", || std::fs::read(&path).ok());
         // SAFETY: the data was written by `save` from `PipelineCache::get_data` of an adapter with
         // the same `pipeline_cache_key` (it is part of the file name); `fallback` drops it otherwise
         let cache = unsafe {
@@ -85,7 +86,7 @@ impl DiskCache {
             return;
         }
         let tmp = self.path.with_extension(format!("tmp{}", std::process::id()));
-        if std::fs::write(&tmp, &data).is_ok() && std::fs::rename(&tmp, &self.path).is_ok() {
+        if crate::holds::file("pipeline cache write", || std::fs::write(&tmp, &data).is_ok() && std::fs::rename(&tmp, &self.path).is_ok()) {
             self.saved.store(data.len(), Ordering::Relaxed);
         } else {
             let _ = std::fs::remove_file(&tmp);
