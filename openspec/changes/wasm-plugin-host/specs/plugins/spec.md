@@ -41,4 +41,4 @@ Why: a shader that never ends takes the device of the process that draws it; hw-
 #### Scenario: A package that would take the device is not installed
 - **WHEN** packages with a shader of an endless loop, a kernel that traps at the top of a row, an id of a built-in effect and a path outside its folder are added, then the template package
 - **THEN** each of the four is refused with its own reason while the program goes on, and nothing of them is left in the library; the template is installed, reads "works after a restart", and a project naming its kind keeps its bytes until then
-- **TEST** t4152 (`src/apps/kt-cli/tests/plugin_trial.rs`), t3962, t3963 (`src/libs/kt-plugin-wasm/tests/package.rs`)
+- **TEST** t4152 (`src/apps/kt-cli/tests/plugin_trial.rs`), t4157, t4158 (`src/libs/kt-plugin-wasm/tests/package.rs`)
