@@ -383,3 +383,31 @@ fn t3725_an_abandoned_answer_ends_its_wait() {
     assert!(!answer.abandoned(), "a sent answer is not abandoned");
     assert_eq!(answer.take_within(Duration::ZERO), Some(5));
 }
+
+/// Test t3265 (found-defects 843): a pump that panics on one item is run again for the items behind it; one
+/// that panics every time stops after a bound and waits for a kick.
+#[test]
+fn t3265_a_panic_in_a_pump_ends_no_queue() {
+    let _v = VOTES.lock().unwrap_or_else(|e| e.into_inner());
+    let items = Arc::new(Mutex::new(VecDeque::from([1u32, 2, 3])));
+    let (done, left) = (Arc::new(Mutex::new(Vec::new())), items.clone());
+    let d = done.clone();
+    let lane = Lane::service("t3265", Class::Answer, move |_| {
+        let Some(i) = left.lock().unwrap_or_else(|e| e.into_inner()).pop_front() else { return Pump::Idle };
+        assert!(i != 2, "a broken item (test)");
+        d.lock().unwrap().push(i);
+        Pump::More
+    });
+    lane.kick();
+    until("the items behind the broken one", || *done.lock().unwrap() == [1, 3]);
+    let runs = Arc::new(AtomicU64::new(0));
+    let r = runs.clone();
+    let bad = Lane::service("t3265:bad", Class::Answer, move |_| -> Pump {
+        r.fetch_add(1, Ordering::SeqCst);
+        panic!("always (test)");
+    });
+    bad.kick();
+    assert!(bad.wait_idle(crate::test_deadline()));
+    let n = runs.load(Ordering::SeqCst);
+    assert!((2..=20).contains(&n), "{n} runs of a pump that only panics");
+}

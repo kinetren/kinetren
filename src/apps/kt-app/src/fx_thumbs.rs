@@ -949,7 +949,7 @@ fn pump(shared: &Arc<Shared>, ctx: &kt_time::sched::Ctx) -> kt_time::sched::Pump
     use kt_time::sched::Pump;
     loop {
         if shared.scene_drop.swap(false, Ordering::Relaxed) {
-            *shared.scene.lock().unwrap() = None;
+            *shared.scene.lock().unwrap_or_else(|e| e.into_inner()) = None;
         }
         if ctx.cancelled() {
             return Pump::Idle;
@@ -963,7 +963,14 @@ fn pump(shared: &Arc<Shared>, ctx: &kt_time::sched::Ctx) -> kt_time::sched::Pump
             continue;
         }
         let img = match &job.scene {
-            None => render_job(&job),
+            None => match crate::bg::caught(|| render_job(&job)) {
+                Some(img) => img,
+                None => {
+                    shared.failed.lock().unwrap().insert(job.key);
+                    crate::wake::soon();
+                    continue;
+                }
+            },
             Some(scene) => {
                 let (lane, own) = ctx.tokens();
                 let class = ctx.class();
@@ -975,8 +982,18 @@ fn pump(shared: &Arc<Shared>, ctx: &kt_time::sched::Ctx) -> kt_time::sched::Pump
                         || sh.generation.load(Ordering::Relaxed) > generation
                         || (class.pausable() && kt_time::sched::paused() != 0)
                 };
-                let out = render_scene(&mut shared.scene.lock().unwrap(), scene, &job.chain, job.swap.as_ref(), stop);
-                match out {
+                let mut at = shared.scene.lock().unwrap_or_else(|e| e.into_inner());
+                let out = crate::bg::caught(|| {
+                    #[cfg(test)]
+                    assert!(tests::broken() != Some(job.key.recipe), "a broken cell (test)");
+                    render_scene(&mut at, scene, &job.chain, job.swap.as_ref(), stop)
+                });
+                if out.is_none() {
+                    // what the panic left half done is not the next cell's
+                    *at = None;
+                }
+                drop(at);
+                match out.unwrap_or(SceneOut::Incomplete) {
                     SceneOut::Done(img) => img,
                     SceneOut::Incomplete => {
                         shared.failed.lock().unwrap().insert(job.key);
@@ -1553,6 +1570,51 @@ mod tests {
         assert!(!svc.queued(&key), "a cell that could not complete was asked again");
         svc.forget_scene();
         assert!(!svc.failed(&key), "closing the windows kept the failed cells");
+    }
+
+    static BROKEN: Mutex<Option<u64>> = Mutex::new(None);
+
+    /// The recipe whose cell panics (t3264).
+    pub(super) fn broken() -> Option<u64> {
+        *BROKEN.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Test t3264 (found-defects 843; capability `ui-controls`): a panic in one cell is that cell's failure —
+    /// it stays Loading and is not asked again — and the cells behind it come. The panic poisoned the scene's
+    /// lock, and every later cell of the session panicked on it.
+    #[test]
+    fn t3264_a_panic_in_one_cell_ends_no_other() {
+        crate::plugins::install();
+        if kt_gpu::offline_engine().is_none() {
+            eprintln!("skipped: no offline device");
+            return;
+        }
+        let svc = FxThumbService::start();
+        let mut p = scene_project();
+        p.clips.push(clip_at(1, 1, 0, 0, 90_000, vec![]));
+        let sc = scene(p, Place::Clip(kt_model::ClipId(1)), 0);
+        let ask = |fx: FxInstance| {
+            let mut j = job(recipe_hash(std::slice::from_ref(&fx), 0.0, 0, None), svc.shared.generation.load(Ordering::Relaxed));
+            (j.chain, j.scene) = (vec![fx], Some(sc.clone()));
+            let key = j.key;
+            svc.request(j);
+            key
+        };
+        let bad = recipe_hash(&[mirror()], 0.0, 0, None);
+        *BROKEN.lock().unwrap() = Some(bad);
+        let bad = ask(mirror());
+        let until = |what: &str, done: &dyn Fn() -> bool| {
+            let deadline = kt_time::test_deadline();
+            while !done() {
+                assert!(std::time::Instant::now() < deadline, "{what}");
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        };
+        until("the broken cell never failed", &|| svc.failed(&bad));
+        let next = ask(poster(4.0));
+        until("a cell after the broken one never came", &|| svc.shared.get(&next).is_some());
+        assert!(svc.shared.get(&bad).is_none() && !svc.queued(&bad));
+        *BROKEN.lock().unwrap() = None;
     }
 
     /// t2558 (chain-everywhere): a scene cell's job whose picker moved on starts nothing (a stream

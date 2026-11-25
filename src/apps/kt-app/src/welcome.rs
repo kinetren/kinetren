@@ -391,7 +391,7 @@ fn poster_pump(ctx: &kt_time::sched::Ctx) -> kt_time::sched::Pump {
             q.current = Some(token.clone());
             job
         };
-        {
+        crate::bg::caught(|| {
             let mut _span = kt_time::trace::span(kt_time::trace::Ev::Job);
             _span.aux(kt_time::trace::job::POSTER);
             let ctl = crate::bg::BgCtl::from_flags(token, Default::default())
@@ -404,7 +404,7 @@ fn poster_pump(ctx: &kt_time::sched::Ctx) -> kt_time::sched::Pump {
             if let Some(rgba) = rgba {
                 write_poster(&job.out, rgba);
             }
-        }
+        });
         let mut q = m.lock().unwrap_or_else(|e| e.into_inner());
         q.busy = false;
         q.current = None;

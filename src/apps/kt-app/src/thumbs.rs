@@ -332,7 +332,7 @@ impl ThumbService {
         let db_path = crate::app::cache_folder_of(project_path.as_deref());
         let sh = shared.clone();
         *shared.cache.lock().unwrap() = db_path;
-        let state = Mutex::new(WorkerState { db_path: None, db: None, db_ids: HashMap::new() });
+        let state = Mutex::new(WorkerState { db_path: None, db: None, db_ids: HashMap::new(), at: None });
         let lane = kt_time::sched::Lane::service("thumbs", kt_time::sched::Class::Visible, move |ctx| {
             let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
             pump(&sh, &mut st, ctx)
@@ -487,13 +487,30 @@ struct WorkerState {
     db_path: Option<PathBuf>,
     db: Option<Option<kt_media::index::MediaStore>>,
     db_ids: HashMap<MediaId, Option<kt_media::index::ContentId>>,
+    /// What the run is at: one found here at the start of the next was a panic's.
+    at: Option<At>,
+}
+
+/// An item of the queue.
+#[derive(Clone, Copy)]
+enum At {
+    Probe(MediaId),
+    Poster(MediaId),
+    Thumb(ThumbKey),
 }
 
 /// One run of the service: drain the queue (thumbs LIFO, then probes and posters), stop at a pause
 /// (`More`: the scheduler runs it again on resume) or when nothing is left (`Idle`).
 fn pump(shared: &Shared, st: &mut WorkerState, ctx: &kt_time::sched::Ctx) -> kt_time::sched::Pump {
     use kt_time::sched::Pump;
-    let WorkerState { db_path, db, db_ids } = st;
+    let WorkerState { db_path, db, db_ids, at } = st;
+    // a panic in one item is that item's failure, published as any other, or every frame orders it again
+    match at.take() {
+        Some(At::Probe(id)) => drop(shared.durations.lock().unwrap().entry(id).or_insert(None)),
+        Some(At::Poster(id)) => drop(shared.posters.lock().unwrap().entry(id).or_insert(None)),
+        Some(At::Thumb(key)) => fail(shared, key),
+        None => {}
+    }
     let cache = shared.cache.lock().unwrap().clone();
     if *db_path != cache {
         (*db_path, *db) = (cache, None);
@@ -503,6 +520,7 @@ fn pump(shared: &Shared, st: &mut WorkerState, ctx: &kt_time::sched::Ctx) -> kt_
     // LRU of open sources (item 1 round 7: previously clear() at >2), for this run only
     let mut sources: SourceLru<Box<dyn kt_media::MediaSource>> = SourceLru::new(MAX_OPEN_SOURCES);
     loop {
+        *at = None;
         if ctx.cancelled() {
             return Pump::Idle;
         }
@@ -539,6 +557,7 @@ fn pump(shared: &Shared, st: &mut WorkerState, ctx: &kt_time::sched::Ctx) -> kt_
         // failure too (None), so the UI does not re-request (item 1 round 7).
         let probes: Vec<MediaId> = shared.probe.lock().unwrap().drain().collect();
         for pid in probes {
+            *at = Some(At::Probe(pid));
             if shared.durations.lock().unwrap().contains_key(&pid) {
                 continue;
             }
@@ -572,6 +591,7 @@ fn pump(shared: &Shared, st: &mut WorkerState, ctx: &kt_time::sched::Ctx) -> kt_
         if let Some(pid) = poster_job
             && !shared.posters.lock().unwrap().contains_key(&pid)
         {
+            *at = Some(At::Poster(pid));
             let found = find_poster(shared, db, &mut sources, pid);
             shared.posters.lock().unwrap().insert(pid, found);
             crate::wake::soon();
@@ -579,13 +599,7 @@ fn pump(shared: &Shared, st: &mut WorkerState, ctx: &kt_time::sched::Ctx) -> kt_
         let Some((key, near_tol)) = next else {
             continue;
         };
-        let fail = |shared: &Shared, key: ThumbKey| {
-            let mut f = shared.failed.lock().unwrap();
-            if f.len() >= MAX_FAILED {
-                f.clear();
-            }
-            f.insert(key);
-        };
+        *at = Some(At::Thumb(key));
         if shared.ready.lock().unwrap().contains_key(&key) {
             continue;
         }
@@ -705,6 +719,14 @@ fn pump(shared: &Shared, st: &mut WorkerState, ctx: &kt_time::sched::Ctx) -> kt_
             crate::wake::soon();
         }
     }
+}
+
+fn fail(shared: &Shared, key: ThumbKey) {
+    let mut f = shared.failed.lock().unwrap();
+    if f.len() >= MAX_FAILED {
+        f.clear();
+    }
+    f.insert(key);
 }
 
 /// “Informativeness” of a frame: the spread of average brightness across 16×9 blocks.

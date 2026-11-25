@@ -112,6 +112,9 @@ pub mod outcome {
     pub const PANICKED: u64 = 3;
 }
 
+/// How many runs in a row a panicking pump gets without a kick.
+const PANICS: u32 = 8;
+
 /// What a pump says when it returns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pump {
@@ -266,6 +269,8 @@ struct LaneSt {
     pump_due: bool,
     pump_at: Option<Instant>,
     pump_id: u64,
+    /// The pump's runs that panicked one after another.
+    panics: u32,
     running: bool,
     in_ready: bool,
     closed: bool,
@@ -617,6 +622,7 @@ impl Sched {
             Unit::Once(q) => (q.id, q.at, q.token.clone()),
             Unit::Pump(_, id, at) => (*id, *at, Token::new()),
         };
+        let is_pump = matches!(unit, Unit::Pump(..));
         let counts = &self.counts[lane.class as usize];
         if job.is_cancelled() || lane.token.is_cancelled() {
             counts[3].fetch_add(1, Ordering::Relaxed);
@@ -642,18 +648,39 @@ impl Sched {
             }
             Unit::Pump(p, _, _) => p(&ctx),
         }));
-        let out = match res {
-            Ok(Pump::More) => {
-                let mut ls = lane.st();
-                if !ls.closed && !ls.pump_due {
-                    ls.pump_due = true;
-                    ls.pump_at = Some(Instant::now());
-                    ls.pump_id = trace::next_id();
-                }
-                outcome::MORE
+        let again = |ls: &mut LaneSt| {
+            if !ls.closed && !ls.pump_due {
+                ls.pump_due = true;
+                ls.pump_at = Some(Instant::now());
+                ls.pump_id = trace::next_id();
             }
-            Ok(Pump::Idle) => outcome::DONE,
-            Err(_) => outcome::PANICKED,
+        };
+        let out = match res {
+            Ok(got) => {
+                let mut ls = lane.st();
+                ls.panics = if is_pump { 0 } else { ls.panics };
+                match got {
+                    Pump::More => {
+                        again(&mut ls);
+                        outcome::MORE
+                    }
+                    Pump::Idle => outcome::DONE,
+                }
+            }
+            Err(_) => {
+                // one item's panic is not the end of the queue behind it (found-defects 843); a pump that
+                // takes nothing before it panics stops after PANICS and waits for its next kick
+                let mut ls = lane.st();
+                if is_pump {
+                    ls.panics += 1;
+                    if ls.panics <= PANICS {
+                        again(&mut ls);
+                    } else {
+                        ls.panics = 0;
+                    }
+                }
+                outcome::PANICKED
+            }
         };
         span.c(out);
         counts[2].fetch_add(1, Ordering::Relaxed);

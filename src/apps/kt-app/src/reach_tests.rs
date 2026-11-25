@@ -8068,6 +8068,36 @@ fn t2305_next_lesson_opens_when_the_copy_is_written() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Test t3266 (found-defects 842; capability `durability`): Next lesson waits for no disk. With the save
+/// lane held — a disk that answers nothing — the next lesson is open in the frames of a click, the copy's
+/// edits are read back where it opens again. The live walk stood 31.8 s on the copy's fsync.
+#[test]
+fn t3266_next_lesson_waits_for_no_disk() {
+    crate::alone::own_process!();
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    let (mut h, dir) = lesson_at("t3266", 1, 4);
+    let path = h.state().project_path.clone().unwrap();
+    let r = kt_model::Region { start: Tick(20 * 90_000), end: Tick(30 * 90_000) };
+    h.state_mut().model.set_region(Some(r));
+    h.state_mut().toggle_loop();
+    h.step();
+    h.step();
+    assert!(h.state().dirty_content || h.state().dirty_ui, "the scene has nothing to lose — the test proves nothing");
+    let (go, hold) = std::sync::mpsc::channel::<()>();
+    crate::app::save_lane().post(move |_| drop(hold.recv()));
+    h.get_by_label(tr(k::lessons::NEXT)).click();
+    for _ in 0..3 {
+        h.step();
+    }
+    assert_eq!(h.state().start.lessons.lesson, 2, "lesson 2 waits for the disk");
+    assert!(h.state().saving.is_none() && h.state().ask.is_none());
+    let kept = crate::app::KtApp::open(&path).expect("the lesson-1 copy reads").model.project().region;
+    assert_eq!(kept.map(|r| r.start), Some(r.start), "the lesson-1 copy lost its edits");
+    drop(go);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// t1219 (camera-isp-simulation 3.2; capability `video-fx`): the camera effect's window is its
 /// pipeline. A person adds "Camera ISP" from the picker by typing; the window shows the blocks of the
 /// chain in order (source, lens, sensor, the ISP's raw front, demosaic, lens correction, colour, YUV),

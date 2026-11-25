@@ -185,7 +185,8 @@ impl IndexService {
                     continue;
                 }
                 let stop_here = || stop_t.load(std::sync::atomic::Ordering::Acquire) || ctx.checkpoint();
-                match build_peaks(&path, db.as_mut().map(|(_, d)| d), &stop_here) {
+                let built = crate::bg::caught(|| build_peaks(&path, db.as_mut().map(|(_, d)| d), &stop_here));
+                match built.unwrap_or_else(|| Err("the index of this file failed".into())) {
                     Ok(Some((p, l))) => {
                         out.lock().unwrap().insert(id, p);
                         if let Some(l) = l {

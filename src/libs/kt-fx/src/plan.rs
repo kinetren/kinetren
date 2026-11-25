@@ -664,7 +664,17 @@ pub fn plan_graph_in(
     debug_assert!(s == 1 || !stops.contains(&0), "leading stop forbids a decode stage");
 
     // --- A: segmentation and 1× programs (items 311-312) ---
-    let raw = segment(fx, in_w / s, in_h / s, out_w, out_h, u, cam3d, burst_index, stops, lead, graph, input_wh);
+    let mut raw = segment(fx, in_w / s, in_h / s, out_w, out_h, u, cam3d, burst_index, stops, lead, graph, input_wh);
+    // The step is the clip's maximum over its length, and THIS moment may have nothing that brings it
+    // back to 1x: a zoom curve at 1, slots that are all identity (found-defects 843). Nothing then ends at
+    // the canvas; the frame comes back first, through the identity placement, so the picture is the limit
+    // of the zoom's own.
+    let still = FxInstance::geometry_zoom(1.0);
+    let back = |r: &RawKind| matches!(r, RawKind::Run { .. });
+    let at_1x = |r: &RawKind| !matches!(r, RawKind::Barrier { .. } | RawKind::PointRun { .. });
+    if s > 1 && !raw.iter().find(|r| at_1x(r)).is_some_and(back) {
+        raw.insert(0, RawKind::Run { i: 0, j: 0, exec: GeomExec::Legacy, lens: (1.0, 1.0) });
+    }
 
     // --- B: backward — net zoom of the tail at each barrier ---
     let (tail, _) = tail_zooms(&raw);
@@ -732,10 +742,13 @@ pub fn plan_graph_in(
                     Some(RawKind::Barrier { .. } | RawKind::PointRun { .. }) => kmap[ri + 1],
                     _ => 1,
                 };
-                let steps: Vec<&FxInstance> = fx[*i..*j]
-                    .iter()
-                    .filter(|g| is_geo_active(g, lead, out_w, out_h) || is_pointwise(g))
-                    .collect();
+                let steps: Vec<&FxInstance> = match i == j {
+                    true => vec![&still],
+                    false => fx[*i..*j]
+                        .iter()
+                        .filter(|g| is_geo_active(g, lead, out_w, out_h) || is_pointwise(g))
+                        .collect(),
+                };
                 let exec = build_geom_exec_in(
                     &steps,
                     w,
