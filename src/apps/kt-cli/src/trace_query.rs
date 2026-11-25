@@ -1339,27 +1339,50 @@ pub fn lap_bounds(run: &Run) -> Vec<(u64, u64, u64, u64)> {
     let mut out = vec![];
     let mut region = (0u64, 0u64);
     let mut start: Option<u64> = None;
+    // a lap is played: the opening's seek and a click on the ruler of a paused transport start none
+    let mut playing = false;
+    // the head Play started at, while it is the last record: the render thread writes its own seek right
+    // after it, and a lap cut between the two was empty (found-defects 846)
+    let mut played: Option<u64> = None;
     for r in run.recs.iter().filter(|r| is(r, Ev::Play)) {
+        use trace::play::{PAUSE, PLAY, REGION, SEEK, WRAP};
+        if !matches!(r.aux, PLAY | PAUSE | SEEK | WRAP | REGION) {
+            continue;
+        }
+        let own_seek = r.aux == SEEK && played == Some(r.a);
+        played = (r.aux == PLAY).then_some(r.a);
         match r.aux {
-            trace::play::REGION => {
+            REGION => {
                 region = (r.b, r.c);
                 if let Some(a) = start.take() {
                     out.push((a, r.t, region.0, region.1));
                 }
-                start = None;
             }
-            trace::play::PLAY | trace::play::SEEK if region.1 > region.0 => {
-                if let Some(a) = start.take() {
-                    out.push((a, r.t, region.0, region.1));
-                }
-                start = Some(r.t);
-            }
-            trace::play::WRAP if region.1 > region.0 => {
-                if let Some(a) = start.replace(r.t) {
+            PLAY => {
+                playing = true;
+                if region.1 > region.0
+                    && let Some(a) = start.replace(r.t)
+                {
                     out.push((a, r.t, region.0, region.1));
                 }
             }
-            trace::play::PAUSE => {
+            SEEK if playing && region.1 > region.0 => {
+                if let Some(a) = start.replace(r.t)
+                    && !own_seek
+                {
+                    out.push((a, r.t, region.0, region.1));
+                }
+            }
+            WRAP => {
+                playing = true;
+                if region.1 > region.0
+                    && let Some(a) = start.replace(r.t)
+                {
+                    out.push((a, r.t, region.0, region.1));
+                }
+            }
+            PAUSE => {
+                playing = false;
                 if let Some(a) = start.take() {
                     out.push((a, r.t, region.0, region.1));
                 }

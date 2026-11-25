@@ -24,6 +24,8 @@ fn player(root: &std::path::Path) -> Option<(Player, Vec<Tick>)> {
     player.set_preview_quality(Quality { width: 160, height: 90 });
     player.set_video_gpu(Some(gpu));
     player.render_cache().set_heavy_for_tests(Some(1));
+    // the picture is the disk's: a loaded machine reads it past the frame's bound (gpu-waits-named)
+    player.render_cache().set_read_wait_for_tests(Some(kt_time::TEST_WAIT));
     player.set_render_cache(Some(Config {
         codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
         root: root.to_path_buf(),

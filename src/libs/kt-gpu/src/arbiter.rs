@@ -401,6 +401,9 @@ impl Ring {
             self.cv.notify_all();
         }
         let ticket = self.push(&mut st, class, ns, false, done);
+        // the admission ends under the lock: after it, a thread put off before its record ended let the
+        // record of a later admission end first (found-defects 919)
+        drop(span);
         drop(st);
         self.admitted.fetch_add(1, Ordering::Relaxed);
         ticket

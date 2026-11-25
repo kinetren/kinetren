@@ -2422,6 +2422,9 @@ impl MediaParts {
             w.shutdown();
         }
         self.natives.write().unwrap().forget(media);
+        // no source, no values set in it: kept, an address that comes back with the same values looked
+        // raised and got no worker (found-defects 921: the undo of a delete stood in Loading)
+        self.gen_states.lock().unwrap().remove(&media);
     }
 
     /// Bring the GENERATOR SOURCES into line with the project (R.59, stage 2); the caller holds

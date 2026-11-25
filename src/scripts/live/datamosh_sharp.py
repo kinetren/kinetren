@@ -25,6 +25,7 @@ SEC = 90000
 
 def detail(app, half=(160, 80)):
     """The mean horizontal luma step in a box of the preview around its centre: fine detail."""
+    app.picture()
     img = screen_image().convert("L")
     cx, cy = app.preview_center()
     box = img.crop((cx - half[0], cy - half[1], cx + half[0], cy + half[1]))

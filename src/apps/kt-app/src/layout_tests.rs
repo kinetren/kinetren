@@ -16092,6 +16092,51 @@ fn t759_transform_form_groups_pairs_sliders_and_reset() {
     );
 }
 
+/// Test t3270 (found-defects 845; capability `distribution`): the dump's `compose.current` names the picture
+/// of the moment asked. While the composite of a seek or of an edit is on its way the picture drawn is the former one, and
+/// a live scenario reads no pixel of it.
+#[test]
+fn t3270_the_dump_says_whether_the_picture_is_the_one_asked() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
+    use kt_model::*;
+    let (mut h, clip) = harness_geom_ctl();
+    let wait = |h: &mut Harness<'_, KtApp>, what: &str| {
+        let until = kt_time::test_deadline();
+        while !h.state().preview_current {
+            assert!(std::time::Instant::now() < until, "{what}: the picture never came");
+            h.step();
+        }
+    };
+    wait(&mut h, "the opening");
+    // an answer does not come within the frame that asks
+    h.state_mut().compose_grace = std::time::Duration::ZERO;
+    for what in ["a seek", "an edit"] {
+        let before = h.state().preview_key;
+        match what {
+            "a seek" => h.state().player.seek(kt_time::Tick(30_000)),
+            _ => {
+                let (g, pos) = {
+                    let c = h.state().model.clip(clip).expect("event");
+                    (EventGeometry { pos_x: 0.1, ..c.geometry }, c.geometry_pos)
+                };
+                h.state_mut().apply(Command::SetGeometry { id: clip, geometry: g, pos, auto: Vec::new() });
+            }
+        }
+        let asked = h.state().complete_composites;
+        h.step();
+        assert!(
+            !h.state().preview_current || h.state().complete_composites > asked,
+            "{what}: the picture of {before:?} is called the one asked"
+        );
+        wait(&mut h, what);
+        assert!(h.state().complete_composites > asked, "{what}: no composite was drawn");
+        assert!(h.state().preview_key.is_some_and(|k| k.2), "{what}: a whole picture");
+    }
+    h.state_mut().compose_grace = crate::app::COMPOSE_GRACE;
+}
+
 /// Test 762b (R.64): a gesture over an ANIMATED parameter sets a key.
 ///
 /// Rule 17 to the letter: the on-screen frame and the FX window field edit the same

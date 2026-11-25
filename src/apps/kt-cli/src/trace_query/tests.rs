@@ -221,6 +221,31 @@ fn t2147_loop_names_why_a_frame_was_composed_again() {
     assert_eq!(lap2[3..6], ["3", "3", "0"], "lap 2: all kept");
 }
 
+/// Test t3269 (found-defects 846; capability `telemetry`): a lap is what was played. The render thread's
+/// own seek behind Play cuts no empty lap, the opening's seek (in either order with the region's record)
+/// and a click of a paused transport start none, a seek while playing starts one.
+#[test]
+fn t3269_a_lap_is_what_was_played() {
+    let p = |t: u64, aux: u32, a: u64| rec(Ev::Play, t * MS, |r| (r.aux, r.a) = (aux, a));
+    let region = |t: u64| rec(Ev::Play, t * MS, |r| (r.aux, r.b, r.c) = (play::REGION, 9000, 99_000));
+    let laps_of = |open: [Rec; 2]| {
+        let mut v = open.to_vec();
+        v.extend([
+            p(3, play::SEEK, 9000),
+            p(100, play::PLAY, 9000),
+            p(101, play::SEEK, 9000),
+            p(200, play::WRAP, 9500),
+            p(250, play::SEEK, 20_000),
+            p(300, play::PAUSE, 0),
+            p(310, play::SEEK, 9000),
+        ]);
+        lap_bounds(&run_of(v)).into_iter().map(|(a, b, ..)| (a / MS, b / MS)).collect::<Vec<_>>()
+    };
+    let want = vec![(101, 200), (200, 250), (250, 300)];
+    assert_eq!(laps_of([p(1, play::SEEK, 9000), region(2)]), want, "the seek first");
+    assert_eq!(laps_of([region(1), p(2, play::SEEK, 9000)]), want, "the region first");
+}
+
 /// Test t2148: "the slowest frames and their critical path": ordered by ask → done, each with its
 /// plan, stream runs, compute and executor lines.
 #[test]
