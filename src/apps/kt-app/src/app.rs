@@ -744,6 +744,9 @@ pub struct KtApp {
     pub last_compose_retry: std::time::Instant,
     /// The ask on its way to the preview's thread: its number and (tick, size, content, project).
     pub preview_asked: Option<(u64, PreviewAsk)>,
+    /// The picture drawn in this frame is the one this frame asks for: its moment, size and state, whole
+    /// (the dump's `compose.current`: a scenario reads no pixel of the picture before it).
+    pub(crate) preview_current: bool,
     /// How long a frame waits for its composite, so that a fast one shows in this very frame.
     /// A bound and nothing more: past it the frame goes on with the old picture.
     pub compose_grace: std::time::Duration,
@@ -1225,6 +1228,7 @@ impl KtApp {
             preview_catching_up: 0,
             last_compose_retry: std::time::Instant::now(),
             preview_asked: None,
+            preview_current: false,
             compose_grace: COMPOSE_GRACE,
             compose_retry_epoch: 0,
             compose_retry_gap: COMPOSE_RETRY_MIN,
@@ -1577,6 +1581,7 @@ impl KtApp {
             preview_catching_up: 0,
             last_compose_retry: std::time::Instant::now(),
             preview_asked: None,
+            preview_current: false,
             compose_grace: COMPOSE_GRACE,
             compose_retry_epoch: 0,
             compose_retry_gap: COMPOSE_RETRY_MIN,
@@ -7729,6 +7734,7 @@ impl KtApp {
             let old = std::mem::replace(&mut self.preview_buf, rgba);
             self.player.give_back_preview_buffer(old);
         }
+        self.preview_current = self.preview_asked.is_none() && self.preview_key == Some((key_now.0, key_now.1, true));
         if complete {
             self.incomplete_since = None;
         } else {
@@ -11766,7 +11772,15 @@ impl eframe::App for KtApp {
         crate::journal::flush(std::time::Duration::from_secs(1));
         // what the close did is in the file before the drops join threads (a clean exit flushed
         // nothing, and the owner's trace ended a second before his close)
-        kt_time::trace::flush();
+        note_trace_flush();
+    }
+}
+
+/// The trace's tail is in its file, or the journal says it is not (found-defects 918).
+fn note_trace_flush() {
+    if !kt_time::trace::flush() {
+        crate::journal::log("TRACE", "the last records are not written: the disk did not take them in time");
+        crate::journal::flush(std::time::Duration::from_millis(300));
     }
 }
 
@@ -11987,7 +12001,7 @@ pub fn run() -> eframe::Result {
     // the app and its threads are dropped (each join bounded): the drops' records reach the file
     // before the C exit hooks run (close-while-busy)
     kt_time::shutdown::mark(kt_time::trace::shutdown::RETURNED, "eframe");
-    kt_time::trace::flush();
+    note_trace_flush();
     // a window that never opened says why in the journal, and nothing else flushes it
     crate::journal::flush(std::time::Duration::from_secs(1));
     ran

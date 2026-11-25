@@ -72,7 +72,9 @@ fn main() {
     }
     kt_media::cache_folder::set_data_root(&kt_dirs::tool_dir());
     let code = run(&args);
-    kt_time::trace::flush();
+    if !kt_time::trace::flush() {
+        eprintln!("the trace lacks its last records: the disk did not take them in time");
+    }
     std::process::exit(code);
 }
 

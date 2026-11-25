@@ -1235,6 +1235,38 @@ fn t3613_every_offline_cache_adopts_its_sources() {
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
+/// Test t3271 (found-defects 845; capability `distribution`): a live scenario reads the screen's picture only
+/// through a reader that waits for the picture of the last gesture: `kt_live`'s own readers call `picture()`,
+/// and a scenario that reads the screen itself calls it too.
+#[test]
+fn t3271_a_live_reader_waits_for_its_picture() {
+    let live = repo().join("src/scripts/live");
+    let lib = std::fs::read_to_string(live.join("kt_live.py")).unwrap();
+    let body = |name: &str| {
+        let at = lib.find(&format!("    def {name}(self")).unwrap_or_else(|| panic!("kt_live.{name}"));
+        let rest = &lib[at + 8..];
+        rest[..rest.find("\n    def ").unwrap_or(rest.len())].to_string()
+    };
+    for name in ["pixel", "ink_box", "pixel_settled"] {
+        assert!(body(name).contains("self.picture()"), "kt_live.{name} reads a picture nobody waited for");
+    }
+    for name in ["brightness", "brightness_red"] {
+        assert!(body(name).contains("self.pixel("), "kt_live.{name} reads past `pixel`");
+    }
+    assert!(body("_after_gesture").contains("self._gestured = True"), "a gesture makes the picture one to wait for");
+    for e in std::fs::read_dir(&live).unwrap().flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        // the README's pictures wait for a still frame with no Loading (its own `settled`)
+        if !name.ends_with(".py") || ["kt_live.py", "readme_shots.py"].contains(&name.as_str()) {
+            continue;
+        }
+        let text = std::fs::read_to_string(e.path()).unwrap();
+        if ["probe.pixels(", "screen_image()", "_pixel_direct(", "_pixel_shot("].iter().any(|r| text.contains(r)) {
+            assert!(text.contains(".picture()"), "{name} reads the screen itself and waits for no picture");
+        }
+    }
+}
+
 /// t1671 (test-stability): a test waits for what must happen with `kt_time::test_deadline()`. A
 /// bound of its own measures the machine: "the download did not end" in 20 s, "probe not
 /// published" in 45 s, "writing the restore record took 44 s", all on correct code. What is left

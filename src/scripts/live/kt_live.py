@@ -328,6 +328,8 @@ class Live:
         self._poked = 0.0
         # a direct read of a point is accepted only after reconciliation with the reference
         self._direct_px = None
+        # no pixel was read since the last gesture (`picture`)
+        self._gestured = True
         # OBSERVED frame step: under four workers the software render goes
         # noticeably slower than alone, and all waits must stretch
         # together with it. Fixed thresholds are exactly the
@@ -971,6 +973,7 @@ class Live:
         exactly that blindness, for the removal of which the round was opened.
         """
         _t0 = time.time()
+        self._gestured = True
         if self._wait_gesture(mark, timeout=max(2.0, 12.0 * self._dt)):
             if os.environ.get("KT_LIVE_DEBUG_WAIT"):
                 print(f"      [waited] {what}: {time.time() - _t0:.2f} s", file=sys.stderr)
@@ -1642,8 +1645,35 @@ class Live:
         self._direct_px = False
         return False
 
+    def picture(self):
+        """The picture of the last gesture is on screen (found-defects 845).
+
+        A program reads a click in one frame and draws its picture in a later one, once the composite
+        came: a pixel read between the two is the former moment's (`fade` read 1.5 s at 0.2 s). The program
+        says when the picture drawn is the one it asks for (`compose.current`); the frame after the
+        dump that says so is the one on screen. Playing, no picture stands: the read is the caller's."""
+        if not self._gestured or getattr(self, "geom_path", None) is None:
+            return
+        first = self._frame_now() + 1
+        ready = []
+
+        def current():
+            g = self.geom()
+            if g.get("playing"):
+                return True
+            ready[:] = [g] if g["frame"] >= first and g.get("compose", {}).get("current") else []
+            return bool(ready)
+
+        if not self.until(current, timeout=120.0):
+            print("   note: the preview's picture did not come; the pixel is read as it stands", flush=True)
+        elif not ready:
+            return
+        self.wait_frame(1, what="the frame after the picture's", soft=True)
+        self._gestured = False
+
     def pixel(self, x, y):
         """Color of the screen pixel (r, g, b) — “what a person sees”."""
+        self.picture()
         if self._pixel_path():
             return self._pixel_direct(x, y)
         return self._pixel_shot(x, y)
@@ -1656,6 +1686,7 @@ class Live:
         stroke, and hitting it with the center of the preview is a lottery, and a lottery
         is not a test (the rule “assert the consequence”).
         """
+        self.picture()
         x0, y0 = xy[0] - half, xy[1] - half
         n = 2 * half // step
         if self._pixel_path():
@@ -1707,6 +1738,7 @@ class Live:
         R.68: the “settled” wait is also tied to the program’s frames —
         `settle` seconds of sleep are replaced by a wait for a pair of frames, and between
         pixel reads a frame is waited for (softly: the picture may also have frozen)."""
+        self.picture()
         self.wait_frame(2, what="frames before reading a settled pixel", soft=True)
         prev = None
         # WE WAIT BY THE CLOCK, but do not sleep: the frame is drawn before the

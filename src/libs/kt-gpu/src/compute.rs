@@ -266,6 +266,9 @@ pub fn shares_display() -> bool {
 pub fn open_device() -> Result<Arc<ComputeDevice>, String> {
     // the prewarm opens it on its own thread at a project's opening: the exit waits (pipeline-prewarm D10)
     let _busy = crate::exit::busy().ok_or("the process is exiting")?;
+    // a frame whose generator or stage waits for the opening names it (found-defects 845: 24 s on a
+    // standing disk, and the trace said nothing)
+    let _h = crate::holds::hold(crate::errors::role::COMPUTE, "open the device");
     if let Some(ctx) = SHARED.get() {
         crate::context::trace_device("compute", &ctx.adapter_info, &ctx.device);
         return Ok(ComputeDevice::on_context(ctx));
