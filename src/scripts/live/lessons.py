@@ -56,6 +56,12 @@ def main(out):
     def done(lesson):
         return ((read_json(os.path.join(store, "tour.json")) or {}).get("done") or {}).get(str(lesson)) or []
 
+    def untouched(app, lesson):
+        # "nothing was closed" is true of any file not written yet (found-defects 841)
+        app.settle()
+        app.small_files_written()
+        return not done(lesson)
+
     def closed(lesson, step, timeout=20.0):
         return wait_for(lambda: step in done(lesson) or None, timeout) is True
 
@@ -85,11 +91,11 @@ def main(out):
         app.step("l1-start", "lesson 1: the step as lines with keycaps, the Show button")
         app.click_probe("lessons.show", "Show")
         app.expect(app.has_probe("lesson.mark.menu"), "Show opened the menu and the generator item is outlined")
-        app.expect(not done(1), "Show did not perform the step")
+        app.expect(untouched(app, 1), "Show did not perform the step")
         app.step("l1-show", "the Edit menu open, Create a generator… outlined")
         app.click_probe("gen.new", "Create a generator…")
         app.expect(app.until(lambda: app.has_probe("lesson.mark.genw.kind", tries=2)), "its window opened, the Kind field outlined")
-        app.expect(not done(1), "a solid colour did not close the title step")
+        app.expect(untouched(app, 1), "a solid colour did not close the title step")
         app.step("l1-kind", "a solid colour and its window; the Kind field outlined, the step names Text")
         app.pick_generator_kind("text", "the Text cell")
         app.expect(closed(1, 1), "the title step closed by itself")
@@ -156,7 +162,7 @@ def main(out):
         y = app.lane_y("video", 0, 0.7)
         app.drag(app.x_at(23 * S), y, app.x_at(20 * S), y)
         app.settle()
-        app.expect(not done(3), "an overlap made by a drag did not close the transition step (it is a cut)")
+        app.expect(untouched(app, 3), "an overlap made by a drag did not close the transition step (it is a cut)")
         app.step("l3-overlap", "the events overlap as a cut; the step stays")
         app.right_click(app.x_at(26 * S), y)
         app.expect(app.has_probe("lesson.mark.menu"), "Transition with previous is outlined in the menu")
@@ -195,7 +201,7 @@ def main(out):
         app.click_probe("lessons.show", "Show")
         app.expect(app.has_probe("lesson.mark.morpher"), "Show brought the BATCH block into view, outlined")
         app.expect(not app.has_probe("win.morpher", tries=2), "Show did not open the morpher (item 5)")
-        app.expect(not done(4), "Show did not perform the step")
+        app.expect(untouched(app, 4), "Show did not perform the step")
         app.step("l4-show", "the BATCH morpher block outlined, no window opened")
         x, yy = at("lesson.mark.morpher")
         app.double_click(x, yy)

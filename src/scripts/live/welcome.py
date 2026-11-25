@@ -80,6 +80,7 @@ def main(out):
         app.expect(app.has_probe("welcome.window"), "the first start opened the welcome window")
         app.expect(app.has_probe("welcome.tour"), "the window has the tour tile")
         app.expect(app.has_probe("welcome.tpl.v916"), "the window has the 9:16 template tile")
+        app.small_files_written()
         start = read_json(os.path.join(store, "start.json")) or {}
         app.expect(start.get("started_before") is True, f"the start record is written: {start}")
         app.step("first-start", "the welcome window over an empty editor, the tour tile primary")

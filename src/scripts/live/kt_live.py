@@ -855,6 +855,12 @@ class Live:
             _poll(0.05)
         raise Failure("the program did not give the geometry (KT_GEOM_DUMP)")
 
+    def small_files_written(self, timeout=60.0):
+        """The program's own small files (start.json, tour.json, the recent list, the workspace) are on
+        disk: it writes them off its frame, and a verdict read right after a gesture read the file
+        before the gesture's write (found-defects 841)."""
+        return self.until(lambda: self.geom().get("small_files") == 0, timeout=timeout)
+
     def x_at(self, tick):
         """Screen x for a timeline tick."""
         g = self.geom()

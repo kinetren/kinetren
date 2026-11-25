@@ -40,6 +40,11 @@ impl Later {
                     d
                 };
                 write(&path, &text);
+                // the live dump names what is not written yet (found-defects 841): the last one draws a frame
+                if crate::widgets::field_probe::on() {
+                    me.st.lock().unwrap_or_else(|e| e.into_inner()).at = None;
+                    crate::wake::now();
+                }
             }
         });
         l
@@ -58,6 +63,12 @@ impl Later {
         let st = self.st.lock().unwrap_or_else(|e| e.into_inner());
         let queued = st.queue.iter().find(|q| q.0 == path).map(|q| q.1.clone());
         queued.or_else(|| st.at.as_ref().filter(|a| a.0 == path).map(|a| a.1.clone()))
+    }
+
+    /// How many files are asked and not written yet.
+    pub(crate) fn waiting(&self) -> usize {
+        let st = self.st.lock().unwrap_or_else(|e| e.into_inner());
+        st.queue.len() + usize::from(st.at.is_some())
     }
 
     /// Wait until what was asked is written, at most `bound`; `false` — it is not.
@@ -100,6 +111,11 @@ pub(crate) fn read(path: &Path) -> std::io::Result<String> {
     pending.map_or_else(|| std::fs::read_to_string(path), Ok)
 }
 
+/// What is not written yet, for the live dump.
+pub(crate) fn waiting() -> usize {
+    if cfg!(test) { 0 } else { the().waiting() }
+}
+
 pub(crate) fn flush(bound: Duration) -> bool {
     cfg!(test) || the().flush(bound)
 }
@@ -137,12 +153,13 @@ mod tests {
         l.push(a, "a2".into());
         assert_eq!(l.pending(a).as_deref(), Some("a2"));
         assert_eq!(l.pending(b).as_deref(), Some("b0"), "the one being written is read too");
+        assert_eq!(l.waiting(), 2, "the one being written and the one that waits");
         assert!(!l.flush(Duration::ZERO) && wrote.lock().unwrap().is_empty());
         *disk.0.lock().unwrap() = true;
         disk.1.notify_all();
         assert!(l.flush(kt_time::TEST_WAIT));
         let want = vec![(b.to_path_buf(), "b0".to_string()), (a.to_path_buf(), "a2".to_string())];
         assert_eq!(*wrote.lock().unwrap(), want, "the newest text");
-        assert_eq!(l.pending(a), None);
+        assert_eq!((l.pending(a), l.waiting()), (None, 0));
     }
 }

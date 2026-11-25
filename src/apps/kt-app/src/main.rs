@@ -29,6 +29,9 @@ mod ctx_menu;
 mod controls_tests;
 #[cfg(test)]
 mod diag_tests;
+mod disk;
+#[cfg(test)]
+mod disk_tests;
 #[cfg(test)]
 mod idle_tests;
 #[cfg(test)]
