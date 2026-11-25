@@ -1,9 +1,9 @@
 # Proposal: openfx-host
 
-> DESIGN ONLY (spec session), revision 2 (2026-11-23) after the owner's answer to Q57 (`kkt-26.11.22` D4): frames cross
+> IMPLEMENTATION-READY (spec-engine, revision 3, 2026-11-25, orch `fc60a5d9`), revision 2 (2026-11-23) after the owner's answer to Q57 (`kkt-26.11.22` D4): frames cross
 > to the host process through shared memory with no copy — GPU shared memory where the plugin takes GPU images, RAM
 > shared memory otherwise. Revision 1: 2026-11-22. Registry `v26.10-index.md` O1–O4 (no). Note F-EXT-001 (refreshed). Stage 3 of
-> `plugin-api-stage1` D10 (built-in → wasm → dlopen/OpenFX), after `wasm-plugin-host`. Tests reserved: t3974–t3979.
+> `plugin-api-stage1` D10 (built-in → wasm → dlopen/OpenFX), after `wasm-plugin-host`. Tests: t3974–t3979, t4153, t4154.
 
 ## Why
 
@@ -33,12 +33,12 @@ openfx в будущем вернём" — OFX after the built-ins and the wasm 
   ones people own), what OFX has besides filters (generator, transition and retimer contexts; on-screen interacts;
   parametric curves; GPU render suites), and where we are worse (our GPU-only composite and 8-bit path, our single
   render thread, no interact API, no host-side OpenGL/CUDA context, cross-machine determinism).
-- **A host in its own process** (`kinetren-ofx`): OFX plugins are C libraries that may crash or lock; they run in a child
+- **A host in its own process** (our binary started with `--ofx-host`): OFX plugins are C libraries that may crash or lock; they run in a child
   process started once.
 - **Frames without a copy** (D10):
   - **GPU shared memory** for plugins that declare an OFX GPU render (OpenGL, CUDA, OpenCL; Vulkan where an extension
-    offers it): our Vulkan image is exported (dma-buf / opaque fd on Linux, an NT handle on Windows), the child imports
-    it into the plugin's API, and exported semaphores order the two processes. No byte crosses RAM.
+    offers it): our Vulkan image is exported (an opaque fd on Linux, an NT handle on Windows), the child imports
+    it into the plugin's API; each side is seen finished before the other is told. No byte crosses RAM.
   - **RAM shared memory** for processor plugins: a memfd (a file mapping on Windows) shared with the child; the GPU
     copies the node's input straight into it (Vulkan imports the mapping as buffer memory,
     `VK_EXT_external_memory_host`) and uploads the result straight from it. That is one device transfer each way, the
@@ -68,12 +68,12 @@ openfx в будущем вернём" — OFX after the built-ins and the wasm 
 
 ## Impact
 
-- New binary `kinetren-ofx` (the host process; C ABI, the OFX 1.4 host suites the plugins need: property, image effect,
+- The host process is our own binary started with `--ofx-host` (no second file to ship; C ABI, the OFX 1.4 host suites the plugins need: property, image effect,
   parameter, memory, multithread, message, progress, timeline, interact later).
 - New crate `kt-plugin-ofx` (the program's side: process supervision, the shared-memory protocol, the registry adapter).
-- kt-gpu: exportable images and semaphores and host-memory buffers through wgpu's hal (`as_hal::<Vulkan>`, an image made
+- kt-gpu: exportable images and host-memory buffers through wgpu's hal (`as_hal::<Vulkan>`, an image made
   with the export info and wrapped back as a wgpu texture), pooled; the GLES backend has the same door (`holds.rs`).
-- kt-engine: an OFX node as a barrier in the one plan (hand over a shared image, wait on its semaphore); temporal reads
+- kt-engine: an OFX node as a barrier in the one plan (hand over a shared image, wait for its answer); temporal reads
   through the request path.
 - kt-app: picker marks, notices, Library rows; i18n ×5.
 - The binary still does not link libav (invariant 10); the child links nothing of ours but the frame protocol.

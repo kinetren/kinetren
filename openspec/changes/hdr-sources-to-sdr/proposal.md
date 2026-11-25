@@ -1,7 +1,7 @@
 # Proposal: hdr-sources-to-sdr
 
-> **The 8-bit path (stages 1–4) is IMPLEMENTATION-READY** (spec-engine, revision 3, 2026-11-24, orch `229c694b`); the 16-bit path (stage 5) is a
-> design re-read when its turn comes. The owner answered (kkt-26.11.20 A25, line 33; kkt-26.11.20b B4). Feature note: F-CLR-009.
+> **The 8-bit path (stages 1–4) is IMPLEMENTATION-READY** (spec-engine, revision 3, 2026-11-24, orch `229c694b`); the 16-bit path (stage 5) is implementation-ready
+> too (revision 4, 2026-11-25, orch `fc60a5d9`), as six sessions after the rows that write the same shaders. The owner answered (kkt-26.11.20 A25, line 33; kkt-26.11.20b B4). Feature note: F-CLR-009.
 
 ## Why
 
@@ -34,7 +34,7 @@
   - the peak is asked once, from the stream's first picture; only mapped sources get new names;
   - SDR sources keep today's bytes.
 - **16-bit path:**
-  - **The working space** is scene-linear light in BT.2020 primaries, f16 RGBA, with 1.0 = 203 cd/m², the
+  - **The working space** is scene-linear light in BT.2020 primaries, f16 RGBA (straight alpha), with 1.0 = 203 cd/m², the
     HDR reference white of BT.2408 (the owner's Q1 a).
   - **The decode** converts every source into it by the same integer pipeline up to linear light, with no
     tone map. An SDR source goes through its own curve.
@@ -42,7 +42,7 @@
     ledger counts.
   - **The core passes run in float:** geometry, resample, layer mix, the crossfade, masks, premultiply
     and the composite.
-  - **An effect declares its precision.** One without a float kernel runs in an 8-bit island: its input
+  - **A point-wise effect may declare that it goes beyond white** (colour grade, vignette): it runs on the same text with no clamp. Any other runs in an 8-bit island: its input
     is the SDR rendition, its output is expanded back, and the chain shows an "8-bit" mark on it (the owner's Q2 a).
   - **The display pass** tone-maps the linear picture to the monitor: BT.2390 to SDR on an SDR surface,
     and HDR on an HDR monitor at once wherever the system gives an HDR surface (the owner's Q3 b).

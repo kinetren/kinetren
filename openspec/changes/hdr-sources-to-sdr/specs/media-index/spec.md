@@ -81,7 +81,7 @@ to linear light, as follows:
   are 1.0;
 - an HLG source SHALL take the BT.2100 OOTF at 1000 cd/m²;
 - there SHALL be no tone map;
-- the result SHALL be written as `Rgba16Float` through an exact integer table, premultiplied.
+- the result SHALL be written as `Rgba16Float` by an exact integer conversion, straight alpha.
 
 The frame SHALL carry its pixel format, and the frames cache key SHALL carry the precision. The bytes SHALL
 be the same on every processor.

@@ -49,20 +49,30 @@ They share its rules:
 
 ## D5. The kept mix on disk
 
-- **Key**: `(MixCtx, burst index, durable scene)`, durable scene = `mix(scene_hash, salt)`. The salt is the
-  store's (`project-cache-folder` D1b: the decoder's major, since the decoders' float output may move between
-  majors, and the versions of the audio kernels that ran; not the whole build) and the identities of the audio
-  files heard in the burst's widened range.
+(Revised 2026-11-25 against orch `fc60a5d9`.)
+
+- **Key**: `(MixCtx, burst index, durable scene)`, durable scene = `mix(scene_hash, salt)`. The salt has three parts:
+  1. the decoder's major (the decoders' float output may move between majors);
+  2. **what makes the sound**: `AUDIO_PATH_VERSION`, the hash of the files named in a new `kt-engine/audio-path.txt` (built by the same `build.rs` as `composite-path.txt`: `audio.rs`,
+     `fxstore.rs`, `mix.rs`' render path, kt-fx `audio/`, the resampler, `kt-media`'s audio decode, `kt_plugin_api::{math, dsp}`), and `kernel_version` of every audio plugin the project's chains name.
+     `Made` knows picture kernels only;
+  3. the identities of the sounds heard in the burst's widened range. **The sound's identity is the ORIGINAL file's**: `persistent-cache` swaps a source's picture for its copy's, and the
+     cache then names the source by the copy (`CopySource::identity`) while its sound goes on being the original's. So `MediaSource::sound_identity()` (default: `identity()`; `CopySource`: the original's),
+     kept per media by `MediaParts` at the raise, and NOT `BurstCache::ident`: with that the kept mix of a heavy clip would be a miss whenever its copy came or went. A media without one is
+     never written.
 - **Form**: runs of consecutive bursts of one context, raw interleaved f32, a manifest per run (the context, the
-  first burst, each burst's `[lo, hi)` and durable scene). Raw: 23 MB a minute, and a read is a copy.
-- **Writing**: at rest, from what the store holds. The render thread owns the store: it publishes, through the
-  existing `MixCoverage` path, an immutable snapshot of the units not yet written (an `Arc` of the samples it
-  already keeps; no copy on the render thread); the player's thread writes them.
-- **Restoring**: the player's prefetch thread, which already sizes the store's budget (`MixBudget::ask`), reads
-  the runs whose scenes match the current renderer ahead of the playhead and of the loop region, and sends them
-  over a bounded lock-free channel; the render thread drains it at the start of a chunk into its store as "first
-  recordings" (a burst already held is not overwritten). Invariant 2 holds: the store is touched by the render
-  thread alone, and it never reads a file. Invariant 6: the callback is not involved.
+  first burst, each burst's durable scene). Only WHOLE bursts (`lo = 0, hi = UNIT`). Raw: 23 MB a minute, and a read is a copy. `Tenant::Mix` of the cache folder exists and has its place in the one
+  order (`by_value`); the entry's value is its render time, measured as the chunk was rendered.
+- **No thread of a picture or of the sound calls the disk** (gpu-waits-named, found-defects 835: work for a picture called the disk while it held what the next frame needed). Reads and writes run
+  on a lane of their own, `Lane::open("mix-disk", Class::Background)`, one job a run.
+- **Writing**: the render thread publishes, through `MixCoverage`, an immutable snapshot of the whole units not yet written (an `Arc` of the samples it keeps: no copy on the render thread). A whole unit is never
+  written to again (first recordings stay), so the shared `Arc` is never cloned for writing and the warm render allocates nothing (t2684). The `render-cache` thread posts the writes: a step at the top of its loop, after its
+  play/export check and BEFORE it asks whether an encoder opens (a machine with no hardware encoder keeps its mix too), under the same quiet. What is in hand when the process ends is left
+  (`kt_time::shutdown::ending`, as the open segment, row 972); a file without its manifest goes at the next open.
+- **Restoring**: the prefetch thread (beside its `mix.budget.ask`) asks the lane for the runs whose scenes match, ahead of the playhead and of the loop region, at most one run in hand; the lane's job sends the
+  units over a bounded lock-free ring (`rtrb`); the render thread drains it at the top of a pass into its store as first recordings (a burst already held is not overwritten). Invariant 2 holds: the store
+  is touched by the render thread alone, and it never reads a file. Invariant 6: the callback is not involved. A disk that stands stands the lane: the sound is rendered live as today.
+- **The program stage** (loudness-norms) is after the store: its gain is in neither the scene nor the salt, so a stored run plays through any stage.
 - **Settle**: a restored burst behaves as a kept one: leaving it, the effects are brought back to the continuous
   play (kept-mix-settle).
 - **Exports never read it**: the audio export stays a live render, byte for byte (invariant 11).
@@ -92,22 +102,14 @@ moment is covered when its final frame is kept or on disk.
 1. D1: the restart line and the mix tier's records in the trace. t3336, t3337.
 2. D2 + D5 + D6: the mix runs, the handoff, the bars. t3346–t3352.
 
-## D10. What the tree has today (checked at orch `873934f7`, the mix half rechecked at `af14db35`)
+## D10. What the tree has today (checked at orch `fc60a5d9`; names decide, not lines)
 
-- **The mix's samples are a `Box`.** `Unit.data` (`mix.rs:56`) is `Box<[f32]>`. D5's no-copy snapshot needs it
-  to become `Arc<[f32]>` (one allocation per kept burst, as today).
-- **There is no channel into the render thread today.** `RenderCtx` (`player.rs:2081`) has atomics, mutexes
-  and the outgoing `rtrb::Producer`. The restore handoff is a second `rtrb` ring (bounded, lock-free; `rtrb`
-  is already a dependency), drained at the top of a pass in `audio_render_loop` (`player.rs:2442`). The
-  loader is `prefetch_loop` (`:3400`), beside its `mix.budget.ask` (`:3522`). `MixCoverage` (`mix.rs:499`)
-  carries the snapshot of unwritten units out.
-- **The scene hash** is `audio.rs:1012` (`scene_base` + `clips[i].fp` over the widened range's active clips).
-  That widened range is where the mix salt's audio file identities are collected.
-- **The trace kinds** for mix runs go into `kt_time::trace::render_cache` (`trace.rs:631`). The restart summary
-  has no recorder yet (D1), nor `kt-cli trace summary`'s line (`trace_query.rs:466`). `trace cache` (`:130`) is
-  extended.
-- **The store** (folder, header, `ask_room`, the key without the build) is `project-cache-folder`'s sections
-  1 and 3. This change starts after them.
+- `mix.rs` `Unit.data` is `Box<[f32]>` with `[lo, hi)`: it becomes `Arc<[f32]>`; `MixStore::write` fills a partial unit in place, so the snapshot takes whole units only (D5).
+- `player.rs`: `RenderCtx` has no channel in; `audio_render_loop` drains the new ring at the top of a pass; `prefetch_loop` asks `mix.budget.ask(mix_want(region))`, where the lane is asked too.
+- `render_cache.rs` `run_prerender`: the play/export check, then `display_exec`, the store, the build, the scan, `full || unavailable` → parks. The mix step goes before `display_exec`. `RenderCache` already has two lanes
+  (`render-cache-restore`, `render-cache-close`) as the model of a disk call off a frame's path.
+- `scene_hash` (`audio.rs`) walks the widened range's active clips: `sound_key(range)` beside it walks the same for the identities. A reel's inner sources count: the nest's clips recursively (its `content` is in `fp`, its files are not).
+- `kt_time::trace::render_cache` holds the record kinds; `trace cache` and `trace summary` are in `kt-cli/src/trace_query.rs`.
 
 ## Withdrawn (the owner's D6, kkt-26.11.22 line 9)
 

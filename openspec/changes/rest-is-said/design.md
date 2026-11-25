@@ -35,7 +35,7 @@ hand-over that lands between the two moves `EPOCH`, so the rest is not believed.
   moved since, or who did (each actor keeps the time and cause of its last wake).
 - **A quiet window is `Rest` + a sleep + `still()`.** The sleep's length is then a claim about the program only ("nothing
   in 300 ms"), never about when the program got there. The sleep stays: a timer nobody registered is found by it.
-- Actors: the scheduler (one, from `Stats`: running, waiting, pump due), `prefetch`, `engine-build`, `audio-render`, `audio-output`, each
+- Actors: the scheduler (one, from `Stats`: running, waiting, pump due; its lanes `render-cache-restore`, `render-cache-close` with it), `source-copies`, `prefetch`, `engine-build`, `audio-render`, `audio-output`, each
   `MediaWorker`, the compose queue, `render-cache` and its reader, the compute host's walk, `pipeline-warm`, the trace
   writer (its own atomic, outside `EPOCH`: recording is not work), `geom-dump`, `load-watch` (excluded by name: its second is
   its design, and it records nothing at rest).
@@ -88,7 +88,7 @@ executor's report lists what it found. A test of a person-facing bound (t1671's 
 
 ## D6. Row 960: the near part waits for a frame
 
-`prefetch_loop` (`player.rs:3469`): while `stream_pending` a paused preview passes every 100 ms, whatever arrives. The far part has
+`prefetch_loop` (`player.rs`): while `stream_pending` a paused preview passes every 100 ms, whatever arrives. The far part has
 the rule (`far_walk_again`); the near part gets it in the form that suits a pause, with a wake instead of a clock:
 1. A paused pass that left the near part pending, walked no position and saw no frame inserted since the pass before is
    STALLED.
@@ -96,10 +96,23 @@ the rule (`far_walk_again`); the near part gets it in the form that suits a paus
    it passes at once (the insert fell before the arming).
 3. It parks by `wake.wait_since(seen)`, no clock. The next frame wakes it; so do a play, a seek, an edit, a quality, a
    replaced source, as today.
-`on_next_insert` holds ONE waiter and the app's paused preview uses it (`app.rs:7709`): it becomes a list with a key
-(`"preview"`, `"prefetch"`), each key replacing its own.
+`on_next_insert` holds ONE waiter and the app's paused preview uses it (`app.rs`): it becomes a list with a key
+(`"preview"`, `"prefetch"`, `"prerender"`), each key replacing its own.
 A decoder that is slow is not stalled for long: each frame it lands is a wake. A source that never answers costs the
 passes until the requests are out, then none. While playing nothing changes (a pass every 100 ms).
+
+## D9. Row 839, and the same shape in the product: a moment given up by a clock
+
+t3833 took 239 s in a full run and 19 s in a small one. Nothing in the test is slow, and its waits are by condition (`test_deadline`). What load multiplies by SECONDS stands in the program it waits for:
+`render_cache.rs` `one()` composes a moment once its layers are cached; with nothing inserted and no position walked for three seconds it answers `Incomplete`, and the third answer puts the moment into `done`
+"for this state". Nine seconds a moment, for a source that answers late, and then the moment is never prepared until an edit, a quality or a replaced source. 239 − 19 s is twenty-four such moments. **Read, not proved that it was this**: the
+trace of that run is gone; the proof asks no load (task 4.0): a source held ten seconds behind its gate gives an `ABANDON`/`INCOMPLETE` record and a moment that is never written, today.
+
+It is M2 in the PRODUCT: a loaded machine, a NAS, a disk asleep answer late, not never, and the tier quietly keeps nothing of what they hold. The three seconds stand for "the source will not answer", which the worker knows:
+1. `one()` asks the moment's keys ONCE, then waits while any of them is queued or in flight (`MediaWorker::outstanding(keys)`, over the queue and `in_flight`): no clock ends that wait; the check (input, Play, an export, the close) does.
+   It parks on `on_next_insert("prerender")` and on `rc.wake` (`note_input` notifies while `busy` is up; at rest it stays the atomic it is), with a bound of 250 ms only as the check's own step: 4 a second while a request is out, where today's 4 ms sleep makes 250.
+2. Nothing outstanding and the frame not there: the source ANSWERED without it. Asked once more; a second answer without it is `Incomplete` (three times → `done`, as today).
+3. The same for a stream history: it waits while a position walked or a needed frame is outstanding.
 
 ## D7. The class walk: where else the program or a test is anchored to something else
 
@@ -119,12 +132,18 @@ passes until the requests are out, then none. While playing nothing changes (a p
 | live gestures (M3: 783, 817, 254) | cured one by one by publishing `double_click_s`, input marks | unchanged |
 | exit and close waits (`shutdown::WAIT`) | bounded on purpose, and they record `left_behind` | unchanged: they already say it |
 | product waits that give up: `first_callback` (1 s), `close` (`recv_timeout` 2 s, `audio_out.rs`) | M2 in the product: a ring not handed back becomes `None` and the next Play reports it | unchanged, reported at the next Play |
+| `render_cache.rs` `one()` (839): three seconds without a frame is "will not answer", three times is "never for this state" | M2 in the product | D9 |
+| t3201, t3600 (975): the store's index before the record; 836 (t2144): a span in flight is no new request | M1 | cured where found; D1's `Parked` is written after both |
+| `render-cache-restore` (gpu-waits-named): the displayed frame waits 250 ms / 2 s for the disk | M2 in the product, on purpose | unchanged: it records `FrameWait` DISK and goes on composing |
+| `source-copies` (persistent-cache): parks with no clock, `settled` a flag | an actor | registered (D1); its tests read `Rest` |
+| live `idle` red once, the sound library's own thread woke four times (900) | a thread that is not ours | `rest` says ours are at rest; the process share stays the check, and the red then names the library |
+| `cargo test` of one process: records of neighbours (912) | not this class: a capture not selected by its player | its own row |
 | `poster` waits, `offline-park`, the GPU arbiter's takes | read: each records its wait | unchanged |
 
 ## D8. The order
 
 1. D2 and D5 (small, they change what the next red says). 2. D1's registry with the actors one by one. 3. D4's run and its list.
-4. D3's remainder. 5. D6 (`durable-moment-key` is in).
+4. D3's remainder. 5. D6 and D9.
 
 **t1671's rule is kept**: no wait here is bounded by a limit of the test's own. A quiet window (`Rest` + a sleep + `still()`) is a claim about
 the PROGRAM ("nothing in 300 ms"), it opens from a state and can only be red if something ran; the stretch is a delay put into the
