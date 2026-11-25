@@ -37,3 +37,15 @@ it on stderr, the editor in its journal. Tests and captures wait by `trace::test
 
 Proof: 30 ms planted for the frame's class between the lock's release and the record's end gives `[2, 0]`; the same
 sleep after the record's end under the lock is green.
+
+## D5. A source that comes back (921)
+
+`picture()` waited two minutes in `nestparam`: the paused frame was in Loading, and the trace showed the prefetch asking
+60 frames of an address with no worker. `sync_generators` compares a wanted address with `gen_states`, what it last set in the
+live sources; `remove_media` shut the worker and left its entry, so the address, back with the same values, was "as it was".
+The entry goes with the source.
+
+Class walk, what else remembers a removed source: `natives` forgotten in the same place; `raised` is a counter, never read
+as presence; the copies forget by a raise; the cache forgets by `sync_generators` itself; a media removed and added by the host
+goes through `add_media`, which asks no memory. `resync_gen_others` raises nothing for an address without an entry: the
+builder that follows does.

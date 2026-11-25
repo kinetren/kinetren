@@ -1678,6 +1678,12 @@ class Live:
             return self._pixel_direct(x, y)
         return self._pixel_shot(x, y)
 
+    def picture_box(self, xy, half):
+        """The picture's box around a point (`half` = width, height), an image: letters are thin, and a single
+        pixel between two of them says nothing of a change (`nestparam`)."""
+        self.picture()
+        return screen_image().crop((xy[0] - half[0], xy[1] - half[1], xy[0] + half[0], xy[1] + half[1]))
+
     def ink_box(self, xy, half=60, step=6):
         """The brightest pixel of the SQUARE around the point — one screen snapshot.
 

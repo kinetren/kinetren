@@ -264,6 +264,50 @@ fn t663_a_reel_does_not_serve_a_stale_frame_after_a_retune() {
     }
 }
 
+/// Test t3272 (found-defects 921; capability `generators`): a generator that left the project and came back
+/// with the same values has its source again — a delete and its undo, a way into a composition and
+/// out of it (the player's project is the composition meanwhile). Its address was known as raised, no worker
+/// stood behind it, and the preview stayed in Loading.
+#[test]
+fn t3272_a_generator_that_comes_back_has_its_source() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    kt_plugins_builtin::install();
+    use kt_engine::Player;
+    let kind = GeneratorKind::solid(220, 220, 220);
+    let mut with = base();
+    with.media.push(MediaRef::new(MediaId(1), gen_kind_path(&kind)));
+    let mut c = clip(1, 0, 0, 90_000, 1);
+    c.r#gen = Some(kind);
+    with.clips = vec![c];
+    let mut without = with.clone();
+    without.clips = Vec::new();
+    let (player, _consumer) = Player::new(with.clone(), vec![]);
+    player.set_preview_quality(Q);
+    player.set_video_gpu(Some(kt_gpu::testkit::engine()));
+    let mut buf = Vec::new();
+    let mut until = |what: &str, want: u8, at: i64| {
+        let deadline = kt_time::test_deadline();
+        loop {
+            let _ = player.compose_preview_into(Tick(at), &mut buf);
+            if buf.first() == Some(&want) {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "{what}: the picture never came");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    };
+    until("the opening", 220, 0);
+    for lap in 0..2 {
+        player.set_project(std::sync::Arc::new(without.clone()));
+        until("the generator is gone", 0, 0);
+        player.set_project(std::sync::Arc::new(with.clone()));
+        // a moment nobody asked before: the cache holds nothing of it
+        until("the generator is back", 220, 30_000 * (lap + 1));
+    }
+}
+
 /// Test 670 (R.59, stage 2, sibling of t11/t479): export opens the
 /// generators ITSELF, and the preview equals the export byte for byte (invariant 7).
 ///

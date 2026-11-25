@@ -1,7 +1,7 @@
 # Proposal: stage24-reds5
 
-> Found-defects 845, 846, 918, 919, the reds of the fourth stage-24 finish (orchestrator's order, 2026-11-25).
-> Tests t3269–t3271.
+> Found-defects 845, 846, 918, 919, 921, the reds of the fourth stage-24 finish (orchestrator's order, 2026-11-25).
+> Tests t3269–t3272.
 
 ## Why
 
@@ -21,6 +21,9 @@ as laps, a lap is what was played.**
 919: a piece claims half the bound, so the look-ahead's admission follows the frame's at once, and the
 admission's record ended after the ring's lock was released: a thread put off there ended later than the next one.
 
+921, found by 845's fix: a generator that left the project and came back with the same values had no source, and the
+preview stood in Loading. The mechanism: **what is known of a source outlives the source.**
+
 ## What Changes
 
 - The geometry dump says when the picture drawn is the one asked for; every reader of the live stand's picture waits.
@@ -30,4 +33,4 @@ admission's record ended after the ring's lock was released: a thread put off th
 
 ## Capabilities
 
-- `telemetry`, `distribution`
+- `telemetry`, `distribution`, `generators`

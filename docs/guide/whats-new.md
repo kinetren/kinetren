@@ -5,6 +5,7 @@ month, newest first.
 
 ## kt26.11
 
+- **A generator that comes back shows its picture.** Undo the delete of a title or a colour, or step into a composition and out again, and its picture could stand on Loading until you changed one of its values. It plays at once now.
 - **Moments prepared on disk show their own picture.** Except at 25 and 50 frames a second, a heavy moment played from the disk could show the picture of the frame before it; now it shows its own. MKV and WebM renders also state their exact frame rate, so a 30 fps file is no longer read as 30.3.
 - **A render never shows another project's pictures.** Rendering a Datamosh with an effect in front of it after another project in the same session could show the other project's footage; and an audio-reactive generator hears a file that came back while the program runs.
 - **A zoom that starts at 1 shows its first moments.** A 4K event whose Zoom curve stood at exactly 1, or a Datamosh behind a zooming Geometry, showed Loading there and could not be rendered; now they play and render.
