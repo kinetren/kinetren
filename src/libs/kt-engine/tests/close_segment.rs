@@ -56,8 +56,8 @@ impl SegmentCodec for Stuck {
     fn writer(&self, path: &Path, w: u32, h: u32, fps: u32) -> Result<Box<dyn SegmentWriter>, String> {
         Ok(Box::new(Writer(self.0.clone(), RawSegments.writer(path, w, h, fps)?)))
     }
-    fn reader(&self, path: &Path) -> Result<Box<dyn SegmentReader>, String> {
-        RawSegments.reader(path)
+    fn reader(&self, path: &Path, fps: u32) -> Result<Box<dyn SegmentReader>, String> {
+        RawSegments.reader(path, fps)
     }
     fn extension(&self) -> &str {
         RawSegments.extension()

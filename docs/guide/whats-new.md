@@ -5,6 +5,7 @@ month, newest first.
 
 ## kt26.11
 
+- **Moments prepared on disk show their own picture.** Except at 25 and 50 frames a second, a heavy moment played from the disk could show the picture of the frame before it; now it shows its own. MKV and WebM renders also state their exact frame rate, so a 30 fps file is no longer read as 30.3.
 - **A render never shows another project's pictures.** Rendering a Datamosh with an effect in front of it after another project in the same session could show the other project's footage; and an audio-reactive generator hears a file that came back while the program runs.
 - **Heavy files play from lighter copies on disk.** A 4K file, or one that decodes too slowly, gets a smaller copy by itself while the program rests, at the size the preview plays; pick a better quality and a better copy is made. The card in the bin shows it; "Use a camera's copy…" in the card's menu takes the small file a camera wrote beside the big one. The switch beside the preview quality, Persistent cache, sets the size or turns copies and prepared moments off. A render always reads the originals. Copies need a hardware video encoder.
 - **What was prepared stays bright after an edit beside it.** Moving a title used to leave the prepared heavy range next to it dim until the next Play or pause; now the bars find it at once.

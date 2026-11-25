@@ -141,6 +141,7 @@ struct Seg {
     last: u64,
     w: u32,
     h: u32,
+    fps: u32,
     keys: Vec<DiskKey>,
 }
 
@@ -181,7 +182,7 @@ impl Index {
 }
 
 /// A request of the reader thread: the segment, its frame, its size, where to answer.
-type ReadAsk = (PathBuf, u32, u32, u32, std::sync::mpsc::Sender<Option<Vec<u8>>>);
+type ReadAsk = (PathBuf, u32, u32, u32, u32, std::sync::mpsc::Sender<Option<Vec<u8>>>);
 
 /// The disk tier's segments of one device class (D2): videos written by the host's [`SegmentCodec`]
 /// and their manifests, the frames of the project's cache folder.
@@ -321,7 +322,7 @@ impl DiskStore {
         let mut ix = Index::default();
         for (_, id, m, bytes) in found {
             ix.seq += 1;
-            let seg = Seg { bytes, last: ix.seq, w: m.w, h: m.h, keys: m.keys };
+            let seg = Seg { bytes, last: ix.seq, w: m.w, h: m.h, fps: m.fps, keys: m.keys };
             ix.insert(id, seg);
         }
         ix.session = ix.seq;
@@ -427,16 +428,16 @@ impl DiskStore {
             self.folder.missed(Tenant::Frames);
             return None;
         };
-        let (w, h) = {
+        let (w, h, fps) = {
             let mut ix = self.ix.lock().unwrap();
             ix.seq += 1;
             let s = ix.seq;
             let seg = ix.segs.get_mut(&id)?;
             seg.last = s;
-            (seg.w, seg.h)
+            (seg.w, seg.h, seg.fps)
         };
         let (tx, rx) = std::sync::mpsc::channel();
-        self.ask((self.video(id), frame, w, h, tx))?;
+        self.ask((self.video(id), frame, w, h, fps, tx))?;
         match rx.recv().ok().flatten() {
             Some(rgba) => {
                 self.folder.used(&self.entry(id));
@@ -582,7 +583,7 @@ impl DiskStore {
         ix.seq += 1;
         let last = ix.seq;
         let mean = cost / 1000 / manifest.keys.len() as u64;
-        ix.insert(id, Seg { bytes, last, w: manifest.w, h: manifest.h, keys: manifest.keys });
+        ix.insert(id, Seg { bytes, last, w: manifest.w, h: manifest.h, fps: manifest.fps, keys: manifest.keys });
         drop(ix);
         self.folder.wrote(&self.entry(id), bytes, mean);
         Ok(bytes)
@@ -601,10 +602,10 @@ impl Drop for DiskStore {
 /// The reader thread: the open segment readers, the most recently used kept.
 fn read_loop(codec: Arc<dyn SegmentCodec>, rx: std::sync::mpsc::Receiver<ReadAsk>) {
     let mut open: Vec<(PathBuf, Box<dyn SegmentReader>)> = Vec::new();
-    while let Ok((path, frame, w, h, reply)) = rx.recv() {
+    while let Ok((path, frame, w, h, fps, reply)) = rx.recv() {
         let i = match open.iter().position(|(p, _)| *p == path) {
             Some(i) => i,
-            None => match codec.reader(&path) {
+            None => match codec.reader(&path, fps) {
                 Ok(r) => {
                     // which decoder reads the tier (row 775: the device's, the processor only where
                     // none opens) — once per reader, not per moment
@@ -1704,7 +1705,7 @@ mod tests {
             fn writer(&self, _: &Path, _: u32, _: u32, _: u32) -> Result<Box<dyn SegmentWriter>, String> {
                 Err("no hardware encoder opens".into())
             }
-            fn reader(&self, _: &Path) -> Result<Box<dyn SegmentReader>, String> {
+            fn reader(&self, _: &Path, _: u32) -> Result<Box<dyn SegmentReader>, String> {
                 Err("none".into())
             }
         }

@@ -1719,6 +1719,11 @@ so one heavy project no longer evicts another's loop (project-cache-folder D3).
 - **THEN** the default opens a hardware encoder or refuses naming why, leaving no file; the forced segment names its encoder and every frame reads back alone within the codec's tolerance
 - **TEST** t2986 (`src/libs/kt-media/tests/segment.rs`)
 
+#### Scenario: A segment reads back its own frames at every rate
+- **WHEN** two hundred flat pictures, each far from its neighbours, are written as a segment at 24, 25, 30, 48, 50 and 60 frames a second, and the first, the hundredth and the last of them are read out of order
+- **THEN** each read is the picture of that number, and the file names its own rate to any other reader
+- **TEST** t3615 (`src/libs/kt-media/tests/segment.rs`)
+
 #### Scenario: A segment is read by the hardware decoder, the processor only without one
 - **WHEN** a segment is read on this machine (no render node here), and in a child process on the fake VA driver of `fixtures/fake_va` (its encoder writes I_PCM macroblocks, its VLD entry point reads them back) a segment its encoder wrote is read out of order and twice
 - **THEN** on this machine the reader names the processor and why (no VAAPI device) and reads every frame as the processor's decoder does; on the fake device every decoder of the file decodes on it (`vaapi <node>`, also the ones a later read adds), each frame is within the RGB → 4:2:0 → RGB round trip of the frame written (mean ≤ 3) and within swscale's rounding of NV12 against yuv420p of the processor's decode (mean ≤ 2), and the driver counts at least the pictures read; the disk tier's reader records which decoder reads (`render_cache` aux `READER`). Windows asks D3D11VA the same way (found-defects 775)

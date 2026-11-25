@@ -660,6 +660,11 @@ impl Muxer {
         }
         unsafe {
             (*vst).time_base = video_time_base(cfg);
+            // Matroska keeps a frame's time in whole milliseconds: without the stream's own rate a file of
+            // 30 fps was one of 30.30 to whoever opened it (found-defects 981)
+            if matches!(form.container, crate::format::Container::Mkv | crate::format::Container::Webm) {
+                (*vst).avg_frame_rate = tb(cfg.frame_rate.num as c_int, cfg.frame_rate.den.max(1) as c_int);
+            }
             (api.avcodec_parameters_from_context)((*vst).codecpar, venc);
             // H.265 in MP4/MOV as `hvc1`: Apple's players refuse the default `hev1` (D8)
             if form.video == crate::format::VideoCodec::H265

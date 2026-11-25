@@ -475,14 +475,14 @@ impl kt_media::segment::SegmentCodec for Standing {
     fn writer(&self, path: &std::path::Path, w: u32, h: u32, fps: u32) -> Result<Box<dyn kt_media::segment::SegmentWriter>, String> {
         kt_engine::render_cache::RawSegments.writer(path, w, h, fps)
     }
-    fn reader(&self, path: &std::path::Path) -> Result<Box<dyn kt_media::segment::SegmentReader>, String> {
+    fn reader(&self, path: &std::path::Path, fps: u32) -> Result<Box<dyn kt_media::segment::SegmentReader>, String> {
         self.stood.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut g = self.free.0.lock().unwrap();
         while !*g {
             g = self.free.1.wait(g).unwrap();
         }
         drop(g);
-        kt_engine::render_cache::RawSegments.reader(path)
+        kt_engine::render_cache::RawSegments.reader(path, fps)
     }
     fn extension(&self) -> &str {
         "rgba"
@@ -619,7 +619,7 @@ fn t2989_no_encoder_composes_nothing() {
         fn writer(&self, _: &std::path::Path, _: u32, _: u32, _: u32) -> Result<Box<dyn kt_engine::render_cache::SegmentWriter>, String> {
             Err("no hardware encoder opens".into())
         }
-        fn reader(&self, _: &std::path::Path) -> Result<Box<dyn kt_engine::render_cache::SegmentReader>, String> {
+        fn reader(&self, _: &std::path::Path, _: u32) -> Result<Box<dyn kt_engine::render_cache::SegmentReader>, String> {
             Err("none".into())
         }
     }
@@ -804,7 +804,7 @@ impl kt_media::segment::SegmentCodec for Nv12Segments {
             rgba: self.rgba.clone(),
         }))
     }
-    fn reader(&self, path: &std::path::Path) -> Result<Box<dyn kt_media::segment::SegmentReader>, String> {
+    fn reader(&self, path: &std::path::Path, _fps: u32) -> Result<Box<dyn kt_media::segment::SegmentReader>, String> {
         Ok(Box::new(Nv12Reader(std::fs::File::open(path).map_err(|e| e.to_string())?)))
     }
 }
@@ -930,8 +930,8 @@ impl kt_media::segment::SegmentCodec for GatedSegments {
     fn writer(&self, path: &std::path::Path, w: u32, h: u32, fps: u32) -> Result<Box<dyn kt_media::segment::SegmentWriter>, String> {
         kt_engine::render_cache::RawSegments.writer(path, w, h, fps)
     }
-    fn reader(&self, path: &std::path::Path) -> Result<Box<dyn kt_media::segment::SegmentReader>, String> {
-        Ok(Box::new(GatedReader(self.0.clone(), kt_engine::render_cache::RawSegments.reader(path)?)))
+    fn reader(&self, path: &std::path::Path, fps: u32) -> Result<Box<dyn kt_media::segment::SegmentReader>, String> {
+        Ok(Box::new(GatedReader(self.0.clone(), kt_engine::render_cache::RawSegments.reader(path, fps)?)))
     }
     fn extension(&self) -> &str {
         "rgba"
